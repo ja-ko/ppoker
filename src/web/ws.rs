@@ -119,14 +119,18 @@ mod tests {
         let mut client = PokerSocket::connect(&get_config()).unwrap();
         thread::sleep(Duration::from_millis(250));
         let message = client.read().unwrap();
-        println!("Message is {:?}", message);
+        if let Some(message) = message {
+            assert_matches!(message, IncomingMessage::RoomUpdate(_));
+        } else {
+            panic!("Didn't get an update from server.");
+        }
     }
 
     #[test]
     fn send_commands() -> AppResult<()> {
         let config = get_config();
         let mut client = PokerSocket::connect(&config).unwrap();
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(250));
         let messages = client.read_all().unwrap();
         assert_eq!(messages.len(), 1);
 
@@ -137,7 +141,7 @@ mod tests {
         assert_eq!(room.users[0].user_type, UserType::Participant);
 
         client.send_request(UserRequest::ChangeName {name: "Ralph Muller"}).unwrap();
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(250));
         let messages = client.read_all().unwrap();
         assert_eq!(messages.len(), 1);
 
@@ -149,7 +153,7 @@ mod tests {
         client.send_request(UserRequest::PlayCard {card_value: Some("13")}).unwrap();
         client.send_request(UserRequest::RevealCards).unwrap();
 
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(250));
         let messages = client.read_all().unwrap();
         assert_eq!(messages.len(), 2);
         assert_matches!(&messages[0], IncomingMessage::RoomUpdate(room) if room.room_id.eq(&config.room));
