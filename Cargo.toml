@@ -1,0 +1,39 @@
+[package]
+name = "ppoker"
+description = "Client for planning poker - https://github.com/sne11ius/pp"
+authors = ["Jannik Kolodziej <github@jkolodziej.de>"]
+license = "EUPL-1.2"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ratatui = { version = "0.26", features = ["unstable-rendered-line-info"] }
+crossterm = { version = "0.27", features = ["event-stream"] }
+notify-rust = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_repr = "0.1"
+tungstenite = { version = "0.22.0", features = ["native-tls"] }
+tui-big-text = "0.4"
+urlencoding = "2"
+log = "0.4"
+snafu = "0.8"
+simplelog = "0.12"
+tui-logger = "0.11"
+clap = { version = "4.5", features = ["derive"] }
+figment = { version = "0.10", features = ["toml", "env"] }
+directories = "5"
+whoami = "1.5"
+petname = "2"
+regex = "1.10"
+glob = "0.3"
+filetime = "0.2"
+
+[dev-dependencies]
+pretty_assertions = { version = "1", features = ["unstable"] }
+assert-json-diff = "2"
+
+[profile.release]
+lto = true
