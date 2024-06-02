@@ -29,11 +29,12 @@ Arguments:
   [ROOM]  Room to join
 
 Options:
-  -n, --name <NAME>        Name to use for this session
-  -s, --server <SERVER>    Websocket URL to connect to
-  -S, --skip-update-check  Skip the automatic update check and stay on the current version
-  -h, --help               Print help
-  -V, --version            Print version
+  -n, --name <NAME>            Name to use for this session
+  -s, --server <SERVER>        Websocket URL to connect to
+  -S, --skip-update-check      Skip the automatic update check and stay on the current version
+  -N, --disable-notifications  Disable notifications
+  -h, --help                   Print help
+  -V, --version                Print version
 ```
 
 You can also use environment variables to set each argument or option. For this prefix the option name with 
@@ -57,4 +58,5 @@ name = "ja-ko"
 room = "planning-room"
 server = "wss://pp.discordia.network/"
 skip_update_check = false
+disable_notifications = false
 ```

@@ -15,8 +15,12 @@ pub struct Cli {
     /// Room to join.
     #[arg()]
     pub(crate) room: Option<String>,
-    
+
     /// Skip the automatic update check and stay on the current version.
     #[arg(short = 'S', long)]
     pub(crate) skip_update_check: bool,
+
+    /// Disable notifications
+    #[arg(short = 'N', long)]
+    pub(crate) disable_notifications: bool,
 }

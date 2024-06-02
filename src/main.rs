@@ -81,6 +81,9 @@ fn main() -> AppResult<()> {
     if cli.skip_update_check {
         config.skip_update_check = true;
     }
+    if cli.disable_notifications {
+        config.disable_notifications = true;
+    }
 
     let update = update()?;
     match update {
