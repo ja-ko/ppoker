@@ -54,13 +54,17 @@ impl App {
                 if self.has_focus {
                     info!("Skipping notification because user has application focused.")
                 } else {
-                    info!("Notifying user of missing vote.");
-                    if let Err(e) = Notification::new()
-                        .summary("Planning Poker")
-                        .body("Your vote is the last one missing.")
-                        .timeout(Timeout::Milliseconds(10000))
-                        .show() {
-                        error!("Failed to send notification: {}", e);
+                    if self.config.disable_notifications {
+                        info!("Skipping notification because user has them disabled.");
+                    } else {
+                        info!("Notifying user of missing vote.");
+                        if let Err(e) = Notification::new()
+                            .summary("Planning Poker")
+                            .body("Your vote is the last one missing.")
+                            .timeout(Timeout::Milliseconds(10000))
+                            .show() {
+                            error!("Failed to send notification: {}", e);
+                        }
                     }
                 }
                 self.is_notified = true;

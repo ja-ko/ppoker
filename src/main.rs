@@ -66,12 +66,14 @@ fn main() -> AppResult<()> {
 
     let config = get_config();
 
-    let update = update()?;
-    match update {
-        Status::UpToDate(version) => { info!("Already up-to-date: {}", version) }
-        Status::Updated(version) => {
-            println!("Updated: {}", version);
-            return Ok(());
+    if !config.skip_update_check {
+        let update = update()?;
+        match update {
+            Status::UpToDate(version) => { info!("Already up-to-date: {}", version) }
+            Status::Updated(version) => {
+                println!("Updated: {}", version);
+                return Ok(());
+            }
         }
     }
 
