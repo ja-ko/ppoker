@@ -7,7 +7,6 @@ use log::{debug, error, info, LevelFilter, warn};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use regex::Regex;
-use self_update::{Status};
 
 use crate::app::{App, AppResult};
 use crate::config::{get_config, get_logdir};

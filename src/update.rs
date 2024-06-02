@@ -1,5 +1,5 @@
-use std::error::Error;
 use std::io;
+
 use log::{debug, error, info};
 use self_update::{cargo_crate_version, Extract, self_replace};
 use semver::Version;
