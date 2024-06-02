@@ -13,6 +13,7 @@ use crate::app::{App, AppResult};
 use crate::config::{get_config, get_logdir};
 use crate::events::EventHandler;
 use crate::tui::Tui;
+use crate::update::{self_update, UpdateError, UpdateResult};
 
 mod app;
 mod tui;
@@ -21,6 +22,7 @@ mod events;
 mod models;
 mod config;
 mod web;
+mod update;
 
 fn setup_logging() -> AppResult<()> {
     const MAX_LOGFILES: usize = 20;
@@ -69,12 +71,19 @@ fn main() -> AppResult<()> {
     let config = get_config();
 
     if !config.skip_update_check {
-        let update = update()?;
-        match update {
-            Status::UpToDate(version) => { info!("Already up-to-date: {}", version) }
-            Status::Updated(version) => {
-                println!("Updated: {}", version);
-                return Ok(());
+        let res = self_update();
+        tui_logger::move_events();
+        match res {
+            Ok(UpdateResult::Updated) => {
+                println!("Please restart the application.");
+                return Ok(())
+            }
+            Ok(UpdateResult::UpToDate) => {}
+            Err(e) => {
+                error!("Failed to update the application. {}", e);
+                tui_logger::move_events();
+                println!("Failed to update the application.");
+                return Err(e.into());
             }
         }
     }
@@ -97,18 +106,5 @@ fn main() -> AppResult<()> {
     Ok(())
 }
 
-pub fn update() -> self_update::errors::Result<Status> {
-    let update = self_update::backends::github::Update::configure()
-        .repo_owner("ja-ko")
-        .repo_name("ppoker")
-        .bin_name("ppoker")
-        .show_download_progress(true)
-        .current_version(cargo_crate_version!())
-        .show_output(false)
-        .bin_path_in_archive("ppoker-{{ target }}/{{ bin }}")
-        .build()?;
-
-    update.update()
-}
 
 
