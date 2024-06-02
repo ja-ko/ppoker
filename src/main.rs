@@ -7,6 +7,7 @@ use log::{debug, error, info, LevelFilter};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use regex::Regex;
+use self_update::{cargo_crate_version, Status};
 use crate::app::{App, AppResult};
 use crate::cli::Cli;
 use crate::config::{get_config, get_logdir};
@@ -78,6 +79,15 @@ fn main() -> AppResult<()> {
         config.server = server;
     }
 
+    let update = update()?;
+    match update {
+        Status::UpToDate(version) => { info!("Already up-to-date: {}", version) }
+        Status::Updated(version) => {
+            println!("Updated: {}", version);
+            return Ok(());
+        }
+    }
+
     let mut app = App::new(config)?;
 
     let backend = CrosstermBackend::new(io::stderr());
@@ -94,6 +104,20 @@ fn main() -> AppResult<()> {
 
     tui.exit()?;
     Ok(())
+}
+
+pub fn update() -> self_update::errors::Result<Status> {
+    let update = self_update::backends::github::Update::configure()
+        .repo_owner("ja-ko")
+        .repo_name("ppoker")
+        .bin_name("ppoker")
+        .show_download_progress(true)
+        .current_version(cargo_crate_version!())
+        .show_output(false)
+        .bin_path_in_archive("ppoker-{{ target }}/{{ bin }}")
+        .build()?;
+
+    update.update()
 }
 
 
