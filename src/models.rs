@@ -1,4 +1,4 @@
-use std::fmt::{Formatter};
+use std::fmt::Formatter;
 use std::time::Instant;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -10,8 +10,8 @@ pub enum VoteData {
 impl std::fmt::Display for VoteData {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            VoteData::Number(n) => {f.write_fmt(format_args!("{}", n))}
-            VoteData::Special(c) => {f.write_fmt(format_args!("{}", c))}
+            VoteData::Number(n) => { f.write_fmt(format_args!("{}", n)) }
+            VoteData::Special(c) => { f.write_fmt(format_args!("{}", c)) }
         }
     }
 }
@@ -20,15 +20,15 @@ impl std::fmt::Display for VoteData {
 pub enum Vote {
     Missing,
     Hidden,
-    Revealed(VoteData)
+    Revealed(VoteData),
 }
 
 impl std::fmt::Display for Vote {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Vote::Missing => {f.write_str("Missing")}
-            Vote::Hidden => {f.write_str("Hidden")}
-            Vote::Revealed(v) => {f.write_fmt(format_args!("{}", v))}
+            Vote::Missing => { f.write_str("Missing") }
+            Vote::Hidden => { f.write_str("Hidden") }
+            Vote::Revealed(v) => { f.write_fmt(format_args!("{}", v)) }
         }
     }
 }
@@ -36,7 +36,7 @@ impl std::fmt::Display for Vote {
 #[derive(Debug, PartialEq, Clone)]
 pub enum UserType {
     Player,
-    Spectator
+    Spectator,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -50,7 +50,7 @@ pub struct Player {
 #[derive(Debug, PartialEq)]
 pub enum GamePhase {
     Playing,
-    Revealed
+    Revealed,
 }
 
 impl std::fmt::Display for GamePhase {
@@ -62,17 +62,17 @@ impl std::fmt::Display for GamePhase {
     }
 }
 
-#[derive(Debug,PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum LogLevel {
     Chat,
     Info,
     Error,
 }
 
-#[derive(Debug,PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum LogSource {
     Server,
-    Client
+    Client,
 }
 
 

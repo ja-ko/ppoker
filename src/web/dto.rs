@@ -1,6 +1,8 @@
 use std::time::Instant;
+
 use serde::{Deserialize, Serialize};
-use crate::models::{Player, Vote, VoteData, UserType as AppUserType, Room as AppRoom, GamePhase as AppGamePhase, LogLevel as AppLogLevel, LogEntry as AppLogEntry, LogSource};
+
+use crate::models::{GamePhase as AppGamePhase, LogEntry as AppLogEntry, LogLevel as AppLogLevel, LogSource, Player, Room as AppRoom, UserType as AppUserType, Vote, VoteData};
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -152,9 +154,8 @@ pub enum UserRequest<'a> {
 #[cfg(test)]
 mod tests {
     use assert_json_diff::assert_json_eq;
-    
-    
     use serde_json::json;
+
     use super::*;
 
     fn room_fixture() -> Room {

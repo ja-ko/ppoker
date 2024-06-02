@@ -1,14 +1,16 @@
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
+
 use crossterm::event;
-use crossterm::event::{KeyEvent, KeyEventKind, MouseEvent, Event as CrosstermEvent};
+use crossterm::event::{Event as CrosstermEvent, KeyEvent, KeyEventKind, MouseEvent};
+
 use crate::app::AppResult;
 
 #[derive(Clone, Copy, Debug)]
 pub enum FocusChange {
     Gained,
-    Lost
+    Lost,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -17,7 +19,7 @@ pub enum Event {
     Key(KeyEvent),
     Mouse(MouseEvent),
     Resize(u16, u16),
-    Focus(FocusChange)
+    Focus(FocusChange),
 }
 
 #[derive(Debug)]
@@ -40,7 +42,7 @@ impl EventHandler {
                     if shutdown_recv.try_recv().is_ok() {
                         break;
                     }
-                    
+
                     let timeout = tick_rate
                         .checked_sub(last_tick.elapsed())
                         .unwrap_or(tick_rate);
@@ -67,7 +69,6 @@ impl EventHandler {
                         sender.send(Event::Tick).expect("failed to send tick event");
                         last_tick = Instant::now();
                     }
-                    
                 }
             })
         };

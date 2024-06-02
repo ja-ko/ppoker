@@ -1,14 +1,16 @@
 use std::{io, panic};
 use std::collections::HashMap;
+
 use crossterm::event::{DisableFocusChange, EnableFocusChange, KeyEvent};
 use crossterm::terminal;
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
-use log::{debug};
+use log::debug;
 use ratatui::prelude::*;
+
 use crate::app::{App, AppResult};
 use crate::events::{Event, EventHandler, FocusChange};
-use crate::ui::log::LogPage;
 use crate::ui::{Page, UIAction};
+use crate::ui::log::LogPage;
 use crate::ui::voting::VotingPage;
 
 #[derive(Debug, PartialEq, Clone, Copy, Hash, Ord, PartialOrd, Eq)]

@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+
 use clap::Parser;
 use directories::ProjectDirs;
 use figment::Figment;
@@ -33,6 +34,7 @@ pub struct Cli {
     #[arg(short = 'N', long)]
     pub(crate) disable_notifications: bool,
 }
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
     pub name: String,
@@ -67,7 +69,7 @@ pub fn get_configdir() -> PathBuf {
     return dir.to_owned();
 }
 
-pub fn get_logdir()  -> PathBuf {
+pub fn get_logdir() -> PathBuf {
     let dir = create_projdirs().data_dir().join("logs");
     if !dir.exists() {
         fs::create_dir_all(&dir).expect("Failed to create log directory");
@@ -87,5 +89,5 @@ pub fn get_config() -> Config {
     return result.unwrap_or_else(|e| {
         error!("Failed to load config: {}", e);
         Config::default()
-    })
+    });
 }

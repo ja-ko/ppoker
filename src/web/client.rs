@@ -1,12 +1,14 @@
 use std::thread;
 use std::time::Duration;
+
 use log::{error, info};
 use snafu::Snafu;
-use crate::app::{AppResult};
+
+use crate::app::AppResult;
 use crate::config::Config;
 use crate::models::{LogEntry, Room};
 use crate::web::client::ClientError::{ServerClosedConnection, ServerUpdateMissing};
-use crate::web::dto::{UserRequest};
+use crate::web::dto::UserRequest;
 use crate::web::ws::{IncomingMessage, PokerSocket};
 
 #[derive(Debug)]
@@ -32,7 +34,7 @@ impl PokerClient {
             let room_update = result.socket.read()?;
             if let Some(IncomingMessage::RoomUpdate(room)) = room_update {
                 info!("Got initial room state with delay {}ms.", i * 20);
-                return Ok((result, (&room).into(), (&room.log).iter().enumerate().map(|(i,l)| {
+                return Ok((result, (&room).into(), (&room.log).iter().enumerate().map(|(i, l)| {
                     let mut result: LogEntry = l.into();
                     result.server_index = Some(i as u32);
                     result
@@ -59,7 +61,7 @@ impl PokerClient {
                 }
                 IncomingMessage::RoomUpdate(room) => {
                     let logs: Vec<LogEntry> = room.log.iter()
-                        .map(|l|l.into())
+                        .map(|l| l.into())
                         .collect();
                     for i in 0..logs.len() {
                         if log_results.len() == i {

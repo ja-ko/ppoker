@@ -1,8 +1,10 @@
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
+
 use log::{debug, info};
-use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
+use tungstenite::stream::MaybeTlsStream;
+
 use crate::app::AppResult;
 use crate::config::Config;
 use crate::web::dto::{Room, UserRequest};
@@ -95,18 +97,19 @@ impl PokerSocket {
 
         Ok(())
     }
-
 }
 
 #[cfg(test)]
 mod tests {
     use std::thread;
     use std::time::Duration;
+
     use pretty_assertions::assert_matches;
+
     use crate::app::AppResult;
     use crate::config::Config;
     use crate::web::dto::{GamePhase, UserRequest, UserType};
-    use crate::web::ws::{PokerSocket, IncomingMessage};
+    use crate::web::ws::{IncomingMessage, PokerSocket};
 
     fn get_config() -> Config {
         let mut config = Config::default();
@@ -140,7 +143,7 @@ mod tests {
         assert_eq!(room.users[0].username, "Johnnie Waters");
         assert_eq!(room.users[0].user_type, UserType::Participant);
 
-        client.send_request(UserRequest::ChangeName {name: "Ralph Muller"}).unwrap();
+        client.send_request(UserRequest::ChangeName { name: "Ralph Muller" }).unwrap();
         thread::sleep(Duration::from_millis(250));
         let messages = client.read_all().unwrap();
         assert_eq!(messages.len(), 1);
@@ -150,7 +153,7 @@ mod tests {
         assert_eq!(room.users[0].your_user, true);
         assert_eq!(room.users[0].username, "Ralph Muller");
 
-        client.send_request(UserRequest::PlayCard {card_value: Some("13")}).unwrap();
+        client.send_request(UserRequest::PlayCard { card_value: Some("13") }).unwrap();
         client.send_request(UserRequest::RevealCards).unwrap();
 
         thread::sleep(Duration::from_millis(250));
@@ -176,15 +179,15 @@ mod tests {
 
         let mut client1 = PokerSocket::connect(&config1).unwrap();
         let mut client2 = PokerSocket::connect(&config2).unwrap();
-        client1.send_request(UserRequest::PlayCard {card_value: Some("5")})?;
-        client2.send_request(UserRequest::PlayCard {card_value: Some("8")})?;
+        client1.send_request(UserRequest::PlayCard { card_value: Some("5") })?;
+        client2.send_request(UserRequest::PlayCard { card_value: Some("8") })?;
 
         thread::sleep(Duration::from_millis(200));
 
         client1.read_all()?;
         client2.read_all()?;
 
-        client1.send_request(UserRequest::PlayCard {card_value: None})?;
+        client1.send_request(UserRequest::PlayCard { card_value: None })?;
 
         thread::sleep(Duration::from_millis(200));
 

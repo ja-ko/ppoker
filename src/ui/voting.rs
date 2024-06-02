@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::ops::{AddAssign, DerefMut};
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Bar, BarChart, BarGroup, Block, BorderType, Cell, List, ListDirection, ListItem, ListState, Paragraph, Row, Table, Wrap};
 use tui_big_text::{BigText, PixelSize};
+
 use crate::app::{App, AppResult};
 use crate::models::{GamePhase, LogLevel, UserType, Vote, VoteData};
 use crate::models::GamePhase::Playing;
@@ -474,8 +476,8 @@ fn render_box_colored(title: &str, color: Style, rect: Rect, frame: &mut Frame) 
 
 fn colored_box_style(app: &App) -> Style {
     match app.room.phase {
-        Playing => {Style::new().white()}
-        GamePhase::Revealed => {Style::new().light_blue()}
+        Playing => { Style::new().white() }
+        GamePhase::Revealed => { Style::new().light_blue() }
     }
 }
 

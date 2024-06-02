@@ -6,6 +6,7 @@ use ratatui::prelude::*;
 use ratatui::style::Style;
 use ratatui::widgets::{Block, BorderType, Paragraph, Wrap};
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
+
 use crate::app::{App, AppResult};
 use crate::tui::UiPage;
 use crate::ui::{Page, UIAction};
@@ -26,7 +27,6 @@ impl LogPage {
 
 impl Page for LogPage {
     fn render(&mut self, _app: &mut App, frame: &mut Frame) {
-
         let mut helptexts: Vec<Span> = vec![];
         helptexts.append(&mut help_spans("h", "Toggle target selector"));
         helptexts.append(&mut help_spans("f", "Toggle focus"));
@@ -76,7 +76,6 @@ impl Page for LogPage {
         frame.render_widget(block, help);
 
         frame.render_widget(help_paragraph, help_inner);
-
     }
 
     fn input(&mut self, _app: &mut App, event: KeyEvent) -> AppResult<UIAction> {

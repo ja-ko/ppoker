@@ -1,10 +1,12 @@
 use std::error;
 use std::time::{Duration, Instant};
+
 use log::{debug, error, info};
 use notify_rust::{Notification, Timeout};
-use crate::web::client::PokerClient;
+
 use crate::config::Config;
 use crate::models::{GamePhase, LogEntry, LogLevel, LogSource, Room, Vote, VoteData};
+use crate::web::client::PokerClient;
 
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
 
@@ -70,7 +72,7 @@ impl App {
                 self.is_notified = true;
                 self.notify_vote_at = None;
             }
-        }  
+        }
     }
 
     #[inline]

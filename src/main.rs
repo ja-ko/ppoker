@@ -1,5 +1,6 @@
 use std::{fs, io};
 use std::path::PathBuf;
+
 use filetime::FileTime;
 use glob::glob;
 use log::{debug, error, info, LevelFilter};
@@ -7,6 +8,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use regex::Regex;
 use self_update::{cargo_crate_version, Status};
+
 use crate::app::{App, AppResult};
 use crate::config::{get_config, get_logdir};
 use crate::events::EventHandler;
@@ -105,7 +107,7 @@ pub fn update() -> self_update::errors::Result<Status> {
         .show_output(false)
         .bin_path_in_archive("ppoker-{{ target }}/{{ bin }}")
         .build()?;
-    
+
     update.update()
 }
 
