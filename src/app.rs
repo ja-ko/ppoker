@@ -55,13 +55,13 @@ impl App {
                     info!("Skipping notification because user has application focused.")
                 } else {
                     info!("Notifying user of missing vote.");
-                    Notification::new()
+                    if let Err(e) = Notification::new()
                         .summary("Planning Poker")
                         .body("Your vote is the last one missing.")
                         .timeout(Timeout::Milliseconds(10000))
-                        .show().unwrap_or_else(|err| {
-                            error!("Failed to send notification: {}", err);
-                    });
+                        .show() {
+                        error!("Failed to send notification: {}", e);
+                    }
                 }
                 self.is_notified = true;
                 self.notify_vote_at = None;
