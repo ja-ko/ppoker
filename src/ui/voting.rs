@@ -220,6 +220,8 @@ impl VotingPage {
             Span::raw(app.config.server.as_str()).bold(),
             Span::raw(" | State: "),
             Span::raw(format!("{}", app.room.phase)).style(state_color.bold()),
+            Span::raw(" | Round: "),
+            Span::raw(app.round_number.to_string()).bold(),
         ]);
 
         let paragraph = Paragraph::new(text)

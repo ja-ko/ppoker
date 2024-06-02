@@ -37,7 +37,7 @@ impl App {
             room,
             client,
             log: vec![],
-            round_number: 0,
+            round_number: 1,
             config,
             has_focus: true,
             notify_vote_at: None,
