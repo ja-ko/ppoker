@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.2](https://github.com/ja-ko/ppoker/compare/v0.2.1...v0.2.2) (2024-06-02)
+
+
+### Bug Fixes
+
+* **updater:** fix updater not working with compressed tar images ([fa28fab](https://github.com/ja-ko/ppoker/commit/fa28fab077989e2e81b0d374496b5ffbaa0f4424))
+* **updater:** start application if user cancels update ([aa3b68e](https://github.com/ja-ko/ppoker/commit/aa3b68eac8f802205a0ac75041135223e1b96879))
+
 ## [0.2.1](https://github.com/ja-ko/ppoker/compare/v0.2.0...v0.2.1) (2024-06-02)
 
 
