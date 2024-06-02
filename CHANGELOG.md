@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/ja-ko/ppoker/compare/v0.2.0...v0.2.1) (2024-06-02)
+
+
+### Bug Fixes
+
+* **updater:** fix updater being unable to create the temporary archive file. ([8055ca5](https://github.com/ja-ko/ppoker/commit/8055ca53a86e3aef333950d35fc392492855f033))
+* **updater:** fix updater stopping the application when no asset is found. ([6d87f68](https://github.com/ja-ko/ppoker/commit/6d87f68661f1c91098c5a6beb8c2cd449750edd2))
+
 ## [0.2.0](https://github.com/ja-ko/ppoker/compare/v0.1.0...v0.2.0) (2024-06-02)
 
 
