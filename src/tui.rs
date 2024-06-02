@@ -1,6 +1,6 @@
 use std::{io, panic};
 use std::collections::HashMap;
-use crossterm::event::KeyEvent;
+use crossterm::event::{DisableFocusChange, EnableFocusChange, KeyEvent};
 use crossterm::terminal;
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 use log::{debug};
@@ -31,7 +31,7 @@ impl<B: Backend> Tui<B> {
     }
     pub fn init(&mut self) -> AppResult<()> {
         terminal::enable_raw_mode()?;
-        crossterm::execute!(io::stderr(), EnterAlternateScreen)?;
+        crossterm::execute!(io::stderr(), EnterAlternateScreen, EnableFocusChange)?;
 
         let panic_hook = panic::take_hook();
         panic::set_hook(Box::new(move |panic| {
@@ -60,7 +60,7 @@ impl<B: Backend> Tui<B> {
 
     fn reset() -> AppResult<()> {
         terminal::disable_raw_mode()?;
-        crossterm::execute!(io::stderr(), LeaveAlternateScreen)?;
+        crossterm::execute!(io::stderr(), LeaveAlternateScreen, DisableFocusChange)?;
         Ok(())
     }
 
