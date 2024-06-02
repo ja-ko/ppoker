@@ -78,6 +78,9 @@ fn main() -> AppResult<()> {
     if let Some(server) = cli.server {
         config.server = server;
     }
+    if cli.skip_update_check {
+        config.skip_update_check = true;
+    }
 
     let update = update()?;
     match update {

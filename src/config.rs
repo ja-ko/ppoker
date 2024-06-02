@@ -32,6 +32,7 @@ pub struct Config {
     pub name: String,
     pub room: String,
     pub server: String,
+    pub skip_update_check: bool
 }
 
 impl Default for Config {
@@ -40,6 +41,7 @@ impl Default for Config {
             name: whoami::username(),
             room: petname::petname(3, "").expect("Failed to generate random room name"),
             server: "wss://pp.discordia.network/".to_owned(),
+            skip_update_check: false,
         }
     }
 }
