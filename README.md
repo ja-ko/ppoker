@@ -7,6 +7,10 @@ This is an alternative, cross-platform terminal client to the planning poker ser
 input. The user interface is highly opinionated and probably not suited for everyone, relying heavily on keyboard
 shortcuts.
 
+## Installation
+
+Download the current version for your operating system from [the release page](https://github.com/ja-ko/ppoker/releases).
+
 ## Usage
 
 ### How to run
