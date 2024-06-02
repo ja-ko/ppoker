@@ -1,6 +1,5 @@
 use std::{fs, io};
 use std::path::PathBuf;
-use clap::Parser;
 use filetime::FileTime;
 use glob::glob;
 use log::{debug, error, info, LevelFilter};
@@ -9,7 +8,6 @@ use ratatui::Terminal;
 use regex::Regex;
 use self_update::{cargo_crate_version, Status};
 use crate::app::{App, AppResult};
-use crate::cli::Cli;
 use crate::config::{get_config, get_logdir};
 use crate::events::EventHandler;
 use crate::tui::Tui;
@@ -19,7 +17,6 @@ mod tui;
 mod ui;
 mod events;
 mod models;
-mod cli;
 mod config;
 mod web;
 
@@ -67,23 +64,7 @@ fn main() -> AppResult<()> {
 
     setup_logging().unwrap_or_else(|err| error!("Failed to setup logging: {:?}", err));
 
-    let cli = Cli::parse();
-    let mut config = get_config();
-    if let Some(name) = cli.name {
-        config.name = name;
-    }
-    if let Some(room) = cli.room {
-        config.room = room;
-    }
-    if let Some(server) = cli.server {
-        config.server = server;
-    }
-    if cli.skip_update_check {
-        config.skip_update_check = true;
-    }
-    if cli.disable_notifications {
-        config.disable_notifications = true;
-    }
+    let config = get_config();
 
     let update = update()?;
     match update {
