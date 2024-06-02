@@ -3,11 +3,11 @@ use std::path::PathBuf;
 
 use filetime::FileTime;
 use glob::glob;
-use log::{debug, error, info, LevelFilter};
+use log::{debug, error, info, LevelFilter, warn};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use regex::Regex;
-use self_update::{cargo_crate_version, Status};
+use self_update::{Status};
 
 use crate::app::{App, AppResult};
 use crate::config::{get_config, get_logdir};
@@ -80,10 +80,15 @@ fn main() -> AppResult<()> {
             }
             Ok(UpdateResult::UpToDate) => {}
             Err(e) => {
-                error!("Failed to update the application. {}", e);
-                tui_logger::move_events();
-                println!("Failed to update the application.");
-                return Err(e.into());
+                if matches!(e, UpdateError::NoCompatibleAssetFound) {
+                    warn!("Current release has no asset for current target.");
+                    tui_logger::move_events();
+                } else {
+                    error!("Failed to update the application. {}", e);
+                    tui_logger::move_events();
+                    println!("Failed to update the application.");
+                    return Err(e.into());
+                }
             }
         }
     }

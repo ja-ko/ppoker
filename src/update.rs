@@ -4,8 +4,8 @@ use log::{debug, error, info};
 use self_update::{cargo_crate_version, Extract, self_replace};
 use semver::Version;
 use snafu::Snafu;
-use crate::app::AppResult;
 
+#[derive(Debug, PartialEq)]
 pub enum UpdateResult {
     UpToDate,
     Updated,
