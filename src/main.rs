@@ -79,7 +79,7 @@ fn main() -> AppResult<()> {
             }
             Ok(UpdateResult::UpToDate) => {}
             Err(e) => {
-                if matches!(e, UpdateError::NoCompatibleAssetFound) {
+                if matches!(e, UpdateError::NoCompatibleAssetFound) || matches!(e, UpdateError::UserCanceled) {
                     warn!("Current release has no asset for current target.");
                     tui_logger::move_events();
                 } else {
