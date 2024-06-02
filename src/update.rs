@@ -89,7 +89,7 @@ pub fn self_update() -> Result<UpdateResult, UpdateError> {
 
     let tmp_dir = tempfile::TempDir::new()?;
     let tmp_tarball_path = tmp_dir.path().join(&asset.name);
-    let tmp_tarball = ::std::fs::File::open(&tmp_tarball_path)?;
+    let tmp_tarball = ::std::fs::File::create(&tmp_tarball_path)?;
 
     info!("Downloading release asset to {:?}.", tmp_tarball_path);
 
