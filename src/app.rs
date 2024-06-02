@@ -1,9 +1,10 @@
 use std::error;
-use std::time::Instant;
-use log::debug;
+use std::time::{Duration, Instant};
+use log::{debug, error, info};
+use notify_rust::{Notification, Timeout};
 use crate::web::client::PokerClient;
 use crate::config::Config;
-use crate::models::{GamePhase, LogEntry, LogLevel, LogSource, Room, VoteData};
+use crate::models::{GamePhase, LogEntry, LogLevel, LogSource, Player, Room, Vote, VoteData};
 
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
 
@@ -16,7 +17,13 @@ pub struct App {
     pub client: PokerClient,
     pub log: Vec<LogEntry>,
 
+    pub round_number: u32,
+
     pub config: Config,
+
+    pub has_focus: bool,
+    notify_vote_at: Option<Instant>,
+    is_notified: bool,
 }
 
 impl App {
@@ -30,25 +37,68 @@ impl App {
             room,
             client,
             log: vec![],
+            round_number: 0,
             config,
+            has_focus: true,
+            notify_vote_at: None,
+            is_notified: false,
         };
         result.update_server_log(log);
 
         Ok(result)
     }
 
-    pub fn tick(&self) {}
+    pub fn tick(&mut self) {
+        if let Some(notify_at) = &self.notify_vote_at {
+            if *notify_at < Instant::now() && !self.is_notified {
+                if self.has_focus {
+                    info!("Skipping notification because user has application focused.")
+                } else {
+                    info!("Notifying user of missing vote.");
+                    Notification::new()
+                        .summary("Planning Poker")
+                        .body("Your vote is the last one missing.")
+                        .timeout(Timeout::Milliseconds(10000))
+                        .show().unwrap_or_else(|err| {
+                            error!("Failed to send notification: {}", err);
+                    });
+                }
+                self.is_notified = true;
+                self.notify_vote_at = None;
+            }
+        }  
+    }
 
+    #[inline]
     fn deck_has_value(&self, vote: u8) -> bool {
         self.room.deck.iter().find(|item| vote.to_string().eq_ignore_ascii_case(item)).is_some()
+    }
+
+    #[inline]
+    fn is_my_vote_last_missing(&self) -> bool {
+        self.room.players.len() > 1
+            && self.room.players.iter().filter(|p| p.vote == Vote::Missing).count() == 1
+            && self.vote.is_none()
+            && self.room.phase == GamePhase::Playing
     }
 
     pub fn merge_update(&mut self, update: Room) {
         debug!("room update: {:?}", update);
         if update.phase == GamePhase::Playing && self.room.phase != GamePhase::Playing {
             self.vote = None;
+            self.round_number += 1;
+            self.is_notified = false;
+            self.notify_vote_at = None;
         }
         self.room = update;
+        if self.is_my_vote_last_missing() {
+            if !self.is_notified && self.notify_vote_at == None {
+                self.log_message(LogLevel::Info, "Your vote is the last one missing.".to_string());
+                self.notify_vote_at = Some(Instant::now() + Duration::from_secs(15));
+            }
+        } else {
+            self.notify_vote_at = None;
+        }
     }
 
     pub fn vote(&mut self, data: &str) -> AppResult<()> {

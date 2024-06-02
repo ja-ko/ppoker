@@ -3,9 +3,10 @@ use std::collections::HashMap;
 use crossterm::event::KeyEvent;
 use crossterm::terminal;
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
+use log::{debug, info};
 use ratatui::prelude::*;
 use crate::app::{App, AppResult};
-use crate::events::{Event, EventHandler};
+use crate::events::{Event, EventHandler, FocusChange};
 use crate::ui::log::LogPage;
 use crate::ui::{Page, UIAction};
 use crate::ui::voting::VotingPage;
@@ -76,7 +77,17 @@ impl<B: Backend> Tui<B> {
             Event::Key(event) => self.handle_key(event, app)?,
             Event::Mouse(_) => {}
             Event::Resize(_, _) => {}
-            Event::Focus(_) => {}
+            Event::Focus(change) => {
+                debug!("Focus change: {:?}", change);
+                match change {
+                    FocusChange::Gained => {
+                        app.has_focus = true;
+                    }
+                    FocusChange::Lost => {
+                        app.has_focus = false;
+                    }
+                }
+            }
         }
         Ok(())
     }

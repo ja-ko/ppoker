@@ -119,7 +119,7 @@ pub fn update() -> self_update::errors::Result<Status> {
         .show_output(false)
         .bin_path_in_archive("ppoker-{{ target }}/{{ bin }}")
         .build()?;
-
+    
     update.update()
 }
 
