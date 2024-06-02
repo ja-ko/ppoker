@@ -4,7 +4,7 @@ use log::{debug, error, info};
 use notify_rust::{Notification, Timeout};
 use crate::web::client::PokerClient;
 use crate::config::Config;
-use crate::models::{GamePhase, LogEntry, LogLevel, LogSource, Player, Room, Vote, VoteData};
+use crate::models::{GamePhase, LogEntry, LogLevel, LogSource, Room, Vote, VoteData};
 
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
 

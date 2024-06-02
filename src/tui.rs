@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crossterm::event::KeyEvent;
 use crossterm::terminal;
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
-use log::{debug, info};
+use log::{debug};
 use ratatui::prelude::*;
 use crate::app::{App, AppResult};
 use crate::events::{Event, EventHandler, FocusChange};
