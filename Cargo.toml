@@ -38,7 +38,7 @@ reqwest = "0.12.4"
 self_update = { version = "0.40", features = ["archive-zip", "compression-zip-deflate"] }
 
 [target.'cfg( target_family = "unix" )'.dependencies]
-self_update = { version = "0.40", features = ["archive-tar"] }
+self_update = { version = "0.40", features = ["archive-tar", "compression-flate2"] }
 
 [dev-dependencies]
 pretty_assertions = { version = "1", features = ["unstable"] }
