@@ -9,7 +9,16 @@ shortcuts.
 
 ## Installation
 
-Download the current version for your operating system from [the release page](https://github.com/ja-ko/ppoker/releases).
+Download the current version for your operating system from 
+[the release page](https://github.com/ja-ko/ppoker/releases) or use the following direct links:
+
+<!-- x-release-please-start-version -->
+
+* [Linux](https://github.com/ja-ko/ppoker/releases/download/v0.2.3/ppoker-x86_64-unknown-linux-gnu.tar.gz)
+* [Windows](https://github.com/ja-ko/ppoker/releases/download/v0.2.3/ppoker-x86_64-pc-windows-msvc.zip)
+* [Mac](https://github.com/ja-ko/ppoker/releases/download/v0.2.3/ppoker-x86_64-apple-darwin.tar.gz)
+
+<!-- x-release-please-end -->
 
 ## Usage
 
