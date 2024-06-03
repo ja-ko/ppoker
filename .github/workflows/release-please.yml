@@ -15,7 +15,5 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         with:
-          # this is a built-in strategy in release-please, see "Action Inputs"
-          # for more options
-          release-type: rust
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json

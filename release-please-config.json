@@ -1,0 +1,13 @@
+{
+  "bootstrap-sha": "8e3bc3f0f4cfd2330ebaa48dfb00a0fdfee3461f",
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": true,
+  "release-type": "rust",
+  "packages": {
+    ".": {
+      "extra-files": [
+        "README.md"
+      ]
+    }
+  }
+}
