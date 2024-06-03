@@ -49,23 +49,24 @@ impl VotingPage {
     }
 
     pub fn confirm_input(&mut self, app: &mut App) -> AppResult<()> {
+        let buffer = self.input_buffer.as_ref().map(|b| b.trim().replace('\n', ""));
         match self.input_mode {
             InputMode::Vote if app.room.phase == GamePhase::Playing => {
-                if let Some(input_buffer) = &self.input_buffer {
+                if let Some(input_buffer) = &buffer {
                     let vote = input_buffer.clone();
                     app.vote(vote.as_str())?;
                 }
                 self.cancel_input();
             }
             InputMode::Name => {
-                if let Some(input_buffer) = &self.input_buffer {
+                if let Some(input_buffer) = &buffer {
                     let name = input_buffer.clone();
                     app.rename(name)?;
                 }
                 self.cancel_input();
             }
             InputMode::Chat => {
-                if let Some(input_buffer) = &self.input_buffer {
+                if let Some(input_buffer) = &buffer {
                     let name = input_buffer.clone();
                     app.chat(name)?;
                 }
@@ -422,7 +423,7 @@ impl Page for VotingPage {
                         self.cancel_input();
                     }
 
-                    KeyCode::Char('\n') | KeyCode::Enter => {
+                    KeyCode::Enter => {
                         self.confirm_input(app)?;
                     }
 
