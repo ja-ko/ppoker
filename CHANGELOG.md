@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.3](https://github.com/ja-ko/ppoker/compare/v0.2.2...v0.2.3) (2024-06-03)
+
+
+### Bug Fixes
+
+* **app:** allow voting of non numeric cards in deck. ([3ab1abd](https://github.com/ja-ko/ppoker/commit/3ab1abdf609f9a0e0e3a4b7788f816c6f75c9a9d))
+* **ui:** hide the confirm dialog if someone else switches phase ([42f25ac](https://github.com/ja-ko/ppoker/commit/42f25ac2b20913c745eb2666e7400db372046429))
+* **ui:** remove newlines from input values ([0cd09ae](https://github.com/ja-ko/ppoker/commit/0cd09ae3b2d94a8bb3fdbd87fc74f2aa4713a1aa))
+
 ## [0.2.2](https://github.com/ja-ko/ppoker/compare/v0.2.1...v0.2.2) (2024-06-02)
 
 
