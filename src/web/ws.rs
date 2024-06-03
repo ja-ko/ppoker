@@ -30,6 +30,9 @@ impl PokerSocket {
                 let stream = t.get_mut();
                 stream.set_nonblocking(true).expect("Unable to switch stream to nonblocking mode");
             }
+            MaybeTlsStream::Plain(t) => {
+                t.set_nonblocking(true).expect("Unable to switch stream to nonblocking mode");
+            }
             _ => {}
         }
         info!("Socket connection established.");
