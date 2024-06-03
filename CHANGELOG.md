@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.5](https://github.com/ja-ko/ppoker/compare/v0.2.4...v0.2.5) (2024-06-03)
+
+
+### Bug Fixes
+
+* **ui:** avoid a crash related to unicode characters in long names ([f04c881](https://github.com/ja-ko/ppoker/commit/f04c88183ebeeb28a9f461ba75f0587805f639a0))
+* **ui:** hide input box when phase is changed ([d3afe84](https://github.com/ja-ko/ppoker/commit/d3afe84223a5c300541d856db4e3caf43908927c))
+* **ui:** hide ws debug logs by default ([2bf3638](https://github.com/ja-ko/ppoker/commit/2bf36389269f6e3cac112ba1995066ac4acaa6c9))
+
 ## [0.2.4](https://github.com/ja-ko/ppoker/compare/ppoker-v0.2.3...ppoker-v0.2.4) (2024-06-03)
 
 
