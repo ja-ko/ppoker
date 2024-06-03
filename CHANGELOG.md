@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.4](https://github.com/ja-ko/ppoker/compare/ppoker-v0.2.3...ppoker-v0.2.4) (2024-06-03)
+
+
+### Bug Fixes
+
+* **log:** write logs on panic or exit. ([7f3f093](https://github.com/ja-ko/ppoker/commit/7f3f0939c2a807aa6151e13ec6c75b2030627ab3))
+* **ui:** Cleanly shutdown the tui before exitting on error ([0e39e86](https://github.com/ja-ko/ppoker/commit/0e39e86edf90b27641f4736cfd226b0a1b021fdf))
+* **ui:** no longer interpret newlines when pasted. ([e899534](https://github.com/ja-ko/ppoker/commit/e899534ffc8ba3ce8bdd65f4df1b05c0205f437e))
+
 ## [0.2.3](https://github.com/ja-ko/ppoker/compare/v0.2.2...v0.2.3) (2024-06-03)
 
 
