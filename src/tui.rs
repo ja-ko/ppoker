@@ -37,6 +37,7 @@ impl<B: Backend> Tui<B> {
 
         let panic_hook = panic::take_hook();
         panic::set_hook(Box::new(move |panic| {
+            tui_logger::move_events();
             Self::reset().expect("failed to reset the terminal");
             panic_hook(panic);
         }));

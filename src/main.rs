@@ -61,7 +61,7 @@ fn setup_logging() -> AppResult<()> {
     Ok(())
 }
 
-fn main() -> AppResult<()> {
+fn run() -> AppResult<()> {
     tui_logger::init_logger(LevelFilter::Debug).expect("Unable to setup logging capture");
     tui_logger::set_default_level(LevelFilter::Debug);
 
@@ -71,7 +71,6 @@ fn main() -> AppResult<()> {
 
     if !config.skip_update_check {
         let res = self_update();
-        tui_logger::move_events();
         match res {
             Ok(UpdateResult::Updated) => {
                 println!("Please restart the application.");
@@ -81,10 +80,8 @@ fn main() -> AppResult<()> {
             Err(e) => {
                 if matches!(e, UpdateError::NoCompatibleAssetFound) || matches!(e, UpdateError::UserCanceled) {
                     warn!("Current release has no asset for current target.");
-                    tui_logger::move_events();
                 } else {
                     error!("Failed to update the application. {}", e);
-                    tui_logger::move_events();
                     println!("Failed to update the application.");
                     return Err(e.into());
                 }
@@ -108,6 +105,12 @@ fn main() -> AppResult<()> {
 
     tui.exit()?;
     Ok(())
+}
+
+fn main() -> AppResult<()> {
+    let result = run();
+    tui_logger::move_events();
+    result
 }
 
 
