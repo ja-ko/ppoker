@@ -47,7 +47,7 @@ pub struct Player {
     pub user_type: UserType,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GamePhase {
     Playing,
     Revealed,

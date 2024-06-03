@@ -25,6 +25,7 @@ pub enum InputMode {
 pub struct VotingPage {
     pub input_mode: InputMode,
     pub input_buffer: Option<String>,
+    last_phase: GamePhase
 }
 
 impl VotingPage {
@@ -32,6 +33,7 @@ impl VotingPage {
         Self {
             input_mode: InputMode::Menu,
             input_buffer: None,
+            last_phase: GamePhase::Playing,
         }
     }
 
@@ -363,13 +365,13 @@ impl Page for VotingPage {
 
         let vote_view = chunks[0];
         let log = chunks[1];
-
-        if app.room.phase == GamePhase::Playing && self.input_mode == InputMode::ResetConfirm {
-            self.input_mode = InputMode::Menu;
-        } else if app.room.phase == GamePhase::Revealed && self.input_mode == InputMode::RevealConfirm {
-            self.input_mode = InputMode::Menu;
+        
+        if app.room.phase != self.last_phase {
+            if self.input_mode != InputMode::Name {
+                self.input_mode = InputMode::Menu;
+            }
+            self.last_phase = app.room.phase;
         }
-
 
         self.render_own_vote(app, vote_view, frame);
         self.render_log(app, log, frame);
