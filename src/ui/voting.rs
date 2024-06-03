@@ -9,7 +9,6 @@ use tui_big_text::{BigText, PixelSize};
 
 use crate::app::{App, AppResult};
 use crate::models::{GamePhase, LogLevel, UserType, Vote, VoteData};
-use crate::models::GamePhase::Playing;
 use crate::tui::UiPage;
 use crate::ui::{Page, UIAction};
 
@@ -207,7 +206,7 @@ impl VotingPage {
         let rect = render_box("Overview", rect, frame);
 
         let name = crate::ui::voting::trim_name(app.name.as_str());
-        let state_color = if app.room.phase == Playing {
+        let state_color = if app.room.phase == GamePhase::Playing {
             Style::new().yellow()
         } else {
             Style::new().light_blue()
@@ -364,6 +363,12 @@ impl Page for VotingPage {
         let vote_view = chunks[0];
         let log = chunks[1];
 
+        if app.room.phase == GamePhase::Playing && self.input_mode == InputMode::ResetConfirm {
+            self.input_mode = InputMode::Menu;
+        } else if app.room.phase == GamePhase::Revealed && self.input_mode == InputMode::RevealConfirm {
+            self.input_mode = InputMode::Menu;
+        }
+
 
         self.render_own_vote(app, vote_view, frame);
         self.render_log(app, log, frame);
@@ -476,7 +481,7 @@ fn render_box_colored(title: &str, color: Style, rect: Rect, frame: &mut Frame) 
 
 fn colored_box_style(app: &App) -> Style {
     match app.room.phase {
-        Playing => { Style::new().white() }
+        GamePhase::Playing => { Style::new().white() }
         GamePhase::Revealed => { Style::new().light_blue() }
     }
 }
