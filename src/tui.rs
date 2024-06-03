@@ -1,7 +1,7 @@
 use std::{io, panic};
 use std::collections::HashMap;
 
-use crossterm::event::{DisableFocusChange, EnableFocusChange, KeyEvent};
+use crossterm::event::{DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange, KeyEvent};
 use crossterm::terminal;
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 use log::debug;
@@ -33,7 +33,7 @@ impl<B: Backend> Tui<B> {
     }
     pub fn init(&mut self) -> AppResult<()> {
         terminal::enable_raw_mode()?;
-        crossterm::execute!(io::stderr(), EnterAlternateScreen, EnableFocusChange)?;
+        crossterm::execute!(io::stderr(), EnterAlternateScreen, EnableFocusChange, EnableBracketedPaste)?;
 
         let panic_hook = panic::take_hook();
         panic::set_hook(Box::new(move |panic| {
@@ -63,7 +63,7 @@ impl<B: Backend> Tui<B> {
 
     fn reset() -> AppResult<()> {
         terminal::disable_raw_mode()?;
-        crossterm::execute!(io::stderr(), LeaveAlternateScreen, DisableFocusChange)?;
+        crossterm::execute!(io::stderr(), LeaveAlternateScreen, DisableFocusChange, DisableBracketedPaste)?;
         Ok(())
     }
 
@@ -91,6 +91,7 @@ impl<B: Backend> Tui<B> {
                     }
                 }
             }
+            Event::Paste(text) => { self.handle_paste(app, text); }
         }
         Ok(())
     }
@@ -104,6 +105,11 @@ impl<B: Backend> Tui<B> {
             UIAction::Quit => { app.running = false; }
         }
         Ok(())
+    }
+
+    fn handle_paste(&mut self, app: &mut App, text: String) {
+        let page = self.get_current_page_impl();
+        page.pasted(app, text);
     }
 
     #[inline]

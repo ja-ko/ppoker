@@ -466,6 +466,17 @@ impl Page for VotingPage {
         }
         Ok(UIAction::Continue)
     }
+
+    fn pasted(&mut self, _app: &mut App, text: String) {
+        match self.input_mode {
+            InputMode::Chat | InputMode::Vote | InputMode::Name => {
+                if let Some(input_buffer) = &mut self.input_buffer {
+                    input_buffer.push_str(text.as_str());
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn render_box_colored(title: &str, color: Style, rect: Rect, frame: &mut Frame) -> Rect {

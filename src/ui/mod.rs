@@ -17,4 +17,6 @@ pub enum UIAction {
 pub trait Page {
     fn render(&mut self, app: &mut App, frame: &mut Frame);
     fn input(&mut self, app: &mut App, event: KeyEvent) -> AppResult<UIAction>;
+
+    fn pasted(&mut self, _app: &mut App, _text: String) {}
 }

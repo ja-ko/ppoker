@@ -13,13 +13,14 @@ pub enum FocusChange {
     Lost,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Event {
     Tick,
     Key(KeyEvent),
     Mouse(MouseEvent),
     Resize(u16, u16),
     Focus(FocusChange),
+    Paste(String),
 }
 
 #[derive(Debug)]
@@ -60,7 +61,7 @@ impl EventHandler {
                             CrosstermEvent::Resize(w, h) => sender.send(Event::Resize(w, h)),
                             CrosstermEvent::FocusGained => sender.send(Event::Focus(FocusChange::Gained)),
                             CrosstermEvent::FocusLost => sender.send(Event::Focus(FocusChange::Lost)),
-                            CrosstermEvent::Paste(_) => unimplemented!(),
+                            CrosstermEvent::Paste(text) => sender.send(Event::Paste(text)),
                         }
                             .expect("failed to send terminal event")
                     }
