@@ -365,7 +365,7 @@ impl Page for VotingPage {
 
         let vote_view = chunks[0];
         let log = chunks[1];
-        
+
         if app.room.phase != self.last_phase {
             if self.input_mode != InputMode::Name {
                 self.input_mode = InputMode::Menu;
@@ -570,9 +570,12 @@ fn average_votes(app: &mut App) -> f32 {
 
 fn trim_name(name: &str) -> &str {
     let name = name.trim();
-    let name = if name.len() > 25 { &name[..25] } else { name };
-
+    let mut chars = name.char_indices();
+    let end = chars.nth(25);
+    if let Some((idx, _char)) = end {
+        &name[..idx]
+    } else {
+        name
+    }
     // todo: escape the name for control chars
-
-    name
 }
