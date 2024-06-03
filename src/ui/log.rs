@@ -21,6 +21,7 @@ impl LogPage {
             state: TuiWidgetState::default()
                 .set_level_for_target("tungstenite::client", LevelFilter::Warn)
                 .set_level_for_target("tungstenite::handshake::client", LevelFilter::Warn)
+                .set_level_for_target("ppoker::web::ws", LevelFilter::Info)
         }
     }
 }
