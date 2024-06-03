@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.6](https://github.com/ja-ko/ppoker/compare/v0.2.5...v0.2.6) (2024-06-03)
+
+
+### Bug Fixes
+
+* **network:** fix application hanging when connecting to a non tls websocket. ([0ce3a41](https://github.com/ja-ko/ppoker/commit/0ce3a4178c69bcb3511f442a32b602352ddf7949))
+
 ## [0.2.5](https://github.com/ja-ko/ppoker/compare/v0.2.4...v0.2.5) (2024-06-03)
 
 
