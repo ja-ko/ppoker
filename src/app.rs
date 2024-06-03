@@ -76,8 +76,8 @@ impl App {
     }
 
     #[inline]
-    fn deck_has_value(&self, vote: u8) -> bool {
-        self.room.deck.iter().find(|item| vote.to_string().eq_ignore_ascii_case(item)).is_some()
+    fn deck_has_value(&self, vote: &str) -> bool {
+        self.room.deck.iter().find(|item| item.eq_ignore_ascii_case(vote)).is_some()
     }
 
     #[inline]
@@ -108,22 +108,25 @@ impl App {
     }
 
     pub fn vote(&mut self, data: &str) -> AppResult<()> {
-        let vote = data.parse::<u8>();
-        if vote.is_ok() {
-            let vote = vote.unwrap();
-            if self.deck_has_value(vote) {
-                let vote = VoteData::Number(vote);
+        let data = data.trim();
+        if data == "-" {
+            self.vote = None;
+            return Ok(());
+        }
+
+        if self.deck_has_value(data) {
+            let numeric = data.parse::<u8>();
+            if numeric.is_ok() {
+                let vote = VoteData::Number(numeric.unwrap());
                 self.client.vote(Some(format!("{}", &vote).as_str()))?;
                 self.vote = Some(vote);
             } else {
-                self.log_message(LogLevel::Error, format!("Card is not in the deck: {}", data));
+                let vote = VoteData::Special(data.to_string());
+                self.client.vote(Some(data))?;
+                self.vote = Some(vote);
             }
         } else {
-            self.vote = None;
-            self.client.vote(None)?;
-            if data != "-" {
-                self.log_message(LogLevel::Error, format!("Unable to parse card: {}", data));
-            }
+            self.log_message(LogLevel::Error, format!("Card is not in the deck: {}", data));
         }
         Ok(())
     }
