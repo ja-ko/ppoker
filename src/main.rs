@@ -1,4 +1,5 @@
 use std::{fs, io};
+use std::io::Stderr;
 use std::path::PathBuf;
 
 use filetime::FileTime;
@@ -61,7 +62,16 @@ fn setup_logging() -> AppResult<()> {
     Ok(())
 }
 
-fn run() -> AppResult<()> {
+fn run(app: &mut App, tui: &mut Tui<CrosstermBackend<Stderr>>) -> AppResult<()> {
+    while app.running {
+        tui.draw(app)?;
+        tui.handle_events(app)?;
+        app.update()?;
+    }
+    Ok(())
+}
+
+fn setup() -> AppResult<Option<(App, Tui<CrosstermBackend<Stderr>>)>> {
     tui_logger::init_logger(LevelFilter::Debug).expect("Unable to setup logging capture");
     tui_logger::set_default_level(LevelFilter::Debug);
 
@@ -74,7 +84,7 @@ fn run() -> AppResult<()> {
         match res {
             Ok(UpdateResult::Updated) => {
                 println!("Please restart the application.");
-                return Ok(())
+                return Ok(None);
             }
             Ok(UpdateResult::UpToDate) => {}
             Err(e) => {
@@ -88,27 +98,32 @@ fn run() -> AppResult<()> {
             }
         }
     }
-
-    let mut app = App::new(config)?;
+    
+    let app = App::new(config)?;
 
     let backend = CrosstermBackend::new(io::stderr());
     let terminal = Terminal::new(backend)?;
     let events = EventHandler::new(250);
     let mut tui = Tui::new(terminal, events);
     tui.init()?;
+    
+    Ok(Some((app, tui)))
+}
 
-    while app.running {
-        tui.draw(&mut app)?;
-        tui.handle_events(&mut app)?;
-        app.update()?;
+fn execute() -> AppResult<()> {
+    if let Some((mut app, mut tui)) = setup()? {
+        let result = run(&mut app, &mut tui);
+        if let Err(e) = tui.exit() {
+            error!("Failed to stop tui: {:?}", e)
+        }
+        result
+    } else {
+        Ok(())
     }
-
-    tui.exit()?;
-    Ok(())
 }
 
 fn main() -> AppResult<()> {
-    let result = run();
+    let result = execute();
     tui_logger::move_events();
     result
 }
