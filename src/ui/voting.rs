@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::ops::{AddAssign, DerefMut};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use log::info;
 use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Bar, BarChart, BarGroup, Block, BorderType, Cell, List, ListDirection, ListItem, ListState, Paragraph, Row, Table, Wrap};
@@ -93,14 +92,12 @@ impl VotingPage {
         let mut longest_name: usize = 0;
 
         let mut players = app.room.players.clone();
-        info!("Player list: {:?}", players);
         if app.room.phase == GamePhase::Revealed {
             fn vote_rank(vote: &Vote) -> i32 {
                 match vote {
                     Vote::Missing => { 9999 }
                     Vote::Hidden => { 9999 }
                     Vote::Revealed(VoteData::Number(n)) => { *n as i32 }
-                    // Vote::Revealed(VoteData::Special(s)) if s == "" => { 9999 }
                     Vote::Revealed(VoteData::Special(_)) => { 999 }
                 }
             }
