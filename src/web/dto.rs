@@ -74,7 +74,7 @@ fn parse_vote(user: &User) -> Vote {
     if user.card_value == "✅" {
         return Vote::Hidden;
     }
-    if user.card_value == "❌" {
+    if user.card_value == "❌" || user.card_value == "" {
         return Vote::Missing;
     }
 
