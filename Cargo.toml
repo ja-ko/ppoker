@@ -34,7 +34,6 @@ semver = "1.0"
 tempfile = "3"
 reqwest = "0.12"
 enum-iterator = "2"
-tao = "0.28"
 
 [target.'cfg( target_family = "windows" )'.dependencies]
 self_update = { version = "0.40", features = ["archive-zip", "compression-zip-deflate"] }
