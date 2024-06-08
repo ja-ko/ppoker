@@ -8,7 +8,7 @@ use ratatui::widgets::{Bar, BarChart, BarGroup, Block, BorderType, Cell, List, L
 use tui_big_text::{BigText, PixelSize};
 
 use crate::app::{App, AppResult};
-use crate::models::{GamePhase, LogLevel, UserType, Vote, VoteData};
+use crate::models::{GamePhase, LogLevel, LogSource, UserType, Vote, VoteData};
 use crate::tui::UiPage;
 use crate::ui::{Page, UIAction};
 
@@ -240,7 +240,13 @@ impl VotingPage {
         let entries: Vec<ListItem> = app.log.iter().map(|logentry| {
             let color = match logentry.level {
                 LogLevel::Chat => { Style::new().light_blue() }
-                LogLevel::Info => { Style::new() }
+                LogLevel::Info => {
+                    if logentry.source == LogSource::Server {
+                        Style::new()
+                    } else {
+                        Style::new().yellow()
+                    }
+                }
                 LogLevel::Error => { Style::new().red() }
             };
             let prefix = match logentry.level {
