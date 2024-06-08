@@ -23,6 +23,7 @@ mod models;
 mod config;
 mod web;
 mod update;
+mod notification;
 
 fn setup_logging() -> AppResult<()> {
     const MAX_LOGFILES: usize = 20;

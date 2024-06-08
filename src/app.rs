@@ -1,11 +1,11 @@
 use std::error;
 use std::time::{Duration, Instant};
 
-use log::{debug, error, info};
-use notify_rust::{Notification, Timeout};
+use log::{debug, info};
 
 use crate::config::Config;
 use crate::models::{GamePhase, LogEntry, LogLevel, LogSource, Room, Vote, VoteData};
+use crate::notification::show_notification;
 use crate::web::client::PokerClient;
 
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
@@ -51,6 +51,10 @@ impl App {
     }
 
     pub fn tick(&mut self) {
+        self.check_notification();
+    }
+    
+    fn check_notification(&mut self) {
         if let Some(notify_at) = &self.notify_vote_at {
             if *notify_at < Instant::now() && !self.is_notified {
                 if self.has_focus {
@@ -60,13 +64,7 @@ impl App {
                         info!("Skipping notification because user has them disabled.");
                     } else {
                         info!("Notifying user of missing vote.");
-                        if let Err(e) = Notification::new()
-                            .summary("Planning Poker")
-                            .body("Your vote is the last one missing.")
-                            .timeout(Timeout::Milliseconds(10000))
-                            .show() {
-                            error!("Failed to send notification: {}", e);
-                        }
+                        show_notification();
                     }
                 }
                 self.is_notified = true;
