@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use crossterm::event::{DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange, KeyEvent};
 use crossterm::terminal;
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
+use enum_iterator::Sequence;
 use log::debug;
 use ratatui::prelude::*;
 
@@ -13,7 +14,7 @@ use crate::ui::{Page, UIAction};
 use crate::ui::log::LogPage;
 use crate::ui::voting::VotingPage;
 
-#[derive(Debug, PartialEq, Clone, Copy, Hash, Ord, PartialOrd, Eq)]
+#[derive(Debug, PartialEq, Clone, Copy, Hash, Ord, PartialOrd, Eq, Sequence)]
 pub enum UiPage {
     Voting,
     Log,
@@ -28,7 +29,13 @@ pub struct Tui<B: Backend> {
 
 impl<B: Backend> Tui<B> {
     pub fn new(terminal: Terminal<B>, events: EventHandler) -> Self {
-        let pages: HashMap<UiPage, Box<dyn Page>> = HashMap::new();
+        let mut pages: HashMap<UiPage, Box<dyn Page>> = HashMap::new();
+        enum_iterator::all::<UiPage>().for_each(|page| {
+            match page {
+                UiPage::Voting => { pages.insert(page, Box::new(VotingPage::new())); }
+                UiPage::Log => { pages.insert(page, Box::new(LogPage::new())); }
+            }
+        });
         Self { terminal, events, current_page: UiPage::Voting, pages }
     }
     pub fn init(&mut self) -> AppResult<()> {
@@ -47,16 +54,8 @@ impl<B: Backend> Tui<B> {
         Ok(())
     }
 
-    //noinspection Duplicates
     pub fn draw(&mut self, app: &mut App) -> AppResult<()> {
-        let page = match self.current_page {
-            UiPage::Voting => {
-                self.pages.entry(UiPage::Voting).or_insert(Box::new(VotingPage::new()))
-            }
-            UiPage::Log => {
-                self.pages.entry(UiPage::Log).or_insert(Box::new(LogPage::new()))
-            }
-        };
+        let page = self.pages.get_mut(&self.current_page).unwrap();
         self.terminal.draw(|frame| page.render(app, frame))?;
         Ok(())
     }
@@ -91,13 +90,13 @@ impl<B: Backend> Tui<B> {
                     }
                 }
             }
-            Event::Paste(text) => { self.handle_paste(app, text); }
+            Event::Paste(text) => self.pages.get_mut(&self.current_page).unwrap().pasted(app, text)
         }
         Ok(())
     }
 
     fn handle_key(&mut self, key_event: KeyEvent, app: &mut App) -> AppResult<()> {
-        let page = self.get_current_page_impl();
+        let page = self.pages.get_mut(&self.current_page).unwrap();
         let action = page.input(app, key_event)?;
         match action {
             UIAction::Continue => {}
@@ -105,23 +104,5 @@ impl<B: Backend> Tui<B> {
             UIAction::Quit => { app.running = false; }
         }
         Ok(())
-    }
-
-    fn handle_paste(&mut self, app: &mut App, text: String) {
-        let page = self.get_current_page_impl();
-        page.pasted(app, text);
-    }
-
-    #[inline]
-    //noinspection Duplicates
-    fn get_current_page_impl(&mut self) -> &mut Box<dyn Page> {
-        match self.current_page {
-            UiPage::Voting => {
-                self.pages.entry(UiPage::Voting).or_insert(Box::new(VotingPage::new()))
-            }
-            UiPage::Log => {
-                self.pages.entry(UiPage::Log).or_insert(Box::new(LogPage::new()))
-            }
-        }
     }
 }
