@@ -356,13 +356,13 @@ impl VotingPage {
                 render_confirmation_box("Not everyone has voted yet. Confirm you want to reveal the cards?", rect, frame);
             }
             InputMode::ResetConfirm => {
-                render_confirmation_box("Confirm you want to reset the game?", rect, frame);
+                render_confirmation_box("Confirm you want to start a new round?", rect, frame);
             }
             InputMode::Menu => {
                 let entries = if app.room.phase == GamePhase::Playing {
-                    vec!["Vote", "Reveal", "Name change", "Chat", "Quit"]
+                    vec!["Vote", "Reveal", "History", "Name change", "Chat", "Quit"]
                 } else {
-                    vec!["Restart", "Name change", "Chat", "Quit"]
+                    vec!["Restart", "History", "Name change", "Chat", "Quit"]
                 };
 
                 frame.render_widget(footer_entries(entries), rect);
