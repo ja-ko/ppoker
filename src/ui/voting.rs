@@ -70,7 +70,15 @@ impl Page for VotingPage {
             self.last_phase = app.room.phase;
         }
 
-        render_own_vote(&app.room.players, app.average_votes(), app.room.phase, &app.vote, &app.room.deck, vote_view, frame);
+        match app.room.phase {
+            GamePhase::Revealed if app.history.len() > 0 => {
+                let entry = app.history.as_slice().last().expect("Can't get last item of history.");
+                render_own_vote(&entry.votes, entry.average, GamePhase::Revealed, &entry.own_vote, &entry.deck, vote_view, frame);
+            }
+            _ => {
+                render_own_vote(&app.room.players, app.average_votes(), app.room.phase, &app.vote, &app.room.deck, vote_view, frame);
+            }
+        }
         self.render_log(app, log, frame);
         self.render_votes(app, left_side, frame);
         render_overview(app, header, frame);
