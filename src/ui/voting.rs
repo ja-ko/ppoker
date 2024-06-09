@@ -485,7 +485,7 @@ pub(super) fn render_overview(app: &mut App, rect: Rect, frame: &mut Frame) {
         format_duration(&(Instant::now() - app.round_start))
     };
 
-    let text = Line::from(vec![
+    let mut text = Line::from(vec![
         Span::raw("Name: "),
         Span::raw(name).bold(),
         Span::raw(" | Room: "),
@@ -498,6 +498,11 @@ pub(super) fn render_overview(app: &mut App, rect: Rect, frame: &mut Frame) {
         Span::raw(app.round_number.to_string()).bold(),
         Span::raw(format!(" ({})", duration)),
     ]);
+
+    if app.has_updates {
+        text.push_span(Span::raw(" | "));
+        text.push_span(Span::raw("Has changes").yellow())
+    }
 
     let paragraph = Paragraph::new(text)
         .alignment(Alignment::Left)
