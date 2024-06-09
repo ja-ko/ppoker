@@ -4,11 +4,21 @@ use std::time::{Duration, Instant};
 use log::{debug, info};
 
 use crate::config::Config;
-use crate::models::{GamePhase, LogEntry, LogLevel, LogSource, Room, Vote, VoteData};
+use crate::models::{GamePhase, LogEntry, LogLevel, LogSource, Player, Room, Vote, VoteData};
 use crate::notification::show_notification;
 use crate::web::client::PokerClient;
 
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
+
+
+pub struct HistoryEntry {
+    pub round_number: u32,
+    pub average: f32,
+    pub length: Duration,
+    pub votes: Vec<Player>,
+    pub deck: Vec<String>,
+    pub own_vote: Option<VoteData>,
+}
 
 pub struct App {
     pub running: bool,
@@ -20,12 +30,15 @@ pub struct App {
     pub log: Vec<LogEntry>,
 
     pub round_number: u32,
+    pub round_start: Instant,
 
     pub config: Config,
 
     pub has_focus: bool,
     notify_vote_at: Option<Instant>,
     is_notified: bool,
+
+    pub history: Vec<HistoryEntry>,
 }
 
 impl App {
@@ -40,10 +53,12 @@ impl App {
             client,
             log: vec![],
             round_number: 1,
+            round_start: Instant::now(),
             config,
             has_focus: true,
             notify_vote_at: None,
             is_notified: false,
+            history: vec![],
         };
         result.update_server_log(log);
 
@@ -53,7 +68,7 @@ impl App {
     pub fn tick(&mut self) {
         self.check_notification();
     }
-    
+
     fn check_notification(&mut self) {
         if let Some(notify_at) = &self.notify_vote_at {
             if *notify_at < Instant::now() && !self.is_notified {
@@ -86,14 +101,33 @@ impl App {
             && self.room.phase == GamePhase::Playing
     }
 
-    pub fn merge_update(&mut self, update: Room) {
-        debug!("room update: {:?}", update);
-        if update.phase == GamePhase::Playing && self.room.phase != GamePhase::Playing {
+    pub fn new_phase(&mut self, update: &Room) {
+        if update.phase == GamePhase::Playing {
             self.vote = None;
             self.round_number += 1;
             self.is_notified = false;
             self.notify_vote_at = None;
         }
+
+        if update.phase == GamePhase::Revealed {
+            let entry = HistoryEntry {
+                round_number: self.round_number,
+                average: self.average_votes(),
+                length: Instant::now() - self.round_start,
+                votes: self.room.players.clone(),
+                deck: self.room.deck.clone(),
+                own_vote: self.vote.clone(),
+            };
+            self.history.push(entry);
+        }
+    }
+
+    pub fn merge_update(&mut self, update: Room) {
+        debug!("room update: {:?}", update);
+        if update.phase != self.room.phase {
+            self.new_phase(&update);
+        }
+
         self.room = update;
         if self.is_my_vote_last_missing() {
             if !self.is_notified && self.notify_vote_at == None {
@@ -178,5 +212,17 @@ impl App {
             source: LogSource::Client,
             server_index: None,
         })
+    }
+
+    pub fn average_votes(&self) -> f32 {
+        let mut sum = 0f32;
+        let mut count = 0f32;
+        for player in &self.room.players {
+            if let Vote::Revealed(VoteData::Number(n)) = player.vote {
+                sum += n as f32;
+                count += 1f32;
+            }
+        }
+        sum / count
     }
 }

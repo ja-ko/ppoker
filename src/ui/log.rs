@@ -8,8 +8,7 @@ use ratatui::widgets::{Block, BorderType, Paragraph, Wrap};
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
 use crate::app::{App, AppResult};
-use crate::tui::UiPage;
-use crate::ui::{Page, UIAction};
+use crate::ui::{Page, UIAction, UiPage};
 
 pub struct LogPage {
     state: TuiWidgetState,

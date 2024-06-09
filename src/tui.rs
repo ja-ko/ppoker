@@ -4,21 +4,15 @@ use std::collections::HashMap;
 use crossterm::event::{DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange, KeyEvent};
 use crossterm::terminal;
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
-use enum_iterator::Sequence;
 use log::debug;
 use ratatui::prelude::*;
 
 use crate::app::{App, AppResult};
 use crate::events::{Event, EventHandler, FocusChange};
-use crate::ui::{Page, UIAction};
-use crate::ui::log::LogPage;
-use crate::ui::voting::VotingPage;
-
-#[derive(Debug, PartialEq, Clone, Copy, Hash, Ord, PartialOrd, Eq, Sequence)]
-pub enum UiPage {
-    Voting,
-    Log,
-}
+use crate::ui::{Page, UIAction, UiPage};
+use crate::ui::HistoryPage;
+use crate::ui::LogPage;
+use crate::ui::VotingPage;
 
 pub struct Tui<B: Backend> {
     terminal: Terminal<B>,
@@ -34,6 +28,7 @@ impl<B: Backend> Tui<B> {
             match page {
                 UiPage::Voting => { pages.insert(page, Box::new(VotingPage::new())); }
                 UiPage::Log => { pages.insert(page, Box::new(LogPage::new())); }
+                UiPage::History => { pages.insert(page, Box::new(HistoryPage::new())); }
             }
         });
         Self { terminal, events, current_page: UiPage::Voting, pages }
