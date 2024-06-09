@@ -3,7 +3,7 @@ use log::error;
 use notify_rust::{Hint, Urgency};
 use notify_rust::{Notification, Timeout};
 
-#[cfg(any(target_os = "windows", target_os = "windows"))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 pub fn show_notification() {
     if let Err(e) = Notification::new()
         .summary("Planning Poker")
