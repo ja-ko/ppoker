@@ -106,7 +106,7 @@ impl HistoryPage {
         let entries = vec!["Vote", "↑", "↓", "Quit"];
         let mut footer = footer_entries(entries);
         if app.has_updates {
-            footer = footer.style(Style::new().light_yellow().slow_blink());
+            footer = footer.style(Style::new().yellow().slow_blink());
         }
         frame.render_widget(footer, rect);
     }
