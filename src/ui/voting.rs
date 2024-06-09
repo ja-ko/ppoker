@@ -501,7 +501,7 @@ pub(super) fn render_overview(app: &mut App, rect: Rect, frame: &mut Frame) {
 
     if app.has_updates {
         text.push_span(Span::raw(" | "));
-        text.push_span(Span::raw("Has changes").yellow())
+        text.push_span(Span::raw("Has changes").yellow().rapid_blink())
     }
 
     let paragraph = Paragraph::new(text)
