@@ -32,7 +32,7 @@ pub struct VotingPage {
 impl Page for VotingPage {
     fn render(&mut self, app: &mut App, frame: &mut Frame) {
         app.has_updates = false;
-        
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -479,6 +479,12 @@ pub(super) fn render_overview(app: &mut App, rect: Rect, frame: &mut Frame) {
         Style::new().light_blue()
     };
 
+    let duration = if app.room.phase == GamePhase::Revealed && app.history.len() > 0 {
+        format_duration(&app.history[app.history.len() - 1].length)
+    } else {
+        format_duration(&(Instant::now() - app.round_start))
+    };
+
     let text = Line::from(vec![
         Span::raw("Name: "),
         Span::raw(name).bold(),
@@ -490,7 +496,7 @@ pub(super) fn render_overview(app: &mut App, rect: Rect, frame: &mut Frame) {
         Span::raw(format!("{}", app.room.phase)).style(state_color.bold()),
         Span::raw(" | Round: "),
         Span::raw(app.round_number.to_string()).bold(),
-        Span::raw(format!(" ({})", format_duration(&(Instant::now() - app.round_start)))),
+        Span::raw(format!(" ({})", duration)),
     ]);
 
     let paragraph = Paragraph::new(text)

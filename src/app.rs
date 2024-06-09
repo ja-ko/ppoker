@@ -109,6 +109,7 @@ impl App {
             self.round_number += 1;
             self.is_notified = false;
             self.notify_vote_at = None;
+            self.round_start = Instant::now();
         }
         self.has_updates = true;
 
