@@ -1,4 +1,4 @@
-use std::error;
+use std::{error, mem};
 use std::time::{Duration, Instant};
 
 use log::{debug, info};
@@ -37,6 +37,7 @@ pub struct App {
     pub has_focus: bool,
     notify_vote_at: Option<Instant>,
     is_notified: bool,
+    pub has_updates: bool,
 
     pub history: Vec<HistoryEntry>,
 }
@@ -58,6 +59,7 @@ impl App {
             has_focus: true,
             notify_vote_at: None,
             is_notified: false,
+            has_updates: false,
             history: vec![],
         };
         result.update_server_log(log);
@@ -101,15 +103,16 @@ impl App {
             && self.room.phase == GamePhase::Playing
     }
 
-    pub fn new_phase(&mut self, update: &Room) {
-        if update.phase == GamePhase::Playing {
+    pub fn new_phase(&mut self, _old: &Room) {
+        if self.room.phase == GamePhase::Playing {
             self.vote = None;
             self.round_number += 1;
             self.is_notified = false;
             self.notify_vote_at = None;
         }
+        self.has_updates = true;
 
-        if update.phase == GamePhase::Revealed {
+        if self.room.phase == GamePhase::Revealed {
             let entry = HistoryEntry {
                 round_number: self.round_number,
                 average: self.average_votes(),
@@ -124,15 +127,17 @@ impl App {
 
     pub fn merge_update(&mut self, update: Room) {
         debug!("room update: {:?}", update);
-        if update.phase != self.room.phase {
-            self.new_phase(&update);
+
+        let old = mem::replace(&mut self.room, update);
+        if old.phase != self.room.phase {
+            self.new_phase(&old);
         }
 
-        self.room = update;
         if self.is_my_vote_last_missing() {
             if !self.is_notified && self.notify_vote_at == None {
                 self.log_message(LogLevel::Info, "Your vote is the last one missing.".to_string());
                 self.notify_vote_at = Some(Instant::now() + Duration::from_secs(15));
+                self.has_updates = true;
             }
         } else {
             self.notify_vote_at = None;

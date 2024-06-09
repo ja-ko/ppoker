@@ -31,6 +31,8 @@ pub struct VotingPage {
 
 impl Page for VotingPage {
     fn render(&mut self, app: &mut App, frame: &mut Frame) {
+        app.has_updates = false;
+        
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([

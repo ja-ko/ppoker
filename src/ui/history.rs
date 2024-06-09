@@ -102,9 +102,13 @@ impl HistoryPage {
         self.render_history(app, history, frame);
     }
 
-    fn render_footer(&mut self, _app: &mut App, rect: Rect, frame: &mut Frame) {
+    fn render_footer(&mut self, app: &mut App, rect: Rect, frame: &mut Frame) {
         let entries = vec!["Vote", "↑", "↓", "Quit"];
-        frame.render_widget(footer_entries(entries), rect);
+        let mut footer = footer_entries(entries);
+        if app.has_updates {
+            footer = footer.style(Style::new().light_yellow().slow_blink());
+        }
+        frame.render_widget(footer, rect);
     }
 
     fn render_history(&mut self, app: &mut App, rect: Rect, frame: &mut Frame) {
