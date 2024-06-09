@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.3.0](https://github.com/ja-ko/ppoker/compare/v0.2.6...v0.3.0) (2024-06-09)
+
+
+### Features
+
+* **app:** add history page. ([5f0ea9e](https://github.com/ja-ko/ppoker/commit/5f0ea9e96da4d6537c0c99ffcbdd158d08b11e19))
+* **app:** display round duration for each round. ([b389bdf](https://github.com/ja-ko/ppoker/commit/b389bdfdc48d10e45df94af457aa64370438b368))
+* **app:** Emit notification sound on linux ([9ed9ac1](https://github.com/ja-ko/ppoker/commit/9ed9ac117730cf722daa2689a14a10f0bc917b40))
+* **app:** indicate if state changes while in history ([e0bd3fd](https://github.com/ja-ko/ppoker/commit/e0bd3fdd6ac4de37256696c98cf1d362795176c0))
+* **app:** keep votes consistent when player leaves. ([78eabdf](https://github.com/ja-ko/ppoker/commit/78eabdff6385163ed5ed3ab9500302c3b0fca947))
+* **ui:** include change marker in the header on history ([53c2a23](https://github.com/ja-ko/ppoker/commit/53c2a23f81dae00314a9bd4d80f3a09875ea94df))
+* **ui:** make notification colour in history better visible ([a64b3b9](https://github.com/ja-ko/ppoker/commit/a64b3b9f68f807571f1933932350ee6d40507497))
+* **ui:** print client notifications in yellow ([357ccb0](https://github.com/ja-ko/ppoker/commit/357ccb02a403947d79adb58a5c1aa0a274197979))
+* **ui:** stabilize player order ([f4ea2c5](https://github.com/ja-ko/ppoker/commit/f4ea2c5931543485ce3a2126f2710de190acbd02))
+
+
+### Bug Fixes
+
+* clarify some ui texts. ([535006d](https://github.com/ja-ko/ppoker/commit/535006d7abb53c4cf9fbc5c7696bf8719b314f8f))
+* define ordering of players on history page. ([346bf95](https://github.com/ja-ko/ppoker/commit/346bf9508bab24e2b394abdd573ddebaf4563bf8))
+* **ui:** fix the round timer not working properly in some situations ([c8d7a99](https://github.com/ja-ko/ppoker/commit/c8d7a99ce821358a17380c02a0522079c938e13f))
+
+
+### Miscellaneous Chores
+
+* bump release version ([dd87410](https://github.com/ja-ko/ppoker/commit/dd87410ed1949eefe66418cc0035491fb93dcb07))
+
 ## [0.2.6](https://github.com/ja-ko/ppoker/compare/v0.2.5...v0.2.6) (2024-06-03)
 
 
