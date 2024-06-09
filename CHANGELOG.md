@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/ja-ko/ppoker/compare/v0.3.0...v0.3.1) (2024-06-09)
+
+
+### Bug Fixes
+
+* fixes the failing build on macos ([54347d6](https://github.com/ja-ko/ppoker/commit/54347d615e456716e5e9555cc2c0082cd937949b))
+
 ## [0.3.0](https://github.com/ja-ko/ppoker/compare/v0.2.6...v0.3.0) (2024-06-09)
 
 
