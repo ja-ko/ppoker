@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ops::{AddAssign, DerefMut};
 use std::time::Instant;
@@ -257,22 +256,7 @@ impl VotingPage {
 
         let mut players = app.room.players.clone();
         if app.room.phase == GamePhase::Revealed {
-            fn vote_rank(vote: &Vote) -> i32 {
-                match vote {
-                    Vote::Missing => { 9999 }
-                    Vote::Hidden => { 9999 }
-                    Vote::Revealed(VoteData::Number(n)) => { *n as i32 }
-                    Vote::Revealed(VoteData::Special(_)) => { 999 }
-                }
-            }
-            players.sort_by(|p, p2| {
-                let vote_order = vote_rank(&p.vote).cmp(&vote_rank(&p2.vote));
-                if vote_order == Ordering::Equal {
-                    p.name.cmp(&p2.name)
-                } else {
-                    vote_order
-                }
-            })
+            players.sort();
         } else {
             players.sort_by(|p, p2| {
                 p.name.cmp(&p2.name)

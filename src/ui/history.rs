@@ -137,6 +137,8 @@ impl HistoryPage {
 fn render_player_list(entry: &HistoryEntry, rect: Rect, frame: &mut Frame) {
     let inner = render_box_colored("Players", colored_box_style(GamePhase::Revealed), rect, frame);
     let mut longest_name = 0;
+    let mut players = entry.votes.clone();
+    players.sort();
     let rows: Vec<Row> = entry.votes.iter().map(|p| {
         if p.name.len() > longest_name {
             longest_name = p.name.len();
