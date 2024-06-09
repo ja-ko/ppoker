@@ -6,7 +6,7 @@ use ratatui::widgets::{Cell, Row, Table, TableState};
 
 use crate::app::{App, AppResult, HistoryEntry};
 use crate::models::GamePhase;
-use crate::ui::{colored_box_style, footer_entries, Page, render_box, render_box_colored, UIAction, UiPage};
+use crate::ui::{colored_box_style, footer_entries, format_duration, Page, render_box, render_box_colored, UIAction, UiPage};
 use crate::ui::voting::{format_vote, render_overview, render_own_vote};
 
 pub struct HistoryPage {
@@ -114,12 +114,13 @@ impl HistoryPage {
             Row::new(vec![
                 Cell::from(Span::raw(entry.round_number.to_string())),
                 Cell::from(Span::raw(format!("{:.1}", entry.average))),
+                Cell::from(Span::raw(format_duration(&entry.length))),
             ])
         }).collect();
 
-        let table = Table::new(rows, [Constraint::Length(5), Constraint::Fill(1)])
+        let table = Table::new(rows, [Constraint::Length(5), Constraint::Length(8), Constraint::Fill(1)])
             .column_spacing(4)
-            .header(Row::new(vec!["Round", "Average"])
+            .header(Row::new(vec!["Round", "Average", "Duration"])
                 .style(Style::new().bold())
                 .bottom_margin(1))
             .highlight_symbol("> ")

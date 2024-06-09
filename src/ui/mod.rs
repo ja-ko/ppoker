@@ -1,3 +1,4 @@
+use std::time::Duration;
 use crossterm::event::KeyEvent;
 use enum_iterator::Sequence;
 use ratatui::Frame;
@@ -107,4 +108,19 @@ fn footer_entries(entries: Vec<&str>) -> Paragraph {
     spans.remove(spans.len() - 1);
 
     Paragraph::new(vec![Line::from(""), Line::from(spans)])
+}
+
+fn format_duration(duration: &Duration) -> String {
+    let secs = duration.as_secs();
+    let minutes = secs / 60;
+    let hours = minutes / 60;
+    if hours > 1 {
+        format!("{} hours {} minutes", hours, minutes % 60)
+    } else if minutes > 1 {
+        format!("{} minutes {} seconds", minutes, secs % 60)
+    } else if secs >= 100 {
+        format!("{} minute {} seconds", minutes, secs % 60)
+    } else {
+        format!("{} seconds", secs)
+    }
 }

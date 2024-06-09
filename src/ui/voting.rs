@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ops::{AddAssign, DerefMut};
+use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
@@ -10,7 +11,7 @@ use tui_big_text::{BigText, PixelSize};
 
 use crate::app::{App, AppResult};
 use crate::models::{GamePhase, LogLevel, LogSource, Player, UserType, Vote, VoteData};
-use crate::ui::{colored_box_style, footer_entries, Page, render_box, render_box_colored, render_confirmation_box, trim_name, UIAction, UiPage};
+use crate::ui::{colored_box_style, footer_entries, format_duration, Page, render_box, render_box_colored, render_confirmation_box, trim_name, UIAction, UiPage};
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum InputMode {
@@ -487,6 +488,7 @@ pub(super) fn render_overview(app: &mut App, rect: Rect, frame: &mut Frame) {
         Span::raw(format!("{}", app.room.phase)).style(state_color.bold()),
         Span::raw(" | Round: "),
         Span::raw(app.round_number.to_string()).bold(),
+        Span::raw(format!(" ({})", format_duration(&(Instant::now() - app.round_start)))),
     ]);
 
     let paragraph = Paragraph::new(text)
