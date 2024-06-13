@@ -277,13 +277,14 @@ impl VotingPage {
             Row::new(vec![
                 Cell::from(Span::styled(name, player_color)),
                 Cell::from(format_vote(&player.vote, &app.vote)),
+                Cell::from(if player.user_type == UserType::Spectator { "Spectator" } else { "Player" }),
             ])
         }).collect();
 
-        let table = Table::new(rows, [Constraint::Length(longest_name as u16), Constraint::Fill(1)])
+        let table = Table::new(rows, [Constraint::Length(longest_name as u16), Constraint::Length(7), Constraint::Fill(1)])
             .column_spacing(3)
             .header(
-                Row::new(vec!["Name", "Vote"])
+                Row::new(vec!["Name", "Vote", "Type"])
                     .style(Style::new().bold())
                     .bottom_margin(1)
             );
