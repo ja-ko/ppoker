@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/ja-ko/ppoker/compare/v0.3.1...v0.3.2) (2024-06-13)
+
+
+### Features
+
+* **ui:** display player type in vote view ([2afeba7](https://github.com/ja-ko/ppoker/commit/2afeba762cc911726ca6786878c59be6672bcdcc))
+
 ## [0.3.1](https://github.com/ja-ko/ppoker/compare/v0.3.0...v0.3.1) (2024-06-09)
 
 
