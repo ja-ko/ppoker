@@ -1858,7 +1858,7 @@ dependencies = [
  "notify-rust",
  "petname",
  "pretty_assertions",
- "ratatui 0.27.0",
+ "ratatui 0.26.3",
  "regex",
  "reqwest",
  "self_update",
@@ -2866,14 +2866,14 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tui-big-text"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74f00a38fc1cb36f4670db0dafdbd021ab6e67198896ad4c46546c0acd8fd7d8"
+checksum = "bc9699f14558a8b6abaae5cb5691033379a4b86f6b26555f8168ec5c6b4029e3"
 dependencies = [
  "derive_builder",
  "font8x8",
  "itertools 0.13.0",
- "ratatui 0.26.3",
+ "ratatui 0.27.0",
 ]
 
 [[package]]
