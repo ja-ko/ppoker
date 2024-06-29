@@ -1858,7 +1858,7 @@ dependencies = [
  "notify-rust",
  "petname",
  "pretty_assertions",
- "ratatui 0.26.3",
+ "ratatui",
  "regex",
  "reqwest",
  "self_update",
@@ -1979,26 +1979,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
-]
-
-[[package]]
-name = "ratatui"
-version = "0.26.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f44c9e68fd46eda15c646fbb85e1040b657a58cdc8c98db1d97a55930d991eef"
-dependencies = [
- "bitflags 2.5.0",
- "cassowary",
- "compact_str",
- "crossterm",
- "itertools 0.12.1",
- "lru",
- "paste",
- "stability",
- "strum",
- "unicode-segmentation",
- "unicode-truncate",
- "unicode-width",
 ]
 
 [[package]]
@@ -2873,21 +2853,20 @@ dependencies = [
  "derive_builder",
  "font8x8",
  "itertools 0.13.0",
- "ratatui 0.27.0",
+ "ratatui",
 ]
 
 [[package]]
 name = "tui-logger"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "115f9ceabfa07b739dc00baf0180cf5060731a2de66aa7fb47e22dc442aa05ca"
+version = "0.11.2"
+source = "git+https://github.com/gin66/tui-logger.git?rev=775c759c89a808b6f479b869c533d33b18fe5f44#775c759c89a808b6f479b869c533d33b18fe5f44"
 dependencies = [
  "chrono",
  "fxhash",
  "lazy_static",
  "log",
  "parking_lot",
- "ratatui 0.26.3",
+ "ratatui",
 ]
 
 [[package]]
