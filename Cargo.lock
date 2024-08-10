@@ -1898,7 +1898,8 @@ dependencies = [
  "ratatui",
  "regex",
  "reqwest",
- "self_update",
+ "self_update 0.40.0",
+ "self_update 0.41.0",
  "semver",
  "serde",
  "serde_json",
@@ -2287,9 +2288,9 @@ dependencies = [
 
 [[package]]
 name = "self_update"
-version = "0.41.0"
+version = "0.40.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "469a3970061380c19852269f393e74c0fe607a4e23d85267382cf25486aa8de5"
+checksum = "4e4997484b55df069a4773d822715695b2cc27b23829eca2a4b41690e948bdeb"
 dependencies = [
  "either",
  "flate2",
@@ -2303,6 +2304,26 @@ dependencies = [
  "semver",
  "serde_json",
  "tar",
+ "tempfile",
+ "urlencoding",
+ "zipsign-api",
+]
+
+[[package]]
+name = "self_update"
+version = "0.41.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "469a3970061380c19852269f393e74c0fe607a4e23d85267382cf25486aa8de5"
+dependencies = [
+ "hyper",
+ "indicatif",
+ "log",
+ "quick-xml 0.23.1",
+ "regex",
+ "reqwest",
+ "self-replace",
+ "semver",
+ "serde_json",
  "tempfile",
  "urlencoding",
  "zip",
@@ -2890,9 +2911,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tui-big-text"
-version = "0.4.5"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc9699f14558a8b6abaae5cb5691033379a4b86f6b26555f8168ec5c6b4029e3"
+checksum = "9823883b0c2b7b2fc6ad816629b1b9c22aea5977f8cfc03ada2d8ae4ae14400a"
 dependencies = [
  "derive_builder",
  "font8x8",
