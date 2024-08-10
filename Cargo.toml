@@ -10,7 +10,7 @@ edition = "2021"
 
 [dependencies]
 ratatui = { version = "0.27", features = ["unstable-rendered-line-info"] }
-crossterm = { version = "0.27", features = ["event-stream"] }
+crossterm = { version = "0.28", features = ["event-stream"] }
 notify-rust = "4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
