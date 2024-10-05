@@ -27,7 +27,7 @@ figment = { version = "0.10", features = ["toml", "env"] }
 directories = "5"
 whoami = "1.5"
 petname = "2"
-regex = "1.10"
+regex = "1.11"
 glob = "0.3"
 filetime = "0.2"
 semver = "1.0"
