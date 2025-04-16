@@ -10,3 +10,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "saturday"
+    groups:
+      all-dependencies:
+        patterns:
+          - "*"
