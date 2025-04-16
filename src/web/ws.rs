@@ -46,7 +46,7 @@ impl PokerSocket {
     pub fn send_request(&mut self, request: UserRequest) -> AppResult<()> {
         let body = serde_json::to_string(&request)?;
         debug!("Sending message: {:?}", body);
-        self.socket.send(Message::Text(body))?;
+        self.socket.send(Message::Text(body.into()))?;
         Ok(())
     }
 
@@ -95,7 +95,7 @@ impl PokerSocket {
     }
 
     pub fn ping(&mut self) -> AppResult<()> {
-        self.socket.send(Message::Ping(vec![0x13, 0x37]))?;
+        self.socket.send(Message::Ping(vec![0x13, 0x37].into()))?;
         self.last_ping = Instant::now();
 
         Ok(())
