@@ -1,6 +1,7 @@
-use std::{error, mem};
+use std::{error, io, mem};
 use std::time::{Duration, Instant};
-
+use crossterm::execute;
+use crossterm::style::Print;
 use log::{debug, info};
 
 use crate::config::Config;
@@ -81,6 +82,7 @@ impl App {
                         info!("Skipping notification because user has them disabled.");
                     } else {
                         info!("Notifying user of missing vote.");
+                        execute!(io::stdout(), Print("\x07")).unwrap();
                         show_notification();
                     }
                 }
