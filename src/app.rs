@@ -179,7 +179,11 @@ impl App {
     }
 
     pub fn reveal(&mut self) -> AppResult<()> {
-        self.client.reveal()
+        if self.room.phase != GamePhase::Revealed {
+            self.client.reveal()
+        } else {
+            Ok(())
+        }
     }
 
     pub fn chat(&mut self, message: String) -> AppResult<()> {
@@ -188,7 +192,11 @@ impl App {
 
     pub fn restart(&mut self) -> AppResult<()> {
         self.vote = None;
-        self.client.reset()
+        if self.room.phase != GamePhase::Playing {
+            self.client.reset()
+        } else {
+            Ok(())
+        }
     }
 
     pub fn update(&mut self) -> AppResult<()> {
