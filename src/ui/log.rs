@@ -42,7 +42,7 @@ impl Page for LogPage {
         let help_paragraph = Paragraph::new(Line::from(helptexts))
             .wrap(Wrap { trim: true });
 
-        let help_lines = help_paragraph.line_count(frame.size().width.saturating_sub(2)) as u16;
+        let help_lines = help_paragraph.line_count(frame.area().width.saturating_sub(2)) as u16;
 
         let [log, help] = Layout::default()
             .direction(Direction::Vertical)
@@ -50,7 +50,7 @@ impl Page for LogPage {
                 Constraint::Fill(1),
                 Constraint::Length(help_lines + 2)
             ])
-            .areas(frame.size());
+            .areas(frame.area());
 
         let widget = TuiLoggerSmartWidget::default()
             .style_error(Style::default().red())

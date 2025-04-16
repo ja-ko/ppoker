@@ -8,7 +8,7 @@ use log::{debug, error, info, LevelFilter, warn};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use regex::Regex;
-
+use tui_logger::TuiLoggerFile;
 use crate::app::{App, AppResult};
 use crate::config::{get_config, get_logdir};
 use crate::events::EventHandler;
@@ -57,7 +57,7 @@ fn setup_logging() -> AppResult<()> {
 
 
     let log_file = log_dir.join(format!("main-{}.log", max_id + 1));
-    tui_logger::set_log_file(log_file.as_os_str().to_str().unwrap())?;
+    tui_logger::set_log_file(TuiLoggerFile::new(log_file.as_os_str().to_str().unwrap()));
     info!("Logging to file {}", log_file.as_path().to_str().unwrap());
 
     Ok(())

@@ -39,7 +39,7 @@ impl Page for VotingPage {
                 Constraint::Fill(1),
                 Constraint::Length(3)
             ])
-            .split(frame.size());
+            .split(frame.area());
 
         let header = chunks[0];
         let primary = chunks[1];
@@ -376,9 +376,8 @@ impl VotingPage {
         let buffer = self.input_buffer.as_ref().map_or("", |buffer| buffer.as_str());
         let text_buffer = Paragraph::new(buffer);
         frame.render_widget(text_buffer, rect);
-        frame.set_cursor(
-            rect.x + buffer.len() as u16,
-            rect.y,
+        frame.set_cursor_position(
+            (rect.x + buffer.len() as u16, rect.y)
         );
     }
 }
@@ -433,7 +432,7 @@ pub(super) fn render_own_vote(players: &Vec<Player>, average_vote: f32, phase: G
             .style(Style::new().light_blue())
             .alignment(Alignment::Center)
             .lines(vec![format!("{:.1}", average_vote).into()])
-            .build().expect("Failed to build Text widget");
+            .build();
         frame.render_widget(text, inner);
     }
 
@@ -450,7 +449,7 @@ pub(super) fn render_own_vote(players: &Vec<Player>, average_vote: f32, phase: G
         .style(color)
         .alignment(Alignment::Center)
         .lines(vec![text.into()])
-        .build().expect("Failed to build text widget");
+        .build();
     frame.render_widget(text, inner);
 }
 

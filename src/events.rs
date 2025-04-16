@@ -17,7 +17,9 @@ pub enum FocusChange {
 pub enum Event {
     Tick,
     Key(KeyEvent),
+    #[allow(dead_code)]
     Mouse(MouseEvent),
+    #[allow(dead_code)]
     Resize(u16, u16),
     Focus(FocusChange),
     Paste(String),

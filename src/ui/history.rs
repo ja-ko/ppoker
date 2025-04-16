@@ -34,7 +34,7 @@ impl Page for HistoryPage {
                 Constraint::Fill(1),
                 Constraint::Length(3)
             ])
-            .areas(frame.size());
+            .areas(frame.area());
 
         render_overview(app, header, frame);
         self.render_main(app, body, frame);
@@ -128,7 +128,7 @@ impl HistoryPage {
                 .style(Style::new().bold())
                 .bottom_margin(1))
             .highlight_symbol("> ")
-            .highlight_style(Style::new().on_white().black());
+            .row_highlight_style(Style::new().on_white().black());
 
         frame.render_stateful_widget(table, inner, &mut self.history_state);
     }
