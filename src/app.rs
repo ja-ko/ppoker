@@ -173,6 +173,7 @@ impl App {
         let data = data.trim();
         if data == "-" {
             self.vote = None;
+            self.client.vote(None)?;
             return Ok(());
         }
         let was_last_missing = self.is_my_vote_last_missing();
