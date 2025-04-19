@@ -5,7 +5,7 @@ use crossterm::style::Print;
 use log::{debug, info};
 
 use crate::config::Config;
-use crate::models::{GamePhase, LogEntry, LogLevel, LogSource, Player, Room, Vote, VoteData};
+use crate::models::{GamePhase, LogEntry, LogLevel, LogSource, Player, Room, UserType, Vote, VoteData};
 use crate::notification::show_notification;
 use crate::web::client::PokerClient;
 
@@ -120,7 +120,7 @@ impl App {
 
     #[inline]
     fn is_my_vote_last_missing(&self) -> bool {
-        let missing_players = self.room.players.iter().filter(|p| p.vote == Vote::Missing).collect::<Vec<&Player>>();
+        let missing_players = self.room.players.iter().filter(|p| p.user_type != UserType::Spectator && p.vote == Vote::Missing).collect::<Vec<&Player>>();
         self.room.players.len() > 1
             && missing_players.len() == 1
             && missing_players[0].is_you
