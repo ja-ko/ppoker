@@ -40,6 +40,8 @@ pub struct App {
     is_notified: bool,
     pub has_updates: bool,
 
+    pub auto_reveal_at: Option<Instant>,
+
     pub history: Vec<HistoryEntry>,
 }
 
@@ -62,14 +64,17 @@ impl App {
             is_notified: false,
             has_updates: false,
             history: vec![],
+            auto_reveal_at: None,
         };
         result.update_server_log(log);
 
         Ok(result)
     }
 
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self) -> AppResult<()> {
         self.check_notification();
+        self.check_auto_reveal()?;
+        Ok(())
     }
 
     fn check_notification(&mut self) {
@@ -92,6 +97,22 @@ impl App {
         }
     }
 
+    fn check_auto_reveal(&mut self) -> AppResult<()> {
+        if let Some(auto_reveal_at) = &self.auto_reveal_at {
+            if *auto_reveal_at < Instant::now()
+                && self.room.phase == GamePhase::Playing
+                && self.room.players.iter().all(|p| p.vote != Vote::Missing) {
+                    self.reveal()?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn cancel_auto_reveal(&mut self) {
+        self.auto_reveal_at = None;
+    }
+
     #[inline]
     fn deck_has_value(&self, vote: &str) -> bool {
         self.room.deck.iter().find(|item| item.eq_ignore_ascii_case(vote)).is_some()
@@ -99,9 +120,10 @@ impl App {
 
     #[inline]
     fn is_my_vote_last_missing(&self) -> bool {
+        let missing_players = self.room.players.iter().filter(|p| p.vote == Vote::Missing).collect::<Vec<&Player>>();
         self.room.players.len() > 1
-            && self.room.players.iter().filter(|p| p.vote == Vote::Missing).count() == 1
-            && self.vote.is_none()
+            && missing_players.len() == 1
+            && missing_players[0].is_you
             && self.room.phase == GamePhase::Playing
     }
 
@@ -153,6 +175,7 @@ impl App {
             self.vote = None;
             return Ok(());
         }
+        let was_last_missing = self.is_my_vote_last_missing();
 
         if self.deck_has_value(data) {
             let numeric = data.parse::<u8>();
@@ -168,6 +191,11 @@ impl App {
         } else {
             self.log_message(LogLevel::Error, format!("Card is not in the deck: {}", data));
         }
+
+        if !self.config.disable_auto_reveal && was_last_missing && self.vote.is_some() {
+            debug!("Starting auto-reveal timer.");
+            self.auto_reveal_at = Some(Instant::now() + Duration::from_secs(3));
+        }
         Ok(())
     }
 
@@ -179,6 +207,7 @@ impl App {
     }
 
     pub fn reveal(&mut self) -> AppResult<()> {
+        self.cancel_auto_reveal();
         if self.room.phase != GamePhase::Revealed {
             self.client.reveal()
         } else {

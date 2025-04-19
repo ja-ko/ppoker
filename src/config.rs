@@ -26,6 +26,10 @@ pub struct Cli {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) room: Option<String>,
 
+    /// Disables automatic reveal of cards 
+    #[arg(short = 'A', long)]
+    pub(crate) disable_auto_reveal: bool,
+
     /// Skip the automatic update check and stay on the current version.
     #[arg(short = 'S', long)]
     pub(crate) skip_update_check: bool,
@@ -42,6 +46,7 @@ pub struct Config {
     pub server: String,
     pub skip_update_check: bool,
     pub disable_notifications: bool,
+    pub disable_auto_reveal: bool,
 }
 
 impl Default for Config {
@@ -52,6 +57,7 @@ impl Default for Config {
             server: "wss://pp.discordia.network/".to_owned(),
             skip_update_check: false,
             disable_notifications: false,
+            disable_auto_reveal: false,
         }
     }
 }

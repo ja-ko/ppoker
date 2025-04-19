@@ -70,7 +70,7 @@ impl<B: Backend> Tui<B> {
 
     pub fn handle_events(&mut self, app: &mut App) -> AppResult<()> {
         match self.events.next()? {
-            Event::Tick => app.tick(),
+            Event::Tick => app.tick()?,
             Event::Key(event) => self.handle_key(event, app)?,
             Event::Mouse(_) => {}
             Event::Resize(_, _) => {}

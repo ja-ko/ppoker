@@ -3,6 +3,7 @@ use std::ops::{AddAssign, DerefMut};
 use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use log::debug;
 use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Bar, BarChart, BarGroup, Cell, List, ListDirection, ListItem, ListState, Paragraph, Row, Table, Wrap};
@@ -20,6 +21,7 @@ pub enum InputMode {
     Chat,
     RevealConfirm,
     ResetConfirm,
+    AutoReveal,
 }
 
 pub struct VotingPage {
@@ -31,6 +33,12 @@ pub struct VotingPage {
 impl Page for VotingPage {
     fn render(&mut self, app: &mut App, frame: &mut Frame) {
         app.has_updates = false;
+        
+        if app.auto_reveal_at.is_some() && self.input_mode != InputMode::AutoReveal {
+            self.input_mode = InputMode::AutoReveal;
+        }  else if app.auto_reveal_at.is_none() && self.input_mode == InputMode::AutoReveal {
+            self.input_mode = InputMode::Menu;
+        }
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -171,6 +179,22 @@ impl Page for VotingPage {
                         self.input_mode = InputMode::Menu;
                     }
                     KeyCode::Char('n') | KeyCode::Esc => { self.input_mode = InputMode::Menu; }
+                    KeyCode::Char('q') => { return Ok(UIAction::Quit); }
+                    _ => {}
+                }
+            }
+            InputMode::AutoReveal => {
+                match event.code {
+                    KeyCode::Char('y') | KeyCode::Enter | KeyCode::Char('r') | KeyCode::Char(' ') => {
+                        app.reveal()?;
+                        self.input_mode = InputMode::Menu;
+                        debug!("Auto reveal preempted - revealing");
+                    }
+                    KeyCode::Char('n') | KeyCode::Esc => { 
+                        self.input_mode = InputMode::Menu;
+                        app.cancel_auto_reveal();
+                        debug!("Auto reveal preempted - canceled");
+                    }
                     KeyCode::Char('q') => { return Ok(UIAction::Quit); }
                     _ => {}
                 }
@@ -358,6 +382,13 @@ impl VotingPage {
             }
             InputMode::ResetConfirm => {
                 render_confirmation_box("Confirm you want to start a new round?", rect, frame);
+            }
+            InputMode::AutoReveal => {
+                render_confirmation_box(
+                    &format!("Automatically revealing cards in {} seconds.", app.auto_reveal_at
+                        .map(|when| ((when - Instant::now()).as_secs() + 1).to_string())
+                        .unwrap_or("<probably not gonna happen>".to_string())
+                    ), rect, frame);
             }
             InputMode::Menu => {
                 let entries = if app.room.phase == GamePhase::Playing {
