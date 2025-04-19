@@ -32,7 +32,9 @@ The name of a room is optional, if omitted a room is generated automatically.
 
 ### Commandline arguments
 ```
-Usage: ppoker.exe [OPTIONS] [ROOM]
+Client for planning poker - https://github.com/sne11ius/pp
+
+Usage: ppoker [OPTIONS] [ROOM]
 
 Arguments:
   [ROOM]  Room to join
@@ -40,6 +42,7 @@ Arguments:
 Options:
   -n, --name <NAME>            Name to use for this session
   -s, --server <SERVER>        Websocket URL to connect to
+  -A, --disable-auto-reveal    Disables automatic reveal of cards
   -S, --skip-update-check      Skip the automatic update check and stay on the current version
   -N, --disable-notifications  Disable notifications
   -h, --help                   Print help
@@ -66,6 +69,7 @@ Create a `config.toml` with any of the following keys:
 name = "ja-ko"
 room = "planning-room"
 server = "wss://pp.discordia.network/"
+disable_auto_reveal = false
 skip_update_check = false
 disable_notifications = false
 ```
