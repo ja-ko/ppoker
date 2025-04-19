@@ -56,7 +56,7 @@ impl Page for VotingPage {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(30),
+                Constraint::Percentage(20),
                 Constraint::Min(26),
             ]).split(primary);
 
@@ -72,6 +72,18 @@ impl Page for VotingPage {
 
         let vote_view = chunks[0];
         let log = chunks[1];
+
+        let (votes, spectators) = if app.room.players.iter().any(|p| p.user_type == UserType::Spectator) {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Percentage(70),
+                    Constraint::Percentage(30),
+                ]).split(left_side);
+            (chunks[0], Some(chunks[1]))
+        } else {
+            (left_side, None)
+        };
 
         if app.room.phase != self.last_phase {
             if self.input_mode != InputMode::Name {
@@ -90,7 +102,10 @@ impl Page for VotingPage {
             }
         }
         self.render_log(app, log, frame);
-        self.render_votes(app, left_side, frame);
+        self.render_votes(app, votes, frame);
+        if let Some(spectators) = spectators {
+            self.render_spectators(app, spectators, frame);
+        }
         render_overview(app, header, frame);
         self.render_footer(app, footer, frame);
     }
@@ -279,6 +294,7 @@ impl VotingPage {
         let mut longest_name: usize = 0;
 
         let mut players = app.room.players.clone();
+        players.retain(|p| p.user_type == UserType::Player);
         if app.room.phase == GamePhase::Revealed {
             players.sort();
         } else {
@@ -301,19 +317,51 @@ impl VotingPage {
             Row::new(vec![
                 Cell::from(Span::styled(name, player_color)),
                 Cell::from(format_vote(&player.vote, &app.vote)),
-                Cell::from(if player.user_type == UserType::Spectator { "Spectator" } else { "Player" }),
             ])
         }).collect();
 
-        let table = Table::new(rows, [Constraint::Length(longest_name as u16), Constraint::Length(7), Constraint::Fill(1)])
+        let table = Table::new(rows, [Constraint::Length(longest_name as u16), Constraint::Length(7),])
             .column_spacing(3)
             .header(
-                Row::new(vec!["Name", "Vote", "Type"])
+                Row::new(vec!["Name", "Vote",])
                     .style(Style::new().bold())
                     .bottom_margin(1)
             );
 
         frame.render_widget(table, rect);
+    }
+
+    fn render_spectators(&mut self, app: &mut App, rect: Rect, frame: &mut Frame) {
+        let rect = render_box_colored("Spectators", colored_box_style(app.room.phase), rect, frame);
+
+        let mut longest_name: usize = 0;
+
+        let mut spectators = app.room.players.clone();
+        spectators.retain(|p| p.user_type == UserType::Spectator);
+        spectators.sort();
+
+        let rows: Vec<Row> = spectators.iter().map(|spectator| {
+            let name = trim_name(&spectator.name);
+            if name.len() > longest_name {
+                longest_name = name.len()
+            }
+
+            Row::new(vec![
+                Cell::from(Span::styled(name, Style::new())),
+                Cell::from(format_vote(&spectator.vote, &app.vote)),
+            ])
+        }).collect();
+
+        let table = Table::new(rows, [Constraint::Fill(1),])
+            .column_spacing(3)
+            .header(
+                Row::new(vec!["Name",])
+                    .style(Style::new().bold())
+                    .bottom_margin(1)
+            );
+
+        frame.render_widget(table, rect);
+
     }
 
     fn render_log(&mut self, app: &mut App, rect: Rect, frame: &mut Frame) {
