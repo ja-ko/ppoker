@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.4.0](https://github.com/ja-ko/ppoker/compare/v0.3.2...v0.4.0) (2025-04-22)
+
+
+### Features
+
+* add auto-reveal functionality with configurable toggle ([19cd065](https://github.com/ja-ko/ppoker/commit/19cd06548437e353d8d0571d337b49eca6ca9628))
+* **app:** ring terminal bell when notification ([5cc17e2](https://github.com/ja-ko/ppoker/commit/5cc17e21a70f92609752d8b533c3254c34ca68c5))
+* **ui:** add separate spectator section in voting layout ([b751bcb](https://github.com/ja-ko/ppoker/commit/b751bcb1caec0b25b7b3cbc8ad4e369a0bd7cc81))
+
+
+### Bug Fixes
+
+* **app:** check cancel auto-reveal only on room updates ([ac7393f](https://github.com/ja-ko/ppoker/commit/ac7393fef0e1aeeb92abd960e156bf343e63e116))
+* **app:** exclude spectators from missing vote calculations ([975879a](https://github.com/ja-ko/ppoker/commit/975879aab8326635eef0bc3453de4db2816a8592))
+* **app:** propagate retracting a vote to the server ([dd8085b](https://github.com/ja-ko/ppoker/commit/dd8085bbdf726c985992992a8bddc260353bb3f7))
+* decrease notification delay ([df170c1](https://github.com/ja-ko/ppoker/commit/df170c19a6c325c8b7055e08d0513a87f68fecbc))
+* prevent redundant client actions ([9e3f9fd](https://github.com/ja-ko/ppoker/commit/9e3f9fd9f6156cf8cbfbf7493c5f3043c060847c))
+
+
+### Miscellaneous Chores
+
+* prepare release 0.4.0 ([9da5a4b](https://github.com/ja-ko/ppoker/commit/9da5a4b6f022a94f9ea567c5a01a9356bf11862f))
+
 ## [0.3.2](https://github.com/ja-ko/ppoker/compare/v0.3.1...v0.3.2) (2024-06-13)
 
 
