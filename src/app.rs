@@ -99,14 +99,20 @@ impl App {
 
     fn check_auto_reveal(&mut self) -> AppResult<()> {
         if let Some(auto_reveal_at) = &self.auto_reveal_at {
-            if *auto_reveal_at < Instant::now()
-                && self.room.phase == GamePhase::Playing
-                && self.room.players.iter().all(|p| p.vote != Vote::Missing) {
-                    self.reveal()?;
+            if *auto_reveal_at < Instant::now() {
+                self.reveal()?;
             }
         }
-
         Ok(())
+    }
+    
+    fn check_auto_reveal_cancel(&mut self) {
+        if self.auto_reveal_at.is_some()
+            && (self.room.phase != GamePhase::Playing
+                || self.room.players.iter().any(|p| p.user_type == UserType::Player && p.vote == Vote::Missing)) {
+            debug!("Auto-reveal cancelled because of invalid state");
+            self.auto_reveal_at = None;
+        }
     }
 
     pub fn cancel_auto_reveal(&mut self) {
@@ -167,6 +173,8 @@ impl App {
         } else {
             self.notify_vote_at = None;
         }
+
+        self.check_auto_reveal_cancel();
     }
 
     pub fn vote(&mut self, data: &str) -> AppResult<()> {
