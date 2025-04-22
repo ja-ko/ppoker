@@ -167,7 +167,7 @@ impl App {
         if self.is_my_vote_last_missing() {
             if !self.is_notified && self.notify_vote_at == None {
                 self.log_message(LogLevel::Info, "Your vote is the last one missing.".to_string());
-                self.notify_vote_at = Some(Instant::now() + Duration::from_secs(15));
+                self.notify_vote_at = Some(Instant::now() + Duration::from_secs(8));
                 self.has_updates = true;
             }
         } else {
