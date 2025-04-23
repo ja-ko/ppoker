@@ -454,9 +454,10 @@ impl VotingPage {
         let rect = render_box(title, rect, frame);
         let buffer = self.input_buffer.as_ref().map_or("", |buffer| buffer.as_str());
         let text_buffer = Paragraph::new(buffer);
+        let cursor_x = rect.x + text_buffer.line_width() as u16;
         frame.render_widget(text_buffer, rect);
         frame.set_cursor_position(
-            (rect.x + buffer.len() as u16, rect.y)
+            (cursor_x, rect.y)
         );
     }
 }
