@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/ja-ko/ppoker/compare/v0.4.1...v0.4.2) (2025-04-23)
+
+
+### Bug Fixes
+
+* release with ubuntu 22.04 ([818096b](https://github.com/ja-ko/ppoker/commit/818096becdd6d52bab22443c5c12b06aff73f72c))
+
 ## [0.4.1](https://github.com/ja-ko/ppoker/compare/v0.4.0...v0.4.1) (2025-04-23)
 
 
