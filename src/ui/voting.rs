@@ -502,14 +502,8 @@ impl VotingPage {
         let rect = render_box(title, rect, frame);
         let buffer = self.input_buffer.as_ref().map_or("", |buffer| buffer.as_str());
         
-        // Debug: Print the exact bytes in the buffer
-        if let Some(input_buffer) = &self.input_buffer {
-            debug!("Buffer bytes: {:?}", input_buffer.as_bytes());
-        }
-        
         let text_buffer = Paragraph::new(buffer);
         
-        // Keep using line_width as it correctly handles character widths
         let cursor_text = buffer[..self.cursor_position].to_string();
         let cursor_paragraph = Paragraph::new(cursor_text);
         let cursor_x = rect.x + cursor_paragraph.line_width() as u16;
