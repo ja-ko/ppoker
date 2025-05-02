@@ -27,6 +27,7 @@ pub enum InputMode {
 pub struct VotingPage {
     pub input_mode: InputMode,
     pub input_buffer: Option<String>,
+    pub cursor_position: usize,
     last_phase: GamePhase
 }
 
@@ -157,23 +158,66 @@ impl Page for VotingPage {
                     KeyCode::Esc => {
                         self.cancel_input();
                     }
-
                     KeyCode::Enter => {
                         self.confirm_input(app)?;
                     }
-
                     KeyCode::Backspace => {
                         if let Some(input_buffer) = &mut self.input_buffer {
-                            input_buffer.pop();
+                            if self.cursor_position > 0 {
+                                let new_pos = input_buffer[..self.cursor_position]
+                                    .char_indices()
+                                    .next_back()
+                                    .map_or(0, |(i, _)| i);
+                            
+                                input_buffer.remove(new_pos);
+                                self.cursor_position = new_pos;
+                            }
                         }
                     }
-
+                    KeyCode::Delete => {
+                        if let Some(input_buffer) = &mut self.input_buffer {
+                            if self.cursor_position < input_buffer.len() {
+                            input_buffer.remove(self.cursor_position);
+                        }
+                    }
+                    }
+                    KeyCode::Left => {
+                        if self.cursor_position > 0 {
+                            if let Some(input_buffer) = &self.input_buffer {
+                                let new_pos = input_buffer[..self.cursor_position]
+                                    .char_indices()
+                                    .next_back()
+                                    .map_or(0, |(i, _)| i);
+                                self.cursor_position = new_pos;
+                            }
+                        }
+                    }
+                    KeyCode::Right => {
+                        if let Some(input_buffer) = &self.input_buffer {
+                            if self.cursor_position < input_buffer.len() {
+                                self.cursor_position = input_buffer[self.cursor_position..]
+                                    .char_indices()
+                                    .next()
+                                    .map_or(input_buffer.len(), |(i, _)| i);
+                            }
+                        }
+                    }
+                    KeyCode::Home => {
+                        self.cursor_position = 0;
+                    }
+                    KeyCode::End => {
+                        if let Some(input_buffer) = &self.input_buffer {
+                            self.cursor_position = input_buffer.len();
+                        }
+                    }
                     KeyCode::Char(c) => {
                         if let Some(input_buffer) = &mut self.input_buffer {
-                            input_buffer.push(c);
+                            input_buffer.insert(self.cursor_position, c);
+                            self.cursor_position += c.len_utf8();
                         }
                     }
                     _ => {}
+
                 }
             }
             InputMode::ResetConfirm => {
@@ -222,7 +266,8 @@ impl Page for VotingPage {
         match self.input_mode {
             InputMode::Chat | InputMode::Vote | InputMode::Name => {
                 if let Some(input_buffer) = &mut self.input_buffer {
-                    input_buffer.push_str(text.as_str());
+                    input_buffer.insert_str(self.cursor_position, &text);
+                    self.cursor_position += text.chars().map(|c| c.len_utf8()).sum::<usize>();
                 }
             }
             _ => {}
@@ -236,6 +281,7 @@ impl VotingPage {
         Self {
             input_mode: InputMode::Menu,
             input_buffer: None,
+            cursor_position: 0,
             last_phase: GamePhase::Playing,
         }
     }
@@ -251,6 +297,7 @@ impl VotingPage {
     fn start_input(&mut self, mode: InputMode, default: String) {
         self.input_mode = mode;
         self.input_buffer = Some(default);
+        self.cursor_position = self.input_buffer.as_ref().map_or(0, |s| s.len());
     }
 
     pub fn confirm_input(&mut self, app: &mut App) -> AppResult<()> {
@@ -286,6 +333,7 @@ impl VotingPage {
     pub fn cancel_input(&mut self) {
         self.input_mode = InputMode::Menu;
         self.input_buffer = None;
+        self.cursor_position = 0;
     }
 
     fn render_votes(&mut self, app: &mut App, rect: Rect, frame: &mut Frame) {
@@ -453,12 +501,21 @@ impl VotingPage {
     fn render_text_input(&mut self, title: &str, rect: Rect, frame: &mut Frame) {
         let rect = render_box(title, rect, frame);
         let buffer = self.input_buffer.as_ref().map_or("", |buffer| buffer.as_str());
+        
+        // Debug: Print the exact bytes in the buffer
+        if let Some(input_buffer) = &self.input_buffer {
+            debug!("Buffer bytes: {:?}", input_buffer.as_bytes());
+        }
+        
         let text_buffer = Paragraph::new(buffer);
-        let cursor_x = rect.x + text_buffer.line_width() as u16;
+        
+        // Keep using line_width as it correctly handles character widths
+        let cursor_text = buffer[..self.cursor_position].to_string();
+        let cursor_paragraph = Paragraph::new(cursor_text);
+        let cursor_x = rect.x + cursor_paragraph.line_width() as u16;
+        
         frame.render_widget(text_buffer, rect);
-        frame.set_cursor_position(
-            (cursor_x, rect.y)
-        );
+        frame.set_cursor_position((cursor_x, rect.y));
     }
 }
 
