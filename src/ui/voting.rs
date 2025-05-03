@@ -198,7 +198,7 @@ impl Page for VotingPage {
                                 self.cursor_position = input_buffer[self.cursor_position..]
                                     .char_indices()
                                     .next()
-                                    .map_or(input_buffer.len(), |(i, _)| i);
+                                    .map_or(input_buffer.len(), |(i, _)| i + 1) + self.cursor_position;
                             }
                         }
                     }
