@@ -263,6 +263,7 @@ impl Page for VotingPage {
     }
 
     fn pasted(&mut self, _app: &mut App, text: String) {
+        let text = VotingPage::sanitize_string(text.as_str());
         match self.input_mode {
             InputMode::Chat | InputMode::Vote | InputMode::Name => {
                 if let Some(input_buffer) = &mut self.input_buffer {
@@ -285,6 +286,10 @@ impl VotingPage {
             last_phase: GamePhase::Playing,
         }
     }
+    
+    fn sanitize_string(s: &str) -> String {
+        s.chars().filter(|&c| !c.is_control()).collect::<String>().trim_end().to_string()
+    }
 
     pub fn change_mode(&mut self, mode: InputMode, default_text: String, app: &App) {
         if mode == InputMode::Vote && app.room.phase == GamePhase::Playing {
@@ -301,7 +306,7 @@ impl VotingPage {
     }
 
     pub fn confirm_input(&mut self, app: &mut App) -> AppResult<()> {
-        let buffer = self.input_buffer.as_ref().map(|b| b.trim().replace('\n', ""));
+        let buffer = self.input_buffer.as_ref().map(|b| VotingPage::sanitize_string(b.as_str()));
         match self.input_mode {
             InputMode::Vote if app.room.phase == GamePhase::Playing => {
                 if let Some(input_buffer) = &buffer {
@@ -433,7 +438,8 @@ impl VotingPage {
                     format!("[{:?}]: ", logentry.source)
                 }
             };
-            ListItem::new(format!("{}{}", prefix, logentry.message)).style(color)
+            let message = VotingPage::sanitize_string(logentry.message.as_str());
+            ListItem::new(format!("{}{}", prefix, message)).style(color)
         }).collect();
 
         let mut state = ListState::default().with_offset(entries.len().saturating_sub(rect.height as usize));
