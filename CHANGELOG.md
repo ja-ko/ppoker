@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.3](https://github.com/ja-ko/ppoker/compare/v0.4.2...v0.4.3) (2025-05-03)
+
+
+### Features
+
+* **ui:** add cursor navigation and editing support in text input ([4c823a3](https://github.com/ja-ko/ppoker/commit/4c823a395d0aacd55c6ecafacc4b0dfb9d072bea)), closes [#61](https://github.com/ja-ko/ppoker/issues/61)
+* **ui:** sanitize input strings across voting UI ([9acb561](https://github.com/ja-ko/ppoker/commit/9acb5611143d01f19c5a6fa22dbf337299c24c34)), closes [#59](https://github.com/ja-ko/ppoker/issues/59)
+
+
+### Bug Fixes
+
+* cursor not moving right on right press. ([6247234](https://github.com/ja-ko/ppoker/commit/6247234fa77dd7c536d44f1e886131b029ea5e7a))
+* **ui:** correct cursor position in input box rendering ([48be407](https://github.com/ja-ko/ppoker/commit/48be407b02eff6778687275d65bb9a00e8e16601)), closes [#60](https://github.com/ja-ko/ppoker/issues/60)
+
 ## [0.4.2](https://github.com/ja-ko/ppoker/compare/v0.4.1...v0.4.2) (2025-04-23)
 
 
