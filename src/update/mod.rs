@@ -2,11 +2,14 @@ mod changelog;
 mod changelog_renderer;
 
 use std::io;
+use std::path::Path;
+use std::fs;
 
 use log::{debug, error, info};
 use self_update::{cargo_crate_version, self_replace, Extract};
 use semver::Version;
 use snafu::Snafu;
+use crate::config::Config;
 
 const GITHUB_OWNER: &str = "ja-ko";
 const GITHUB_REPO: &str = "ppoker";
@@ -69,7 +72,17 @@ fn display_changelog(
     Ok(())
 }
 
-pub fn self_update() -> Result<UpdateResult, UpdateError> {
+fn backup_binary(path: impl AsRef<Path>) -> Result<(), UpdateError> {
+    let path = path.as_ref();
+    let backup_path = path.with_extension("bak");
+    if backup_path.exists() {
+        fs::remove_file(&backup_path)?;
+    }
+    fs::copy(path, &backup_path)?;
+    Ok(())
+}
+
+pub fn self_update(config: &Config) -> Result<UpdateResult, UpdateError> {
     let update = self_update::backends::github::Update::configure()
         .repo_owner(GITHUB_OWNER)
         .repo_name(GITHUB_REPO)
@@ -167,6 +180,14 @@ pub fn self_update() -> Result<UpdateResult, UpdateError> {
         update.bin_install_path(),
         binary
     );
+    
+    if config.keep_backup_on_update {
+        info!("Creating backup of current binary");
+        if let Err(e) = backup_binary(update.bin_install_path()) {
+            error!("Failed to create backup: {}", e);
+        }
+    }
+    
     self_replace::self_replace(binary)?;
     info!("Update to v{} done.", latest_release.version);
 

@@ -81,7 +81,7 @@ fn setup() -> AppResult<Option<(App, Tui<CrosstermBackend<Stderr>>)>> {
     let config = get_config();
 
     if !config.skip_update_check {
-        let res = self_update();
+        let res = self_update(&config);
         match res {
             Ok(UpdateResult::Updated) => {
                 println!("Please restart the application.");

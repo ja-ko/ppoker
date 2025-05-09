@@ -47,6 +47,7 @@ pub struct Config {
     pub skip_update_check: bool,
     pub disable_notifications: bool,
     pub disable_auto_reveal: bool,
+    pub keep_backup_on_update: bool,
 }
 
 impl Default for Config {
@@ -58,6 +59,7 @@ impl Default for Config {
             skip_update_check: false,
             disable_notifications: false,
             disable_auto_reveal: false,
+            keep_backup_on_update: true,
         }
     }
 }

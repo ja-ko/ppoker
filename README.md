@@ -9,7 +9,7 @@ shortcuts.
 
 ## Installation
 
-Download the current version for your operating system from 
+Download the current version for your operating system from
 [the release page](https://github.com/ja-ko/ppoker/releases) or use the following direct links:
 
 <!-- x-release-please-start-version -->
@@ -26,9 +26,9 @@ Download the current version for your operating system from
 ```shell
 ./ppoker <roomname>
 ```
-That's it. 
+That's it.
 
-The name of a room is optional, if omitted a room is generated automatically. 
+The name of a room is optional, if omitted a room is generated automatically.
 
 ### Commandline arguments
 ```
@@ -49,13 +49,13 @@ Options:
   -V, --version                Print version
 ```
 
-You can also use environment variables to set each argument or option. For this prefix the option name with 
+You can also use environment variables to set each argument or option. For this prefix the option name with
 `PPOKER_`. For example: `PPOKER_ROOM=planning-room ./ppoker`
 
 
 ### Config file
 
-You can set defaults for the commandline arguments by providing a config file in `.toml` format at the following 
+You can set defaults for the commandline arguments by providing a config file in `.toml` format at the following
 location:
 
 | Platform | Value                                                                       |
@@ -65,11 +65,12 @@ location:
 | Windows  | `%APPDATA%\ppoker\config\config.toml`                                       |
 
 Create a `config.toml` with any of the following keys:
-```toml 
+```toml
 name = "ja-ko"
 room = "planning-room"
 server = "wss://pp.discordia.network/"
 disable_auto_reveal = false
 skip_update_check = false
 disable_notifications = false
+keep_backup_on_update = true
 ```
