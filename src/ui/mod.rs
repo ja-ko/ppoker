@@ -1,21 +1,21 @@
-use std::time::Duration;
 use crossterm::event::KeyEvent;
 use enum_iterator::Sequence;
-use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Paragraph};
+use ratatui::Frame;
+use std::time::Duration;
 
 use crate::app::{App, AppResult};
 use crate::models::GamePhase;
 
-pub use voting::VotingPage;
 pub use history::HistoryPage;
 pub use log::LogPage;
+pub use voting::VotingPage;
 
-mod voting;
-mod log;
 mod history;
+mod log;
+mod voting;
 
 #[derive(Debug, PartialEq, Clone, Copy, Hash, Ord, PartialOrd, Eq, Sequence)]
 pub enum UiPage {
@@ -50,8 +50,8 @@ fn render_box_colored(title: &str, color: Style, rect: Rect, frame: &mut Frame) 
 
 fn colored_box_style(game_phase: GamePhase) -> Style {
     match game_phase {
-        GamePhase::Playing => { Style::new().white() }
-        GamePhase::Revealed => { Style::new().light_blue() }
+        GamePhase::Playing => Style::new().white(),
+        GamePhase::Revealed => Style::new().light_blue(),
     }
 }
 
@@ -86,25 +86,37 @@ fn render_confirmation_box(prompt: &str, rect: Rect, frame: &mut Frame) {
         Span::raw("N").bold(),
         Span::raw("o"),
     ]))
-        .alignment(Alignment::Center);
+    .alignment(Alignment::Center);
     frame.render_widget(paragraph, inner);
 }
 
 fn footer_entries(entries: Vec<&str>) -> Paragraph {
-    let mut spans: Vec<Span> = entries.iter().flat_map(|item| {
-        let (first, remaining) = if item.char_indices().into_iter().count() > 1 {
-            let split_idx = item.char_indices().nth(1).expect("Unable to split string").0;
-            item.split_at(split_idx)
-        } else {
-            (*item, "")
-        };
-        vec![
-            Span::raw(" "),
-            Span::styled(first, Style::default().add_modifier(Modifier::BOLD).add_modifier(Modifier::UNDERLINED)),
-            Span::raw(remaining),
-            Span::raw(" |"),
-        ]
-    }).collect();
+    let mut spans: Vec<Span> = entries
+        .iter()
+        .flat_map(|item| {
+            let (first, remaining) = if item.char_indices().into_iter().count() > 1 {
+                let split_idx = item
+                    .char_indices()
+                    .nth(1)
+                    .expect("Unable to split string")
+                    .0;
+                item.split_at(split_idx)
+            } else {
+                (*item, "")
+            };
+            vec![
+                Span::raw(" "),
+                Span::styled(
+                    first,
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(Modifier::UNDERLINED),
+                ),
+                Span::raw(remaining),
+                Span::raw(" |"),
+            ]
+        })
+        .collect();
     spans.remove(spans.len() - 1);
 
     Paragraph::new(vec![Line::from(""), Line::from(spans)])

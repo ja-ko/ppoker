@@ -1,29 +1,29 @@
-use std::{fs, io};
 use std::io::Stderr;
 use std::path::PathBuf;
+use std::{fs, io};
 
-use filetime::FileTime;
-use glob::glob;
-use log::{debug, error, info, LevelFilter, warn};
-use ratatui::backend::CrosstermBackend;
-use ratatui::Terminal;
-use regex::Regex;
-use tui_logger::TuiLoggerFile;
 use crate::app::{App, AppResult};
 use crate::config::{get_config, get_logdir};
 use crate::events::EventHandler;
 use crate::tui::Tui;
 use crate::update::{self_update, UpdateError, UpdateResult};
+use filetime::FileTime;
+use glob::glob;
+use log::{debug, error, info, warn, LevelFilter};
+use ratatui::backend::CrosstermBackend;
+use ratatui::Terminal;
+use regex::Regex;
+use tui_logger::TuiLoggerFile;
 
 mod app;
-mod tui;
-mod ui;
+mod config;
 mod events;
 mod models;
-mod config;
-mod web;
-mod update;
 mod notification;
+mod tui;
+mod ui;
+mod update;
+mod web;
 
 fn setup_logging() -> AppResult<()> {
     const MAX_LOGFILES: usize = 20;
@@ -33,7 +33,8 @@ fn setup_logging() -> AppResult<()> {
         fs::create_dir_all(&log_dir)?;
     }
     let mut existing_files: Vec<PathBuf> = glob(log_dir.join("main-*.log").to_str().unwrap())?
-        .map(|f| f.unwrap()).collect();
+        .map(|f| f.unwrap())
+        .collect();
     existing_files.sort_by_cached_key(|f| {
         let metadata = fs::metadata(f).unwrap();
         return FileTime::from_creation_time(&metadata);
@@ -50,11 +51,14 @@ fn setup_logging() -> AppResult<()> {
         }
     }
 
-    let max_id = existing_files.iter().map(|f| {
-        let capture = filename_regex.captures(f.to_str().unwrap()).unwrap();
-        capture["index"].parse::<i32>().unwrap()
-    }).max().unwrap_or(0);
-
+    let max_id = existing_files
+        .iter()
+        .map(|f| {
+            let capture = filename_regex.captures(f.to_str().unwrap()).unwrap();
+            capture["index"].parse::<i32>().unwrap()
+        })
+        .max()
+        .unwrap_or(0);
 
     let log_file = log_dir.join(format!("main-{}.log", max_id + 1));
     tui_logger::set_log_file(TuiLoggerFile::new(log_file.as_os_str().to_str().unwrap()));
@@ -89,7 +93,9 @@ fn setup() -> AppResult<Option<(App, Tui<CrosstermBackend<Stderr>>)>> {
             }
             Ok(UpdateResult::UpToDate) => {}
             Err(e) => {
-                if matches!(e, UpdateError::NoCompatibleAssetFound) || matches!(e, UpdateError::UserCanceled) {
+                if matches!(e, UpdateError::NoCompatibleAssetFound)
+                    || matches!(e, UpdateError::UserCanceled)
+                {
                     warn!("Current release has no asset for current target.");
                 } else {
                     error!("Failed to update the application. {}", e);
@@ -99,7 +105,7 @@ fn setup() -> AppResult<Option<(App, Tui<CrosstermBackend<Stderr>>)>> {
             }
         }
     }
-    
+
     let app = App::new(config)?;
 
     let backend = CrosstermBackend::new(io::stderr());
@@ -107,7 +113,7 @@ fn setup() -> AppResult<Option<(App, Tui<CrosstermBackend<Stderr>>)>> {
     let events = EventHandler::new(250);
     let mut tui = Tui::new(terminal, events);
     tui.init()?;
-    
+
     Ok(Some((app, tui)))
 }
 
@@ -128,6 +134,3 @@ fn main() -> AppResult<()> {
     tui_logger::move_events();
     result
 }
-
-
-

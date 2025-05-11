@@ -24,21 +24,28 @@ pub enum ClientError {
     ServerClosedConnection,
 }
 
-
 impl PokerClient {
     pub fn new(config: &Config) -> AppResult<(Self, Room, Vec<LogEntry>)> {
         let mut result = Self {
-            socket: PokerSocket::connect(config)?
+            socket: PokerSocket::connect(config)?,
         };
         for i in 0..20 {
             let room_update = result.socket.read()?;
             if let Some(IncomingMessage::RoomUpdate(room)) = room_update {
                 info!("Got initial room state with delay {}ms.", i * 20);
-                return Ok((result, (&room).into(), (&room.log).iter().enumerate().map(|(i, l)| {
-                    let mut result: LogEntry = l.into();
-                    result.server_index = Some(i as u32);
-                    result
-                }).collect()));
+                return Ok((
+                    result,
+                    (&room).into(),
+                    (&room.log)
+                        .iter()
+                        .enumerate()
+                        .map(|(i, l)| {
+                            let mut result: LogEntry = l.into();
+                            result.server_index = Some(i as u32);
+                            result
+                        })
+                        .collect(),
+                ));
             } else {
                 thread::sleep(Duration::from_millis(20));
             }
@@ -60,9 +67,7 @@ impl PokerClient {
                     return Err(Box::new(ServerClosedConnection));
                 }
                 IncomingMessage::RoomUpdate(room) => {
-                    let logs: Vec<LogEntry> = room.log.iter()
-                        .map(|l| l.into())
-                        .collect();
+                    let logs: Vec<LogEntry> = room.log.iter().map(|l| l.into()).collect();
                     for i in 0..logs.len() {
                         if log_results.len() == i {
                             let mut entry = logs[i].clone();
@@ -79,7 +84,8 @@ impl PokerClient {
     }
 
     pub fn vote(&mut self, card_value: Option<&str>) -> AppResult<()> {
-        self.socket.send_request(UserRequest::PlayCard { card_value })?;
+        self.socket
+            .send_request(UserRequest::PlayCard { card_value })?;
 
         Ok(())
     }
@@ -89,7 +95,8 @@ impl PokerClient {
     }
 
     pub fn chat(&mut self, message: &str) -> AppResult<()> {
-        self.socket.send_request(UserRequest::ChatMessage { message })
+        self.socket
+            .send_request(UserRequest::ChatMessage { message })
     }
 
     pub fn reveal(&mut self) -> AppResult<()> {

@@ -2,7 +2,10 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
-use crate::models::{GamePhase as AppGamePhase, LogEntry as AppLogEntry, LogLevel as AppLogLevel, LogSource, Player, Room as AppRoom, UserType as AppUserType, Vote, VoteData};
+use crate::models::{
+    GamePhase as AppGamePhase, LogEntry as AppLogEntry, LogLevel as AppLogLevel, LogSource, Player,
+    Room as AppRoom, UserType as AppUserType, Vote, VoteData,
+};
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -35,7 +38,6 @@ pub enum LogLevel {
     Error,
 }
 
-
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LogEntry {
@@ -48,9 +50,9 @@ impl Into<AppLogEntry> for &LogEntry {
         AppLogEntry {
             timestamp: Instant::now(),
             level: match self.level {
-                LogLevel::Chat => { AppLogLevel::Chat }
-                LogLevel::Info => { AppLogLevel::Info }
-                LogLevel::Error => { AppLogLevel::Error }
+                LogLevel::Chat => AppLogLevel::Chat,
+                LogLevel::Info => AppLogLevel::Info,
+                LogLevel::Error => AppLogLevel::Error,
             },
             message: self.message.clone(),
             source: LogSource::Server,
@@ -143,10 +145,14 @@ impl Into<AppRoom> for &Room {
 pub enum UserRequest<'a> {
     PlayCard {
         #[serde(rename = "cardValue")]
-        card_value: Option<&'a str>
+        card_value: Option<&'a str>,
     },
-    ChangeName { name: &'a str },
-    ChatMessage { message: &'a str },
+    ChangeName {
+        name: &'a str,
+    },
+    ChatMessage {
+        message: &'a str,
+    },
     RevealCards,
     StartNewRound,
 }
@@ -161,19 +167,27 @@ mod tests {
     fn room_fixture() -> Room {
         Room {
             room_id: "roomid".to_string(),
-            deck: vec!["1".to_string(), "2".to_string(), "3".to_string(), "5".to_string()],
+            deck: vec![
+                "1".to_string(),
+                "2".to_string(),
+                "3".to_string(),
+                "5".to_string(),
+            ],
             game_phase: GamePhase::Playing,
-            users: vec![User {
-                username: "user 1".to_string(),
-                user_type: UserType::Participant,
-                your_user: true,
-                card_value: "13".to_string(),
-            }, User {
-                username: "user 2".to_string(),
-                user_type: UserType::Spectator,
-                your_user: false,
-                card_value: "5".to_string(),
-            }],
+            users: vec![
+                User {
+                    username: "user 1".to_string(),
+                    user_type: UserType::Participant,
+                    your_user: true,
+                    card_value: "13".to_string(),
+                },
+                User {
+                    username: "user 2".to_string(),
+                    user_type: UserType::Spectator,
+                    your_user: false,
+                    card_value: "5".to_string(),
+                },
+            ],
             average: "12".to_string(),
             log: vec![LogEntry {
                 level: LogLevel::Chat,
@@ -184,7 +198,9 @@ mod tests {
 
     #[test]
     fn test_request() {
-        let request = UserRequest::PlayCard { card_value: Some("13") };
+        let request = UserRequest::PlayCard {
+            card_value: Some("13"),
+        };
         let expected = json!(
             {
               "requestType": "PlayCard",
@@ -199,38 +215,38 @@ mod tests {
         let room = room_fixture();
 
         let expected = json!(
-{
-  "roomId": "roomid",
-  "deck": [
-    "1",
-    "2",
-    "3",
-    "5"
-  ],
-  "gamePhase": "PLAYING",
-  "users": [
-    {
-      "username": "user 1",
-      "userType": "PARTICIPANT",
-      "yourUser": true,
-      "cardValue": "13"
-    },
-    {
-      "username": "user 2",
-      "userType": "SPECTATOR",
-      "yourUser": false,
-      "cardValue": "5"
-    }
-  ],
-  "average": "12",
-  "log": [
-    {
-      "level": "CHAT",
-      "message": "Hello World"
-    }
-  ]
-}
-        );
+        {
+          "roomId": "roomid",
+          "deck": [
+            "1",
+            "2",
+            "3",
+            "5"
+          ],
+          "gamePhase": "PLAYING",
+          "users": [
+            {
+              "username": "user 1",
+              "userType": "PARTICIPANT",
+              "yourUser": true,
+              "cardValue": "13"
+            },
+            {
+              "username": "user 2",
+              "userType": "SPECTATOR",
+              "yourUser": false,
+              "cardValue": "5"
+            }
+          ],
+          "average": "12",
+          "log": [
+            {
+              "level": "CHAT",
+              "message": "Hello World"
+            }
+          ]
+        }
+                );
         println!("{}", serde_json::to_string_pretty(&room).unwrap());
         assert_json_eq!(room, expected);
     }

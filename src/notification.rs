@@ -9,7 +9,8 @@ pub fn show_notification() {
         .summary("Planning Poker")
         .body("Your vote is the last one missing.")
         .timeout(Timeout::Milliseconds(10000))
-        .show() {
+        .show()
+    {
         error!("Failed to send notification: {}", e);
     }
 }
@@ -22,8 +23,8 @@ pub fn show_notification() {
         .timeout(Timeout::Milliseconds(10000))
         .urgency(Urgency::Critical)
         .hint(Hint::SoundName("message-new-instant".to_string()))
-        .show() {
+        .show()
+    {
         error!("Failed to send notification: {}", e);
     }
 }
-

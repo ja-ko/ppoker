@@ -11,8 +11,8 @@ pub enum VoteData {
 impl std::fmt::Display for VoteData {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            VoteData::Number(n) => { f.write_fmt(format_args!("{}", n)) }
-            VoteData::Special(c) => { f.write_fmt(format_args!("{}", c)) }
+            VoteData::Number(n) => f.write_fmt(format_args!("{}", n)),
+            VoteData::Special(c) => f.write_fmt(format_args!("{}", c)),
         }
     }
 }
@@ -27,9 +27,9 @@ pub enum Vote {
 impl std::fmt::Display for Vote {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Vote::Missing => { f.write_str("Missing") }
-            Vote::Hidden => { f.write_str("Hidden") }
-            Vote::Revealed(v) => { f.write_fmt(format_args!("{}", v)) }
+            Vote::Missing => f.write_str("Missing"),
+            Vote::Hidden => f.write_str("Hidden"),
+            Vote::Revealed(v) => f.write_fmt(format_args!("{}", v)),
         }
     }
 }
@@ -57,8 +57,12 @@ pub enum GamePhase {
 impl std::fmt::Display for GamePhase {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            GamePhase::Playing => { write!(f, "Playing") }
-            GamePhase::Revealed => { write!(f, "Waiting") }
+            GamePhase::Playing => {
+                write!(f, "Playing")
+            }
+            GamePhase::Revealed => {
+                write!(f, "Waiting")
+            }
         }
     }
 }
@@ -75,7 +79,6 @@ pub enum LogSource {
     Server,
     Client,
 }
-
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct LogEntry {
@@ -96,10 +99,10 @@ pub struct Room {
 
 fn vote_rank(vote: &Vote) -> i32 {
     match vote {
-        Vote::Missing => { 9999 }
-        Vote::Hidden => { 9999 }
-        Vote::Revealed(VoteData::Number(n)) => { *n as i32 }
-        Vote::Revealed(VoteData::Special(_)) => { 999 }
+        Vote::Missing => 9999,
+        Vote::Hidden => 9999,
+        Vote::Revealed(VoteData::Number(n)) => *n as i32,
+        Vote::Revealed(VoteData::Special(_)) => 999,
     }
 }
 

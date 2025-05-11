@@ -61,11 +61,15 @@ impl EventHandler {
                             }
                             CrosstermEvent::Mouse(e) => sender.send(Event::Mouse(e)),
                             CrosstermEvent::Resize(w, h) => sender.send(Event::Resize(w, h)),
-                            CrosstermEvent::FocusGained => sender.send(Event::Focus(FocusChange::Gained)),
-                            CrosstermEvent::FocusLost => sender.send(Event::Focus(FocusChange::Lost)),
+                            CrosstermEvent::FocusGained => {
+                                sender.send(Event::Focus(FocusChange::Gained))
+                            }
+                            CrosstermEvent::FocusLost => {
+                                sender.send(Event::Focus(FocusChange::Lost))
+                            }
                             CrosstermEvent::Paste(text) => sender.send(Event::Paste(text)),
                         }
-                            .expect("failed to send terminal event")
+                        .expect("failed to send terminal event")
                     }
 
                     if last_tick.elapsed() >= tick_rate {
@@ -87,8 +91,9 @@ impl EventHandler {
     }
 
     pub fn shutdown(self) {
-        self.shutdown.send(()).expect("Unable to signal event thread to shutdown");
+        self.shutdown
+            .send(())
+            .expect("Unable to signal event thread to shutdown");
         self.handler.join().expect("Unable to join event thread.");
     }
 }
-

@@ -2,8 +2,8 @@ use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
 use log::{debug, info};
-use tungstenite::{Message, WebSocket};
 use tungstenite::stream::MaybeTlsStream;
+use tungstenite::{Message, WebSocket};
 
 use crate::app::AppResult;
 use crate::config::Config;
@@ -23,15 +23,23 @@ pub enum IncomingMessage {
 
 impl PokerSocket {
     pub fn connect(config: &Config) -> AppResult<Self> {
-        let url = format!("{}/rooms/{}?user={}&userType=PARTICIPANT", config.server, urlencoding::encode(config.room.as_str()), urlencoding::encode(config.name.as_str()));
+        let url = format!(
+            "{}/rooms/{}?user={}&userType=PARTICIPANT",
+            config.server,
+            urlencoding::encode(config.room.as_str()),
+            urlencoding::encode(config.name.as_str())
+        );
         let (mut socket, _response) = tungstenite::connect(url)?;
         match socket.get_mut() {
             MaybeTlsStream::NativeTls(t) => {
                 let stream = t.get_mut();
-                stream.set_nonblocking(true).expect("Unable to switch stream to nonblocking mode");
+                stream
+                    .set_nonblocking(true)
+                    .expect("Unable to switch stream to nonblocking mode");
             }
             MaybeTlsStream::Plain(t) => {
-                t.set_nonblocking(true).expect("Unable to switch stream to nonblocking mode");
+                t.set_nonblocking(true)
+                    .expect("Unable to switch stream to nonblocking mode");
             }
             _ => {}
         }
@@ -64,7 +72,9 @@ impl PokerSocket {
         match message {
             Message::Text(text) => {
                 debug!("Got message from server: {}", text);
-                return Ok(Some(IncomingMessage::RoomUpdate(serde_json::from_str(&text)?)));
+                return Ok(Some(IncomingMessage::RoomUpdate(serde_json::from_str(
+                    &text,
+                )?)));
             }
             Message::Binary(_) => {}
             Message::Ping(d) => {
@@ -141,34 +151,58 @@ mod tests {
         assert_eq!(messages.len(), 1);
 
         assert_matches!(&messages[0], IncomingMessage::RoomUpdate(room) if room.room_id.eq(&config.room));
-        let room = if let IncomingMessage::RoomUpdate(room) = &messages[0] { room } else { panic!("Shouldn't happen.") };
+        let room = if let IncomingMessage::RoomUpdate(room) = &messages[0] {
+            room
+        } else {
+            panic!("Shouldn't happen.")
+        };
         assert_eq!(room.users[0].your_user, true);
         assert_eq!(room.users[0].username, "Johnnie Waters");
         assert_eq!(room.users[0].user_type, UserType::Participant);
 
-        client.send_request(UserRequest::ChangeName { name: "Ralph Muller" }).unwrap();
+        client
+            .send_request(UserRequest::ChangeName {
+                name: "Ralph Muller",
+            })
+            .unwrap();
         thread::sleep(Duration::from_millis(250));
         let messages = client.read_all().unwrap();
         assert_eq!(messages.len(), 1);
 
         assert_matches!(&messages[0], IncomingMessage::RoomUpdate(room) if room.room_id.eq(&config.room));
-        let room = if let IncomingMessage::RoomUpdate(room) = &messages[0] { room } else { panic!("Shouldn't happen.") };
+        let room = if let IncomingMessage::RoomUpdate(room) = &messages[0] {
+            room
+        } else {
+            panic!("Shouldn't happen.")
+        };
         assert_eq!(room.users[0].your_user, true);
         assert_eq!(room.users[0].username, "Ralph Muller");
 
-        client.send_request(UserRequest::PlayCard { card_value: Some("13") }).unwrap();
+        client
+            .send_request(UserRequest::PlayCard {
+                card_value: Some("13"),
+            })
+            .unwrap();
         client.send_request(UserRequest::RevealCards).unwrap();
 
         thread::sleep(Duration::from_millis(250));
         let messages = client.read_all().unwrap();
         assert_eq!(messages.len(), 2);
         assert_matches!(&messages[0], IncomingMessage::RoomUpdate(room) if room.room_id.eq(&config.room));
-        let room = if let IncomingMessage::RoomUpdate(room) = &messages[0] { room } else { panic!("Shouldn't happen.") };
+        let room = if let IncomingMessage::RoomUpdate(room) = &messages[0] {
+            room
+        } else {
+            panic!("Shouldn't happen.")
+        };
         assert_eq!(room.users[0].your_user, true);
         assert_eq!(room.users[0].card_value, "13");
 
         assert_matches!(&messages[1], IncomingMessage::RoomUpdate(room) if room.room_id.eq(&config.room));
-        let room = if let IncomingMessage::RoomUpdate(room) = &messages[1] { room } else { panic!("Shouldn't happen.") };
+        let room = if let IncomingMessage::RoomUpdate(room) = &messages[1] {
+            room
+        } else {
+            panic!("Shouldn't happen.")
+        };
         assert_eq!(room.game_phase, GamePhase::CardsRevealed);
 
         Ok(())
@@ -182,8 +216,12 @@ mod tests {
 
         let mut client1 = PokerSocket::connect(&config1).unwrap();
         let mut client2 = PokerSocket::connect(&config2).unwrap();
-        client1.send_request(UserRequest::PlayCard { card_value: Some("5") })?;
-        client2.send_request(UserRequest::PlayCard { card_value: Some("8") })?;
+        client1.send_request(UserRequest::PlayCard {
+            card_value: Some("5"),
+        })?;
+        client2.send_request(UserRequest::PlayCard {
+            card_value: Some("8"),
+        })?;
 
         thread::sleep(Duration::from_millis(200));
 
@@ -202,18 +240,31 @@ mod tests {
 
         let message = &client2_messages[client2_messages.len() - 1];
         if let IncomingMessage::RoomUpdate(room) = message {
-            assert_eq!(room.users.iter().find(|p| p.username == "Johnnie Waters").unwrap().card_value, "❌");
+            assert_eq!(
+                room.users
+                    .iter()
+                    .find(|p| p.username == "Johnnie Waters")
+                    .unwrap()
+                    .card_value,
+                "❌"
+            );
         } else {
             panic!("Wrong packet type.");
         };
 
         let message = &client1_messages[client1_messages.len() - 1];
         if let IncomingMessage::RoomUpdate(room) = message {
-            assert_eq!(room.users.iter().find(|p| p.username == "Johnnie Waters").unwrap().card_value, "");
+            assert_eq!(
+                room.users
+                    .iter()
+                    .find(|p| p.username == "Johnnie Waters")
+                    .unwrap()
+                    .card_value,
+                ""
+            );
         } else {
             panic!("Wrong packet type.");
         };
-
 
         Ok(())
     }

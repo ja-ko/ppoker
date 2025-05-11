@@ -1,10 +1,10 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use log::LevelFilter;
-use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::prelude::*;
 use ratatui::style::Style;
 use ratatui::widgets::{Block, BorderType, Paragraph, Wrap};
+use ratatui::Frame;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
 use crate::app::{App, AppResult};
@@ -20,7 +20,7 @@ impl LogPage {
             state: TuiWidgetState::default()
                 .set_level_for_target("tungstenite::client", LevelFilter::Warn)
                 .set_level_for_target("tungstenite::handshake::client", LevelFilter::Warn)
-                .set_level_for_target("ppoker::web::ws", LevelFilter::Info)
+                .set_level_for_target("ppoker::web::ws", LevelFilter::Info),
         }
     }
 }
@@ -32,24 +32,23 @@ impl Page for LogPage {
         helptexts.append(&mut help_spans("f", "Toggle focus"));
         helptexts.append(&mut help_spans("UP/DOWN", "Navigate"));
         helptexts.append(&mut help_spans("LEFT/RIGHT", "Reduce/increase level"));
-        helptexts.append(&mut help_spans("PAGEUP/PAGEDOWN", "Enter Page mode, scroll up/down"));
+        helptexts.append(&mut help_spans(
+            "PAGEUP/PAGEDOWN",
+            "Enter Page mode, scroll up/down",
+        ));
         helptexts.append(&mut help_spans("ESCAPE", "Exit page mode"));
         helptexts.append(&mut help_spans("SPACE", "Toggle hiding disabled targets"));
         helptexts.append(&mut help_spans("l", "Leave log view"));
         helptexts.append(&mut help_spans("q", "Quit application"));
         helptexts.pop();
 
-        let help_paragraph = Paragraph::new(Line::from(helptexts))
-            .wrap(Wrap { trim: true });
+        let help_paragraph = Paragraph::new(Line::from(helptexts)).wrap(Wrap { trim: true });
 
         let help_lines = help_paragraph.line_count(frame.area().width.saturating_sub(2)) as u16;
 
         let [log, help] = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Fill(1),
-                Constraint::Length(help_lines + 2)
-            ])
+            .constraints([Constraint::Fill(1), Constraint::Length(help_lines + 2)])
             .areas(frame.area());
 
         let widget = TuiLoggerSmartWidget::default()

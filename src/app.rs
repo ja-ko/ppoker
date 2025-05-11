@@ -1,16 +1,17 @@
-use std::{error, io, mem};
-use std::time::{Duration, Instant};
 use crossterm::execute;
 use crossterm::style::Print;
 use log::{debug, info};
+use std::time::{Duration, Instant};
+use std::{error, io, mem};
 
 use crate::config::Config;
-use crate::models::{GamePhase, LogEntry, LogLevel, LogSource, Player, Room, UserType, Vote, VoteData};
+use crate::models::{
+    GamePhase, LogEntry, LogLevel, LogSource, Player, Room, UserType, Vote, VoteData,
+};
 use crate::notification::show_notification;
 use crate::web::client::PokerClient;
 
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
-
 
 pub struct HistoryEntry {
     pub round_number: u32,
@@ -105,11 +106,16 @@ impl App {
         }
         Ok(())
     }
-    
+
     fn check_auto_reveal_cancel(&mut self) {
         if self.auto_reveal_at.is_some()
             && (self.room.phase != GamePhase::Playing
-                || self.room.players.iter().any(|p| p.user_type == UserType::Player && p.vote == Vote::Missing)) {
+                || self
+                    .room
+                    .players
+                    .iter()
+                    .any(|p| p.user_type == UserType::Player && p.vote == Vote::Missing))
+        {
             debug!("Auto-reveal cancelled because of invalid state");
             self.auto_reveal_at = None;
         }
@@ -121,12 +127,21 @@ impl App {
 
     #[inline]
     fn deck_has_value(&self, vote: &str) -> bool {
-        self.room.deck.iter().find(|item| item.eq_ignore_ascii_case(vote)).is_some()
+        self.room
+            .deck
+            .iter()
+            .find(|item| item.eq_ignore_ascii_case(vote))
+            .is_some()
     }
 
     #[inline]
     fn is_my_vote_last_missing(&self) -> bool {
-        let missing_players = self.room.players.iter().filter(|p| p.user_type != UserType::Spectator && p.vote == Vote::Missing).collect::<Vec<&Player>>();
+        let missing_players = self
+            .room
+            .players
+            .iter()
+            .filter(|p| p.user_type != UserType::Spectator && p.vote == Vote::Missing)
+            .collect::<Vec<&Player>>();
         self.room.players.len() > 1
             && missing_players.len() == 1
             && missing_players[0].is_you
@@ -166,7 +181,10 @@ impl App {
 
         if self.is_my_vote_last_missing() {
             if !self.is_notified && self.notify_vote_at == None {
-                self.log_message(LogLevel::Info, "Your vote is the last one missing.".to_string());
+                self.log_message(
+                    LogLevel::Info,
+                    "Your vote is the last one missing.".to_string(),
+                );
                 self.notify_vote_at = Some(Instant::now() + Duration::from_secs(8));
                 self.has_updates = true;
             }
@@ -198,7 +216,10 @@ impl App {
                 self.vote = Some(vote);
             }
         } else {
-            self.log_message(LogLevel::Error, format!("Card is not in the deck: {}", data));
+            self.log_message(
+                LogLevel::Error,
+                format!("Card is not in the deck: {}", data),
+            );
         }
 
         if !self.config.disable_auto_reveal && was_last_missing && self.vote.is_some() {
@@ -252,7 +273,12 @@ impl App {
 
     fn update_server_log(&mut self, log_updates: Vec<LogEntry>) {
         for log in log_updates {
-            if self.log.iter().find(|l| l.server_index == log.server_index).is_none() {
+            if self
+                .log
+                .iter()
+                .find(|l| l.server_index == log.server_index)
+                .is_none()
+            {
                 self.log.push(log);
             }
         }

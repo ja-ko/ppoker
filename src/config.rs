@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use directories::ProjectDirs;
-use figment::Figment;
 use figment::providers::{Env, Format, Serialized, Toml};
+use figment::Figment;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 
@@ -26,7 +26,7 @@ pub struct Cli {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) room: Option<String>,
 
-    /// Disables automatic reveal of cards 
+    /// Disables automatic reveal of cards
     #[arg(short = 'A', long)]
     pub(crate) disable_auto_reveal: bool,
 
@@ -87,7 +87,10 @@ pub fn get_logdir() -> PathBuf {
 
 pub fn get_config() -> Config {
     let config_file = get_configdir().join("config.toml");
-    info!("Trying to load config from {}", config_file.to_string_lossy());
+    info!(
+        "Trying to load config from {}",
+        config_file.to_string_lossy()
+    );
     let figment = Figment::from(Serialized::defaults(Config::default()))
         .merge(Toml::file(config_file.as_path()))
         .merge(Env::prefixed("PPOKER_"))
