@@ -1,11 +1,12 @@
+mod changelog;
+mod changelog_renderer;
+
 use std::io;
 
 use log::{debug, error, info};
 use self_update::{cargo_crate_version, self_replace, Extract};
 use semver::Version;
 use snafu::Snafu;
-
-use crate::changelog;
 
 const GITHUB_OWNER: &str = "ja-ko";
 const GITHUB_REPO: &str = "ppoker";
@@ -58,10 +59,10 @@ fn display_changelog(
     let target_version = Version::parse(target_version)?;
 
     let sections = changelog::parse_changelog(&changelog, &current_version, &target_version);
-    if !sections.is_empty() {
+    if !sections.is_empty() && changelog_renderer::ask_to_show_changelog()? {
         println!("\nChangelog:");
         for section in sections {
-            print!("{}", section.content);
+            changelog_renderer::render_changelog(&section.content)?;
         }
     }
 
@@ -138,7 +139,7 @@ pub fn self_update() -> Result<UpdateResult, UpdateError> {
     let response = response.trim().to_lowercase();
     if !response.is_empty() && response != "y" {
         info!("User aborted update.");
-        return Err(UpdateError::UserCanceled.into());
+        return Err(UpdateError::UserCanceled);
     }
 
     let tmp_dir = tempfile::TempDir::new()?;

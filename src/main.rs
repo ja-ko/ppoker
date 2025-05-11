@@ -20,7 +20,6 @@ mod tui;
 mod ui;
 mod events;
 mod models;
-mod changelog;
 mod config;
 mod web;
 mod update;
