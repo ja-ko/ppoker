@@ -195,10 +195,13 @@ impl Page for VotingPage {
                     KeyCode::Right => {
                         if let Some(input_buffer) = &self.input_buffer {
                             if self.cursor_position < input_buffer.len() {
-                                self.cursor_position = input_buffer[self.cursor_position..]
-                                    .char_indices()
+                                let next_char_boundary = input_buffer[self.cursor_position..]
+                                    .chars()
                                     .next()
-                                    .map_or(input_buffer.len(), |(i, _)| i + 1) + self.cursor_position;
+                                    .map(|c| self.cursor_position + c.len_utf8());
+                                if let Some(pos) = next_char_boundary {
+                                    self.cursor_position = pos;
+                                }
                             }
                         }
                     }
@@ -660,5 +663,209 @@ pub fn format_vote(vote: &Vote, own_vote: &Option<VoteData>) -> Span<'static> {
                 }
             }
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use crate::config::Config;
+    use crossterm::event::KeyModifiers;
+
+    fn make_key_event(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::empty())
+    }
+
+    #[test]
+    fn test_basic_input() {
+        let mut app = App::new(Config::default()).unwrap();
+        let mut page = VotingPage::new();
+
+        page.change_mode(InputMode::Chat, String::new(), &app);
+
+        // Type text character by character
+        page.input(&mut app, make_key_event(KeyCode::Char('H')))
+            .unwrap();
+        assert_eq!(page.input_buffer.as_ref().unwrap(), "H");
+        assert_eq!(page.cursor_position, 1);
+
+        page.input(&mut app, make_key_event(KeyCode::Char('e')))
+            .unwrap();
+        page.input(&mut app, make_key_event(KeyCode::Char('l')))
+            .unwrap();
+        page.input(&mut app, make_key_event(KeyCode::Char('l')))
+            .unwrap();
+        page.input(&mut app, make_key_event(KeyCode::Char('o')))
+            .unwrap();
+
+        assert_eq!(page.input_buffer.as_ref().unwrap(), "Hello");
+        assert_eq!(page.cursor_position, 5);
+    }
+
+    #[test]
+    fn test_cursor_movement() {
+        let mut app = App::new(Config::default()).unwrap();
+        let mut page = VotingPage::new();
+
+        page.change_mode(InputMode::Chat, String::new(), &app);
+
+        // Build up text with key events
+        for c in "Hello World".chars() {
+            page.input(&mut app, make_key_event(KeyCode::Char(c)))
+                .unwrap();
+        }
+        assert_eq!(page.cursor_position, 11);
+
+        // Test left arrow
+        page.input(&mut app, make_key_event(KeyCode::Left)).unwrap();
+        assert_eq!(page.cursor_position, 10);
+        page.input(&mut app, make_key_event(KeyCode::Left)).unwrap();
+        assert_eq!(page.cursor_position, 9);
+
+        // Test right arrow
+        page.input(&mut app, make_key_event(KeyCode::Right))
+            .unwrap();
+        assert_eq!(page.cursor_position, 10);
+        page.input(&mut app, make_key_event(KeyCode::Right))
+            .unwrap();
+        assert_eq!(page.cursor_position, 11);
+
+        // Test boundary conditions
+        for _ in 0..15 {
+            page.input(&mut app, make_key_event(KeyCode::Left)).unwrap();
+        }
+        assert_eq!(
+            page.cursor_position, 0,
+            "Cursor should stop at left boundary"
+        );
+
+        for _ in 0..15 {
+            page.input(&mut app, make_key_event(KeyCode::Right))
+                .unwrap();
+        }
+        assert_eq!(
+            page.cursor_position, 11,
+            "Cursor should stop at right boundary"
+        );
+
+        // Test Home/End
+        page.input(&mut app, make_key_event(KeyCode::Home)).unwrap();
+        assert_eq!(page.cursor_position, 0);
+        page.input(&mut app, make_key_event(KeyCode::End)).unwrap();
+        assert_eq!(page.cursor_position, 11);
+    }
+
+    #[test]
+    fn test_utf8_navigation() {
+        let mut app = App::new(Config::default()).unwrap();
+        let mut page = VotingPage::new();
+
+        page.change_mode(InputMode::Chat, String::new(), &app);
+
+        for c in "Hi 👋".chars() {
+            page.input(&mut app, make_key_event(KeyCode::Char(c))).unwrap();
+        }
+
+        // Cursor should be at the end (after emoji)
+        assert_eq!(page.cursor_position, 7); // "Hi " is 3 bytes, 👋 is 4 bytes
+        assert_eq!(page.input_buffer.as_ref().unwrap(), "Hi 👋");
+
+        // Move cursor left (should jump over entire emoji)
+        page.input(&mut app, make_key_event(KeyCode::Left)).unwrap();
+        assert_eq!(page.cursor_position, 3); // Before emoji
+
+        // Move cursor right (should jump over entire emoji)
+        page.input(&mut app, make_key_event(KeyCode::Right)).unwrap();
+        assert_eq!(page.cursor_position, 7); // After emoji
+
+        // Insert ASCII character before emoji
+        page.input(&mut app, make_key_event(KeyCode::Left)).unwrap();
+        page.input(&mut app, make_key_event(KeyCode::Char('!'))).unwrap();
+        assert_eq!(page.input_buffer.as_ref().unwrap(), "Hi !👋");
+        assert_eq!(page.cursor_position, 4);
+
+        // Boundary check should still work with UTF-8 characters
+        page.input(&mut app, make_key_event(KeyCode::End)).unwrap();
+        assert_eq!(page.cursor_position, 8);
+        page.input(&mut app, make_key_event(KeyCode::Right)).unwrap();
+        assert_eq!(page.cursor_position, 8);
+    }
+
+
+    #[test]
+    fn test_insert_and_delete() {
+        let mut app = App::new(Config::default()).unwrap();
+        let mut page = VotingPage::new();
+
+        page.change_mode(InputMode::Chat, String::new(), &app);
+
+        // Build initial text with key events
+        for c in "Hello".chars() {
+            page.input(&mut app, make_key_event(KeyCode::Char(c)))
+                .unwrap();
+        }
+
+        // Insert in the middle
+        page.input(&mut app, make_key_event(KeyCode::Home)).unwrap();
+        page.input(&mut app, make_key_event(KeyCode::Right))
+            .unwrap();
+        page.input(&mut app, make_key_event(KeyCode::Char('i')))
+            .unwrap();
+        assert_eq!(page.input_buffer.as_ref().unwrap(), "Hiello");
+        assert_eq!(page.cursor_position, 2);
+
+        // Delete at the start
+        page.input(&mut app, make_key_event(KeyCode::Home)).unwrap();
+        page.input(&mut app, make_key_event(KeyCode::Delete))
+            .unwrap();
+        assert_eq!(page.input_buffer.as_ref().unwrap(), "iello");
+
+        // Delete at the end should do nothing
+        page.input(&mut app, make_key_event(KeyCode::End)).unwrap();
+        page.input(&mut app, make_key_event(KeyCode::Delete))
+            .unwrap();
+        assert_eq!(page.input_buffer.as_ref().unwrap(), "iello");
+
+        // Backspace at the start should do nothing
+        page.input(&mut app, make_key_event(KeyCode::Home)).unwrap();
+        page.input(&mut app, make_key_event(KeyCode::Backspace))
+            .unwrap();
+        assert_eq!(page.input_buffer.as_ref().unwrap(), "iello");
+
+        // Backspace in the middle
+        page.input(&mut app, make_key_event(KeyCode::End)).unwrap();
+        page.input(&mut app, make_key_event(KeyCode::Left)).unwrap();
+        page.input(&mut app, make_key_event(KeyCode::Backspace))
+            .unwrap();
+        assert_eq!(page.input_buffer.as_ref().unwrap(), "ielo");
+    }
+
+    #[test]
+    fn test_empty_buffer() {
+        let mut app = App::new(Config::default()).unwrap();
+        let mut page = VotingPage::new();
+
+        page.change_mode(InputMode::Chat, String::new(), &app);
+
+        // Try navigating in empty buffer
+        page.input(&mut app, make_key_event(KeyCode::Left)).unwrap();
+        assert_eq!(page.cursor_position, 0);
+        page.input(&mut app, make_key_event(KeyCode::Right))
+            .unwrap();
+        assert_eq!(page.cursor_position, 0);
+        page.input(&mut app, make_key_event(KeyCode::Home)).unwrap();
+        assert_eq!(page.cursor_position, 0);
+        page.input(&mut app, make_key_event(KeyCode::End)).unwrap();
+        assert_eq!(page.cursor_position, 0);
+
+        // Try deleting from an empty buffer
+        page.input(&mut app, make_key_event(KeyCode::Delete))
+            .unwrap();
+        assert_eq!(page.input_buffer.as_ref().unwrap(), "");
+        page.input(&mut app, make_key_event(KeyCode::Backspace))
+            .unwrap();
+        assert_eq!(page.input_buffer.as_ref().unwrap(), "");
     }
 }
