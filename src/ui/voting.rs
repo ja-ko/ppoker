@@ -767,6 +767,30 @@ mod tests {
         assert_snapshot!("After cancel", terminal.backend());
     }
 
+    #[test]
+    fn test_spectators_voting_flow() {
+        let mut page = VotingPage::new();
+        let mut client = LocalMockPokerClient::new("test");
+        client.add_spectator("viewer");
+
+        let mut app = create_test_app(Box::new(client));
+        let mut terminal = Terminal::new(TestBackend::new(80, 25)).unwrap();
+
+        // Get initial room state with spectator
+        tick(&mut terminal, &mut page, &mut app);
+        assert_snapshot!("Initial with spectator", terminal.backend());
+
+        // Vote with local user 
+        send_input(KeyCode::Char('3'), &mut terminal, &mut page, &mut app);
+        send_input(KeyCode::Enter, &mut terminal, &mut page, &mut app);
+        assert_snapshot!("After voting with spectator", terminal.backend());
+
+        // Reveal cards
+        send_input(KeyCode::Char('r'), &mut terminal, &mut page, &mut app);
+        assert_snapshot!("After reveal with spectator", terminal.backend());
+    }
+
+
     fn send_input(key: KeyCode, terminal: &mut Terminal<TestBackend>, page: &mut VotingPage, app: &mut App) {
         page.input(app, KeyEvent::new(key, KeyModifiers::empty())).unwrap();
         tick(terminal, page, app);

@@ -135,6 +135,7 @@ pub mod tests {
         name: String,
         vote_state: Vote,
         actual_vote: Option<String>,
+        is_spectator: bool,
     }
 
     #[derive(Debug)]
@@ -148,11 +149,30 @@ pub mod tests {
     }
 
     impl LocalMockPokerClient {
+        pub fn add_spectator(&mut self, username: &str) -> String {
+            let user_id = format!("user_{}", self.next_user_id);
+            self.next_user_id += 1;
+
+            let user = LocalUser {
+                name: username.to_string(),
+                vote_state: Vote::Missing,
+                actual_vote: None,
+                is_spectator: true,
+            };
+
+            self.other_users.insert(user_id.clone(), user);
+            self.add_log_entry(&format!("{} joined as spectator", username));
+            self.queue_room_update();
+
+            user_id
+        }
+
         pub fn new(username: &str) -> Self {
             let current_user = LocalUser {
                 name: username.to_string(),
                 vote_state: Vote::Missing,
                 actual_vote: None,
+                is_spectator: false,
             };
 
             let mut client = Self {
@@ -196,7 +216,7 @@ pub mod tests {
                     self.current_user.vote_state.clone()
                 },
                 is_you: true,
-                user_type: UserType::Player,
+                user_type: if self.current_user.is_spectator { UserType::Spectator } else { UserType::Player },
             }];
 
             for user in self.other_users.values() {
@@ -218,9 +238,15 @@ pub mod tests {
                     name: user.name.clone(),
                     vote,
                     is_you: false,
-                    user_type: UserType::Player,
+                    user_type: if user.is_spectator { UserType::Spectator } else { UserType::Player },
                 });
             }
+
+            // Sort players so spectators appear after players
+            players.sort_by_key(|p| match p.user_type {
+                UserType::Player => 0,
+                UserType::Spectator => 1,
+            });
 
             let room = Room {
                 name: "Planning Room".to_string(),
@@ -255,6 +281,7 @@ pub mod tests {
                 name: name.to_string(),
                 vote_state: Vote::Missing,
                 actual_vote: None,
+                is_spectator: false,
             };
 
             self.other_users.insert(id.clone(), user);
