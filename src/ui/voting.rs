@@ -650,3 +650,123 @@ pub fn format_vote(vote: &Vote, own_vote: &Option<VoteData>) -> Span<'static> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use crate::app::tests::create_test_app;
+    use crate::models::{GamePhase, Vote, VoteData};
+    use crate::ui::{Page, VotingPage};
+    use crate::web::client::tests::LocalMockPokerClient;
+    use crate::web::client::MockPokerClient;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use insta::assert_snapshot;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    #[test]
+    fn test_render_page() {
+        let mut page = VotingPage::new();
+        let mut app = create_test_app(Box::new(MockPokerClient::new()));
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        terminal.draw(|frame| page.render(&mut app, frame)).unwrap();
+
+        assert_snapshot!(terminal.backend(), @r#"
+        "╭Overview──────────────────────────────────────────────────────────────────────╮"
+        "│Name: Test User | Room: test-room | Server: wss://mocked | State: Playing |   │"
+        "╰──────────────────────────────────────────────────────────────────────────────╯"
+        "╭Players───────╮╭Your vote───────────────╮                                      "
+        "│Name     Vote ││                        │                                      "
+        "│              ││                        │                                      "
+        "│Test U   -    ││                        │                                      "
+        "│              ││        ██████          │                                      "
+        "│              ││                        │                                      "
+        "│              ││                        │                                      "
+        "│              ││                        │                                      "
+        "│              │╰────────────────────────╯                                      "
+        "│              │╭Log───────────────────────────────────────────────────────────╮"
+        "│              ││                                                              │"
+        "│              ││                                                              │"
+        "│              ││                                                              │"
+        "╰──────────────╯╰──────────────────────────────────────────────────────────────╯"
+        "                                                                                "
+        " Vote | Reveal | History | Name change | Chat | Quit                            "
+        "                                                                                "
+        "#);
+    }
+
+    #[test]
+    fn test_vote_reveal_restart() {
+        let mut page = VotingPage::new();
+        let client = LocalMockPokerClient::new("test");
+
+        let mut app = create_test_app(Box::new(client));
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+
+        // Get initial room state
+        app.update().unwrap();
+        assert!(!app.room.players.is_empty());
+
+        // Send a number key event
+        page.input(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('5'), KeyModifiers::empty()),
+        )
+        .unwrap();
+        // Send enter to confirm
+        page.input(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
+        )
+        .unwrap();
+
+        // Verify vote was registered
+        app.update().unwrap();
+        assert!(matches!(
+            app.room.players[0].vote,
+            Vote::Revealed(VoteData::Number(5))
+        ));
+
+        // Draw and snapshot the page
+        terminal.draw(|frame| page.render(&mut app, frame)).unwrap();
+        assert_snapshot!("After voting", terminal.backend());
+
+        // Press 'r' to reveal
+        page.input(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::empty()),
+        )
+        .unwrap();
+
+        // Verify cards are revealed
+        app.update().unwrap();
+        assert_eq!(app.room.phase, GamePhase::Revealed);
+
+        // Draw and snapshot after reveal
+        terminal.draw(|frame| page.render(&mut app, frame)).unwrap();
+        assert_snapshot!("After reveal", terminal.backend());
+
+        // Press 'r' again to restart
+        page.input(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::empty()),
+        )
+        .unwrap();
+
+        terminal.draw(|frame| page.render(&mut app, frame)).unwrap();
+        assert_snapshot!("Restart pending", terminal.backend());
+
+        // Press Enter to confirm restart
+        page.input(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
+        )
+        .unwrap();
+
+        // Verify game was reset
+        app.update().unwrap();
+        assert_eq!(app.room.phase, GamePhase::Playing);
+        assert!(matches!(app.room.players[0].vote, Vote::Missing));
+
+        // Draw and snapshot after restart
+        terminal.draw(|frame| page.render(&mut app, frame)).unwrap();
+        assert_snapshot!("After restart", terminal.backend());
+    }
+}

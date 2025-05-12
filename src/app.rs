@@ -314,7 +314,7 @@ impl App {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::web::client::MockPokerClient;
     use mockall::predicate::*;
@@ -345,17 +345,21 @@ mod tests {
         }
     }
 
-    fn create_test_app(mock_client: MockPokerClient) -> App {
+    pub fn create_test_app(mock_client: Box<dyn PokerClient>) -> App {
+        let mut config = Config::default();
+        config.server = "wss://mocked".to_owned();
+        config.name = "test".to_owned();
+        config.room = "test-room".to_owned();
         App {
             running: true,
             vote: None,
             name: "Test User".to_string(),
             room: create_test_room(),
-            client: Box::new(mock_client),
+            client: mock_client,
             log: vec![],
             round_number: 1,
             round_start: Instant::now(),
-            config: Config::default(),
+            config,
             has_focus: true,
             notify_vote_at: None,
             is_notified: false,
@@ -375,7 +379,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(()));
 
-        let mut app = create_test_app(mock_client);
+        let mut app = create_test_app(Box::new(mock_client));
 
         app.vote("5")?;
         assert!(app.vote.is_some());
@@ -402,7 +406,7 @@ mod tests {
             .times(1)
             .return_once(move || Ok((vec![updated_room], vec![])));
 
-        let mut app = create_test_app(mock_client);
+        let mut app = create_test_app(Box::new(mock_client));
 
         // Initial state checks
         assert_eq!(app.room.phase, GamePhase::Playing);
@@ -438,7 +442,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(()));
 
-        let mut app = create_test_app(mock_client);
+        let mut app = create_test_app(Box::new(mock_client));
         app.chat("Hello!".to_string())?;
 
         Ok(())
@@ -457,7 +461,7 @@ mod tests {
         // Expect reveal to be called after 3 seconds
         mock_client.expect_reveal().times(1).returning(|| Ok(()));
 
-        let mut app = create_test_app(mock_client);
+        let mut app = create_test_app(Box::new(mock_client));
 
         // Add another player who has already voted
         app.room.players.push(Player {
@@ -489,7 +493,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(()));
 
-        let mut app = create_test_app(mock_client);
+        let mut app = create_test_app(Box::new(mock_client));
 
         // Add another player who hasn't voted
         app.room.players.push(Player {
@@ -519,7 +523,7 @@ mod tests {
 
         mock_client.expect_reveal().times(1).returning(|| Ok(()));
 
-        let mut app = create_test_app(mock_client);
+        let mut app = create_test_app(Box::new(mock_client));
 
         // Add another player who has voted
         app.room.players.push(Player {
@@ -559,7 +563,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(()));
 
-        let mut app = create_test_app(mock_client);
+        let mut app = create_test_app(Box::new(mock_client));
 
         // Add another player who has voted
         app.room.players.push(Player {
@@ -590,7 +594,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(()));
 
-        let mut app = create_test_app(mock_client);
+        let mut app = create_test_app(Box::new(mock_client));
 
         // Add another player who has voted
         app.room.players.push(Player {
@@ -633,7 +637,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(()));
 
-        let mut app = create_test_app(mock_client);
+        let mut app = create_test_app(Box::new(mock_client));
 
         // Add another player who has voted
         app.room.players.push(Player {
@@ -696,7 +700,7 @@ mod tests {
         let deck = vec!["1".to_string(), "☕".to_string(), "🎲".to_string()];
         let mut app = App {
             room: create_test_room_with_deck(deck),
-            ..create_test_app(mock_client)
+            ..create_test_app(Box::new(mock_client))
         };
 
         app.vote("☕")?;
@@ -714,7 +718,7 @@ mod tests {
         let deck = vec!["1".to_string(), "coffee".to_string(), "?".to_string()];
         App {
             room: create_test_room_with_deck(deck),
-            ..create_test_app(mock_client)
+            ..create_test_app(Box::new(mock_client))
         }
     }
 
@@ -744,7 +748,7 @@ mod tests {
                 disable_notifications: false,
                 ..Config::default()
             },
-            ..create_test_app(mock_client)
+            ..create_test_app(Box::new(mock_client))
         };
 
         // First create a room with players who haven't voted yet
