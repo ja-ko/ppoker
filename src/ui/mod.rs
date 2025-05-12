@@ -16,6 +16,7 @@ pub use voting::VotingPage;
 mod history;
 mod log;
 mod voting;
+mod text_input;
 
 #[derive(Debug, PartialEq, Clone, Copy, Hash, Ord, PartialOrd, Eq, Sequence)]
 pub enum UiPage {
