@@ -654,12 +654,12 @@ pub fn format_vote(vote: &Vote, own_vote: &Option<VoteData>) -> Span<'static> {
 mod tests {
     use crate::app::tests::create_test_app;
     use crate::models::{GamePhase, Vote, VoteData};
-    use crate::ui::{Page, VotingPage};
+    use crate::ui::tests::{send_input, tick};
+    use crate::ui::VotingPage;
     use crate::web::client::tests::LocalMockPokerClient;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::KeyCode;
     use insta::assert_snapshot;
     use ratatui::{backend::TestBackend, Terminal};
-    use crate::app::App;
 
     #[test]
     fn test_render_page() {
@@ -780,7 +780,7 @@ mod tests {
         tick(&mut terminal, &mut page, &mut app);
         assert_snapshot!("Initial with spectator", terminal.backend());
 
-        // Vote with local user 
+        // Vote with local user
         send_input(KeyCode::Char('3'), &mut terminal, &mut page, &mut app);
         send_input(KeyCode::Enter, &mut terminal, &mut page, &mut app);
         assert_snapshot!("After voting with spectator", terminal.backend());
@@ -790,14 +790,29 @@ mod tests {
         assert_snapshot!("After reveal with spectator", terminal.backend());
     }
 
+    #[test]
+    fn test_chat_message() {
+        let mut page = VotingPage::new();
+        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
 
-    fn send_input(key: KeyCode, terminal: &mut Terminal<TestBackend>, page: &mut VotingPage, app: &mut App) {
-        page.input(app, KeyEvent::new(key, KeyModifiers::empty())).unwrap();
-        tick(terminal, page, app);
-    }
-    
-    fn tick(terminal: &mut Terminal<TestBackend>, page: &mut VotingPage, app: &mut App) {
-        app.update().unwrap();
-        terminal.draw(|frame| page.render(app, frame)).unwrap();
+        // Get initial state
+        tick(&mut terminal, &mut page, &mut app);
+
+        // Enter chat mode
+        send_input(KeyCode::Char('c'), &mut terminal, &mut page, &mut app);
+
+        // Type message
+        for c in "Hello!".chars() {
+            send_input(KeyCode::Char(c), &mut terminal, &mut page, &mut app);
+        }
+        assert_snapshot!("Before sending chat", terminal.backend());
+
+        // Send message
+        send_input(KeyCode::Enter, &mut terminal, &mut page, &mut app);
+
+        // Verify message appears in log
+        assert!(app.log.iter().any(|entry| entry.message.contains("Hello!")));
+        assert_snapshot!("After sending chat", terminal.backend());
     }
 }

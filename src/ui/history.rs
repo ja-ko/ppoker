@@ -180,3 +180,66 @@ fn render_player_list(entry: &HistoryEntry, rect: Rect, frame: &mut Frame) {
 
     frame.render_widget(table, inner);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::tests::create_test_app;
+    use crate::ui::tests::{send_input, tick};
+    use crate::web::client::tests::LocalMockPokerClient;
+    use crate::web::client::PokerClient;
+    use insta::assert_snapshot;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn test_render_page() {
+        let mut page = HistoryPage::new();
+        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        tick(&mut terminal, &mut page, &mut app);
+
+        assert_snapshot!("Empty history page", terminal.backend());
+    }
+
+    #[test]
+    fn test_render_page_with_history() {
+        let mut page = HistoryPage::new();
+        let mut client = LocalMockPokerClient::new("Alice");
+
+        // Add other players
+        let bob_id = client.add_user("Bob");
+        let charlie_id = client.add_user("Charlie");
+
+        // First round: Everyone votes numbers
+        client.vote(Some("5")).unwrap();
+        client.user_vote(&bob_id, Some("3"));
+        client.user_vote(&charlie_id, Some("8"));
+        client.reveal().unwrap();
+        client.reset().unwrap();
+
+        // Second round: Mix of numbers and special votes
+        client.vote(Some("13")).unwrap();
+        client.user_vote(&bob_id, Some("?"));
+        client.user_vote(&charlie_id, Some("8"));
+        client.reveal().unwrap();
+        client.reset().unwrap();
+
+        // Third round: Some abstentions
+        client.vote(Some("3")).unwrap();
+        client.user_vote(&bob_id, Some("5"));
+        // Charlie doesn't vote
+        client.reveal().unwrap();
+        client.reset().unwrap();
+
+        let mut app = create_test_app(Box::new(client));
+
+        // Render and snapshot the history page
+        let mut terminal = Terminal::new(TestBackend::new(90, 30)).unwrap();
+        tick(&mut terminal, &mut page, &mut app);
+
+        assert_snapshot!("History page with multiple rounds", terminal.backend());
+
+        send_input(KeyCode::Down, &mut terminal, &mut page, &mut app);
+        assert_snapshot!("History page after pressing down", terminal.backend());
+    }
+}

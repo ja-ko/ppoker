@@ -137,3 +137,20 @@ fn format_duration(duration: &Duration) -> String {
         format!("{} seconds", secs)
     }
 }
+
+
+#[cfg(test)]
+pub mod tests {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::backend::TestBackend;
+    use super::*;
+    pub fn send_input<P: Page>(key: KeyCode, terminal: &mut Terminal<TestBackend>, page: &mut P, app: &mut App) {
+        page.input(app, KeyEvent::new(key, KeyModifiers::empty())).unwrap();
+        tick(terminal, page, app);
+    }
+
+    pub fn tick<P: Page>(terminal: &mut Terminal<TestBackend>, page: &mut P, app: &mut App) {
+        app.update().unwrap();
+        terminal.draw(|frame| page.render(app, frame)).unwrap();
+    }
+}
