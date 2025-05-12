@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.5.0](https://github.com/ja-ko/ppoker/compare/v0.4.2...v0.5.0) (2025-05-11)
+
+
+### Features
+
+* **ui:** add cursor navigation and editing support in text input ([4c823a3](https://github.com/ja-ko/ppoker/commit/4c823a395d0aacd55c6ecafacc4b0dfb9d072bea)), closes [#61](https://github.com/ja-ko/ppoker/issues/61)
+* **ui:** sanitize input strings across voting UI ([9acb561](https://github.com/ja-ko/ppoker/commit/9acb5611143d01f19c5a6fa22dbf337299c24c34)), closes [#59](https://github.com/ja-ko/ppoker/issues/59)
+* **update:** add binary backup support during updates ([3069818](https://github.com/ja-ko/ppoker/commit/306981862166eafdefb0c43f0e1f9b3bd3c62ab5))
+* **update:** add changelog parsing and display for updates ([03a1cab](https://github.com/ja-ko/ppoker/commit/03a1cab3097dd41066023e4a9b29c910c37bbbd8))
+* **update:** add rich terminal rendering for changelog display ([2018401](https://github.com/ja-ko/ppoker/commit/2018401b9a60d592bfd8d737baefa33d6ede32e5))
+
+
+### Bug Fixes
+
+* cursor not moving right on right press. ([6247234](https://github.com/ja-ko/ppoker/commit/6247234fa77dd7c536d44f1e886131b029ea5e7a))
+* **ui:** correct cursor position in input box rendering ([48be407](https://github.com/ja-ko/ppoker/commit/48be407b02eff6778687275d65bb9a00e8e16601)), closes [#60](https://github.com/ja-ko/ppoker/issues/60)
+* **ui:** fix a crash that occurred when navigating right through multibyte character ([094114d](https://github.com/ja-ko/ppoker/commit/094114dcab0d21628a043cc9a8399b4cbbf83004))
+
+
+### Miscellaneous Chores
+
+* release 0.5.0 ([26244d9](https://github.com/ja-ko/ppoker/commit/26244d9f3abaebde0914bff03417e9a01d145de1))
+
 ## [0.4.2](https://github.com/ja-ko/ppoker/compare/v0.4.1...v0.4.2) (2025-04-23)
 
 
