@@ -128,3 +128,76 @@ impl<B: Backend> Tui<B> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::tests::create_test_app;
+    use crate::web::client::tests::LocalMockPokerClient;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    #[cfg(test)]
+    use insta::assert_snapshot;
+    use ratatui::backend::TestBackend;
+
+    fn create_test_terminal() -> Terminal<TestBackend> {
+        Terminal::new(TestBackend::new(80, 24)).unwrap()
+    }
+
+    fn create_test_tui() -> (Tui<TestBackend>, App) {
+        let terminal = create_test_terminal();
+        let events = EventHandler::new(100);
+        let tui = Tui::new(terminal, events);
+        let app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
+        (tui, app)
+    }
+
+    #[test]
+    fn test_page_switching() {
+        let (mut tui, mut app) = create_test_tui();
+
+        // Initially should be on voting page
+        assert_eq!(tui.current_page, UiPage::Voting);
+        tui.draw(&mut app).unwrap();
+        assert_snapshot!("initial_voting_page", tui.terminal.backend());
+
+        // Switch to history page with 'h'
+        tui.handle_key(
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::empty()),
+            &mut app,
+        )
+        .unwrap();
+        assert_eq!(tui.current_page, UiPage::History);
+        tui.draw(&mut app).unwrap();
+        assert_snapshot!("switched_to_history", tui.terminal.backend());
+
+        // Switch back to voting page with 'v'
+        // This is done because you can only switch to the log page from the voting page
+        tui.handle_key(
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::empty()),
+            &mut app,
+        )
+        .unwrap();
+        assert_eq!(tui.current_page, UiPage::Voting);
+        tui.draw(&mut app).unwrap();
+
+        // Switch to log page with 'l'
+        tui.handle_key(
+            KeyEvent::new(KeyCode::Char('l'), KeyModifiers::empty()),
+            &mut app,
+        )
+        .unwrap();
+        assert_eq!(tui.current_page, UiPage::Log);
+        tui.draw(&mut app).unwrap();
+        assert_snapshot!("switched_to_log", tui.terminal.backend());
+
+        // Switch back to voting page with 'l'
+        tui.handle_key(
+            KeyEvent::new(KeyCode::Char('l'), KeyModifiers::empty()),
+            &mut app,
+        )
+        .unwrap();
+        assert_eq!(tui.current_page, UiPage::Voting);
+        tui.draw(&mut app).unwrap();
+        assert_snapshot!("back_to_voting", tui.terminal.backend());
+    }
+}
