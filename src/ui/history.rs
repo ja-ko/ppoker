@@ -153,8 +153,7 @@ fn render_player_list(entry: &HistoryEntry, rect: Rect, frame: &mut Frame) {
     let mut longest_name = 0;
     let mut players = entry.votes.clone();
     players.sort();
-    let rows: Vec<Row> = entry
-        .votes
+    let rows: Vec<Row> = players
         .iter()
         .map(|p| {
             if p.name.len() > longest_name {
