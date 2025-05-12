@@ -11,11 +11,6 @@ use crate::web::client::ClientError::{ServerClosedConnection, ServerUpdateMissin
 use crate::web::dto::UserRequest;
 use crate::web::ws::{IncomingMessage, PokerSocket};
 
-#[derive(Debug)]
-pub struct PokerClient {
-    pub socket: PokerSocket,
-}
-
 #[derive(Debug, Snafu)]
 pub enum ClientError {
     #[snafu(display("Server did not send room update in time."))]
@@ -24,7 +19,22 @@ pub enum ClientError {
     ServerClosedConnection,
 }
 
-impl PokerClient {
+#[cfg_attr(test, mockall::automock)]
+pub trait PokerClient {
+    fn get_updates(&mut self) -> AppResult<(Vec<Room>, Vec<LogEntry>)>;
+    fn vote<'a>(&mut self, card_value: Option<&'a str>) -> AppResult<()>;
+    fn change_name<'a>(&mut self, name: &'a str) -> AppResult<()>;
+    fn chat<'a>(&mut self, message: &'a str) -> AppResult<()>;
+    fn reveal(&mut self) -> AppResult<()>;
+    fn reset(&mut self) -> AppResult<()>;
+}
+
+#[derive(Debug)]
+pub struct WebPokerClient {
+    pub socket: PokerSocket,
+}
+
+impl WebPokerClient {
     pub fn new(config: &Config) -> AppResult<(Self, Room, Vec<LogEntry>)> {
         let mut result = Self {
             socket: PokerSocket::connect(config)?,
@@ -54,8 +64,11 @@ impl PokerClient {
         error!("Server did not send initial room update.");
         return Err(Box::new(ServerUpdateMissing));
     }
+}
 
-    pub fn get_updates(&mut self) -> AppResult<(Vec<Room>, Vec<LogEntry>)> {
+impl PokerClient for WebPokerClient {
+
+    fn get_updates(&mut self) -> AppResult<(Vec<Room>, Vec<LogEntry>)> {
         let messages = self.socket.read_all()?;
         let mut result = vec![];
         let mut log_results = vec![];
@@ -83,27 +96,27 @@ impl PokerClient {
         Ok((result, log_results))
     }
 
-    pub fn vote(&mut self, card_value: Option<&str>) -> AppResult<()> {
+    fn vote(&mut self, card_value: Option<&str>) -> AppResult<()> {
         self.socket
             .send_request(UserRequest::PlayCard { card_value })?;
 
         Ok(())
     }
 
-    pub fn change_name(&mut self, name: &str) -> AppResult<()> {
+    fn change_name(&mut self, name: &str) -> AppResult<()> {
         self.socket.send_request(UserRequest::ChangeName { name })
     }
 
-    pub fn chat(&mut self, message: &str) -> AppResult<()> {
+    fn chat(&mut self, message: &str) -> AppResult<()> {
         self.socket
             .send_request(UserRequest::ChatMessage { message })
     }
 
-    pub fn reveal(&mut self) -> AppResult<()> {
+    fn reveal(&mut self) -> AppResult<()> {
         self.socket.send_request(UserRequest::RevealCards)
     }
 
-    pub fn reset(&mut self) -> AppResult<()> {
+    fn reset(&mut self) -> AppResult<()> {
         self.socket.send_request(UserRequest::StartNewRound)
     }
 }

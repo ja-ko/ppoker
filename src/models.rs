@@ -89,7 +89,7 @@ pub struct LogEntry {
     pub server_index: Option<u32>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Room {
     pub name: String,
     pub deck: Vec<String>,

@@ -9,7 +9,7 @@ use crate::models::{
     GamePhase, LogEntry, LogLevel, LogSource, Player, Room, UserType, Vote, VoteData,
 };
 use crate::notification::show_notification;
-use crate::web::client::PokerClient;
+use crate::web::client::{PokerClient, WebPokerClient};
 
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
 
@@ -28,7 +28,7 @@ pub struct App {
     pub name: String,
 
     pub room: Room,
-    pub client: PokerClient,
+    pub client: Box<dyn PokerClient>,
     pub log: Vec<LogEntry>,
 
     pub round_number: u32,
@@ -48,7 +48,8 @@ pub struct App {
 
 impl App {
     pub fn new(config: Config) -> AppResult<Self> {
-        let (client, room, log) = PokerClient::new(&config)?;
+        let (client, room, log) = WebPokerClient::new(&config)?;
+        let client = Box::new(client);
 
         let mut result = Self {
             running: true,
@@ -304,5 +305,342 @@ impl App {
             }
         }
         sum / count
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockall::predicate::*;
+    use crate::web::client::MockPokerClient;
+
+    fn create_test_room() -> Room {
+        Room {
+            name: "test-room".to_string(),
+            deck: vec!["1".to_string(), "2".to_string(), "3".to_string(), "5".to_string(), "8".to_string(), "13".to_string()],
+            phase: GamePhase::Playing,
+            players: vec![Player {
+                name: "Test User".to_string(),
+                vote: Vote::Missing,
+                is_you: true,
+                user_type: UserType::Player,
+            }],
+        }
+    }
+
+    fn create_test_app(mock_client: MockPokerClient) -> App {
+        App {
+            running: true,
+            vote: None,
+            name: "Test User".to_string(),
+            room: create_test_room(),
+            client: Box::new(mock_client),
+            log: vec![],
+            round_number: 1,
+            round_start: Instant::now(),
+            config: Config::default(),
+            has_focus: true,
+            notify_vote_at: None,
+            is_notified: false,
+            has_updates: false,
+            auto_reveal_at: None,
+            history: vec![],
+        }
+    }
+
+    #[test]
+    fn test_vote_success() -> AppResult<()> {
+        let mut mock_client = MockPokerClient::new();
+        mock_client
+            .expect_vote()
+            .withf(|x: &Option<&str>| x.unwrap() == "5")
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let mut app = create_test_app(mock_client);
+
+        app.vote("5")?;
+        assert!(app.vote.is_some());
+        if let Some(VoteData::Number(n)) = app.vote {
+            assert_eq!(n, 5);
+        } else {
+            panic!("Expected numeric vote");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_update_merges_room_data() -> AppResult<()> {
+        let mut mock_client = MockPokerClient::new();
+
+        // Set up the mock to return a room update
+        let mut updated_room = create_test_room();
+        updated_room.phase = GamePhase::Revealed;
+        updated_room.players[0].vote = Vote::Revealed(VoteData::Number(5));
+
+        mock_client
+            .expect_get_updates()
+            .times(1)
+            .return_once(move || Ok((vec![updated_room], vec![])));
+
+        let mut app = create_test_app(mock_client);
+
+        // Initial state checks
+        assert_eq!(app.room.phase, GamePhase::Playing);
+        assert_eq!(app.room.players[0].vote, Vote::Missing);
+        assert!(app.history.is_empty());
+
+        // Perform update
+        app.update()?;
+
+        // Verify state changes
+        assert_eq!(app.room.phase, GamePhase::Revealed);
+        assert_eq!(app.room.players[0].vote, Vote::Revealed(VoteData::Number(5)));
+        assert_eq!(app.history.len(), 1);
+        assert_eq!(app.history[0].round_number, 1);
+        assert_eq!(app.history[0].votes.len(), 1);
+        assert_eq!(app.history[0].votes[0].vote, Vote::Revealed(VoteData::Number(5)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_chat_message() -> AppResult<()> {
+        let mut mock_client = MockPokerClient::new();
+        mock_client
+            .expect_chat()
+            .withf(|msg: &str| msg == "Hello!")
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let mut app = create_test_app(mock_client);
+        app.chat("Hello!".to_string())?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_autoreveal_triggers_when_last_to_vote() -> AppResult<()> {
+        let mut mock_client = MockPokerClient::new();
+        // Expect vote to be called first
+        mock_client
+            .expect_vote()
+            .withf(|x: &Option<&str>| x.unwrap() == "5")
+            .times(1)
+            .returning(|_| Ok(()));
+
+        // Expect reveal to be called after 3 seconds
+        mock_client
+            .expect_reveal()
+            .times(1)
+            .returning(|| Ok(()));
+
+        let mut app = create_test_app(mock_client);
+
+        // Add another player who has already voted
+        app.room.players.push(Player {
+            name: "Other Player".to_string(),
+            vote: Vote::Hidden,
+            is_you: false,
+            user_type: UserType::Player,
+        });
+
+        // Cast our vote as the last person
+        app.vote("5")?;
+
+        // Verify auto-reveal timer is set
+        assert!(app.auto_reveal_at.is_some());
+
+        // Fast forward time and trigger the auto-reveal
+        app.auto_reveal_at = Some(Instant::now() - Duration::from_secs(1));
+        app.check_auto_reveal()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_autoreveal_not_triggered_when_others_not_voted() -> AppResult<()> {
+        let mut mock_client = MockPokerClient::new();
+        mock_client
+            .expect_vote()
+            .withf(|x: &Option<&str>| x.unwrap() == "5")
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let mut app = create_test_app(mock_client);
+
+        // Add another player who hasn't voted
+        app.room.players.push(Player {
+            name: "Other Player".to_string(),
+            vote: Vote::Missing,
+            is_you: false,
+            user_type: UserType::Player,
+        });
+
+        // Cast our vote
+        app.vote("5")?;
+
+        // Verify auto-reveal timer is not set since we're not last
+        assert!(app.auto_reveal_at.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_autoreveal_not_affected_by_spectators() -> AppResult<()> {
+        let mut mock_client = MockPokerClient::new();
+        mock_client
+            .expect_vote()
+            .withf(|x: &Option<&str>| x.unwrap() == "5")
+            .times(1)
+            .returning(|_| Ok(()));
+
+        mock_client
+            .expect_reveal()
+            .times(1)
+            .returning(|| Ok(()));
+
+        let mut app = create_test_app(mock_client);
+
+        // Add another player who has voted
+        app.room.players.push(Player {
+            name: "Other Player".to_string(),
+            vote: Vote::Hidden,
+            is_you: false,
+            user_type: UserType::Player,
+        });
+
+        // Add a spectator
+        app.room.players.push(Player {
+            name: "Spectator".to_string(),
+            vote: Vote::Missing,
+            is_you: false,
+            user_type: UserType::Spectator,
+        });
+
+        // Cast our vote as the last player (spectator doesn't count)
+        app.vote("5")?;
+
+        // Verify auto-reveal timer is set
+        assert!(app.auto_reveal_at.is_some());
+
+        // Fast forward time and trigger the auto-reveal
+        app.auto_reveal_at = Some(Instant::now() - Duration::from_secs(1));
+        app.check_auto_reveal()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_autoreveal_respects_config_disable() -> AppResult<()> {
+        let mut mock_client = MockPokerClient::new();
+        mock_client
+            .expect_vote()
+            .withf(|x: &Option<&str>| x.unwrap() == "5")
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let mut app = create_test_app(mock_client);
+
+        // Add another player who has voted
+        app.room.players.push(Player {
+            name: "Other Player".to_string(),
+            vote: Vote::Hidden,
+            is_you: false,
+            user_type: UserType::Player,
+        });
+
+        // Disable auto-reveal in config
+        app.config.disable_auto_reveal = true;
+
+        // Cast our vote as the last person
+        app.vote("5")?;
+
+        // Verify auto-reveal timer is not set due to config
+        assert!(app.auto_reveal_at.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_autoreveal_cancels_when_new_player_joins() -> AppResult<()> {
+        let mut mock_client = MockPokerClient::new();
+        mock_client
+            .expect_vote()
+            .withf(|x: &Option<&str>| x.unwrap() == "5")
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let mut app = create_test_app(mock_client);
+
+        // Add another player who has voted
+        app.room.players.push(Player {
+            name: "Other Player".to_string(),
+            vote: Vote::Hidden,
+            is_you: false,
+            user_type: UserType::Player,
+        });
+
+        // Cast our vote as the last person
+        app.vote("5")?;
+
+        // Verify auto-reveal timer is set
+        assert!(app.auto_reveal_at.is_some());
+
+        // Create updated room state with new player
+        let mut updated_room = app.room.clone();
+        updated_room.players.push(Player {
+            name: "New Player".to_string(),
+            vote: Vote::Missing,
+            is_you: false,
+            user_type: UserType::Player,
+        });
+
+        // Merge the room update
+        app.merge_update(updated_room);
+
+        // Verify auto-reveal was cancelled
+        assert!(app.auto_reveal_at.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_autoreveal_cancels_when_vote_retracted() -> AppResult<()> {
+        let mut mock_client = MockPokerClient::new();
+        mock_client
+            .expect_vote()
+            .withf(|x: &Option<&str>| x.unwrap() == "5")
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let mut app = create_test_app(mock_client);
+
+        // Add another player who has voted
+        app.room.players.push(Player {
+            name: "Other Player".to_string(),
+            vote: Vote::Hidden,
+            is_you: false,
+            user_type: UserType::Player,
+        });
+
+        // Cast our vote as the last person
+        app.vote("5")?;
+
+        // Verify auto-reveal timer is set
+        assert!(app.auto_reveal_at.is_some());
+
+        // Create updated room state with retracted vote
+        let mut updated_room = app.room.clone();
+        updated_room.players[1].vote = Vote::Missing;
+
+        // Merge the room update
+        app.merge_update(updated_room);
+
+        // Verify auto-reveal was cancelled
+        assert!(app.auto_reveal_at.is_none());
+
+        Ok(())
     }
 }
