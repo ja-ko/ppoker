@@ -315,9 +315,13 @@ mod tests {
     use crate::web::client::MockPokerClient;
 
     fn create_test_room() -> Room {
+        create_test_room_with_deck(vec!["1".to_string(), "2".to_string(), "3".to_string(), "5".to_string(), "8".to_string(), "13".to_string()])
+    }
+
+    fn create_test_room_with_deck(deck: Vec<String>) -> Room {
         Room {
             name: "test-room".to_string(),
-            deck: vec!["1".to_string(), "2".to_string(), "3".to_string(), "5".to_string(), "8".to_string(), "13".to_string()],
+            deck,
             phase: GamePhase::Playing,
             players: vec![Player {
                 name: "Test User".to_string(),
@@ -616,7 +620,7 @@ mod tests {
             .returning(|_| Ok(()));
 
         let mut app = create_test_app(mock_client);
-
+        
         // Add another player who has voted
         app.room.players.push(Player {
             name: "Other Player".to_string(),
@@ -627,20 +631,76 @@ mod tests {
 
         // Cast our vote as the last person
         app.vote("5")?;
-
+        
         // Verify auto-reveal timer is set
         assert!(app.auto_reveal_at.is_some());
 
         // Create updated room state with retracted vote
         let mut updated_room = app.room.clone();
         updated_room.players[1].vote = Vote::Missing;
-
+        
         // Merge the room update
         app.merge_update(updated_room);
-
+        
         // Verify auto-reveal was cancelled
         assert!(app.auto_reveal_at.is_none());
 
         Ok(())
+    }
+
+    #[test]
+    fn test_vote_with_special_values() -> AppResult<()> {
+        let mut mock_client = MockPokerClient::new();
+        mock_client
+            .expect_vote()
+            .withf(|x: &Option<&str>| x.unwrap() == "coffee")
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let mut app = create_test_app_with_special_deck(mock_client);
+        
+        app.vote("coffee")?;
+        assert!(app.vote.is_some());
+        if let Some(VoteData::Special(value)) = app.vote {
+            assert_eq!(value, "coffee");
+        } else {
+            panic!("Expected special vote");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_vote_with_utf8_values() -> AppResult<()> {
+        let mut mock_client = MockPokerClient::new();
+        mock_client
+            .expect_vote()
+            .withf(|x: &Option<&str>| x.unwrap() == "☕")
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let deck = vec!["1".to_string(), "☕".to_string(), "🎲".to_string()];
+        let mut app = App {
+            room: create_test_room_with_deck(deck),
+            ..create_test_app(mock_client)
+        };
+        
+        app.vote("☕")?;
+        assert!(app.vote.is_some());
+        if let Some(VoteData::Special(value)) = app.vote {
+            assert_eq!(value, "☕");
+        } else {
+            panic!("Expected special vote with UTF-8 character");
+        }
+
+        Ok(())
+    }
+
+    fn create_test_app_with_special_deck(mock_client: MockPokerClient) -> App {
+        let deck = vec!["1".to_string(), "coffee".to_string(), "?".to_string()];
+        App {
+            room: create_test_room_with_deck(deck),
+            ..create_test_app(mock_client)
+        }
     }
 }
