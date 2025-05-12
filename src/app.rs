@@ -1,14 +1,14 @@
-use crossterm::execute;
-use crossterm::style::Print;
 use log::{debug, info};
 use std::time::{Duration, Instant};
-use std::{error, io, mem};
+use std::{error, mem};
 
 use crate::config::Config;
 use crate::models::{
     GamePhase, LogEntry, LogLevel, LogSource, Player, Room, UserType, Vote, VoteData,
 };
-use crate::notification::show_notification;
+#[cfg(test)]
+use crate::notification::MockNotificationHandler;
+use crate::notification::NotificationHandler;
 use crate::web::client::{PokerClient, WebPokerClient};
 
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
@@ -44,6 +44,8 @@ pub struct App {
     pub auto_reveal_at: Option<Instant>,
 
     pub history: Vec<HistoryEntry>,
+
+    pub notification_handler: Box<dyn NotificationHandler>,
 }
 
 impl App {
@@ -67,6 +69,7 @@ impl App {
             has_updates: false,
             history: vec![],
             auto_reveal_at: None,
+            notification_handler: Box::new(crate::notification::create_notification_handler()),
         };
         result.update_server_log(log);
 
@@ -89,8 +92,10 @@ impl App {
                         info!("Skipping notification because user has them disabled.");
                     } else {
                         info!("Notifying user of missing vote.");
-                        execute!(io::stdout(), Print("\x07")).unwrap();
-                        show_notification();
+                        self.notification_handler.notify_with_bell(
+                            "Planning Poker",
+                            "Your vote is the last one missing.",
+                        );
                     }
                 }
                 self.is_notified = true;
@@ -311,11 +316,19 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockall::predicate::*;
     use crate::web::client::MockPokerClient;
+    use mockall::predicate::*;
+    use std::time::Duration;
 
     fn create_test_room() -> Room {
-        create_test_room_with_deck(vec!["1".to_string(), "2".to_string(), "3".to_string(), "5".to_string(), "8".to_string(), "13".to_string()])
+        create_test_room_with_deck(vec![
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "5".to_string(),
+            "8".to_string(),
+            "13".to_string(),
+        ])
     }
 
     fn create_test_room_with_deck(deck: Vec<String>) -> Room {
@@ -349,6 +362,7 @@ mod tests {
             has_updates: false,
             auto_reveal_at: None,
             history: vec![],
+            notification_handler: Box::new(MockNotificationHandler::new()),
         }
     }
 
@@ -400,11 +414,17 @@ mod tests {
 
         // Verify state changes
         assert_eq!(app.room.phase, GamePhase::Revealed);
-        assert_eq!(app.room.players[0].vote, Vote::Revealed(VoteData::Number(5)));
+        assert_eq!(
+            app.room.players[0].vote,
+            Vote::Revealed(VoteData::Number(5))
+        );
         assert_eq!(app.history.len(), 1);
         assert_eq!(app.history[0].round_number, 1);
         assert_eq!(app.history[0].votes.len(), 1);
-        assert_eq!(app.history[0].votes[0].vote, Vote::Revealed(VoteData::Number(5)));
+        assert_eq!(
+            app.history[0].votes[0].vote,
+            Vote::Revealed(VoteData::Number(5))
+        );
 
         Ok(())
     }
@@ -435,10 +455,7 @@ mod tests {
             .returning(|_| Ok(()));
 
         // Expect reveal to be called after 3 seconds
-        mock_client
-            .expect_reveal()
-            .times(1)
-            .returning(|| Ok(()));
+        mock_client.expect_reveal().times(1).returning(|| Ok(()));
 
         let mut app = create_test_app(mock_client);
 
@@ -500,10 +517,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(()));
 
-        mock_client
-            .expect_reveal()
-            .times(1)
-            .returning(|| Ok(()));
+        mock_client.expect_reveal().times(1).returning(|| Ok(()));
 
         let mut app = create_test_app(mock_client);
 
@@ -620,7 +634,7 @@ mod tests {
             .returning(|_| Ok(()));
 
         let mut app = create_test_app(mock_client);
-        
+
         // Add another player who has voted
         app.room.players.push(Player {
             name: "Other Player".to_string(),
@@ -631,17 +645,17 @@ mod tests {
 
         // Cast our vote as the last person
         app.vote("5")?;
-        
+
         // Verify auto-reveal timer is set
         assert!(app.auto_reveal_at.is_some());
 
         // Create updated room state with retracted vote
         let mut updated_room = app.room.clone();
         updated_room.players[1].vote = Vote::Missing;
-        
+
         // Merge the room update
         app.merge_update(updated_room);
-        
+
         // Verify auto-reveal was cancelled
         assert!(app.auto_reveal_at.is_none());
 
@@ -658,7 +672,7 @@ mod tests {
             .returning(|_| Ok(()));
 
         let mut app = create_test_app_with_special_deck(mock_client);
-        
+
         app.vote("coffee")?;
         assert!(app.vote.is_some());
         if let Some(VoteData::Special(value)) = app.vote {
@@ -684,7 +698,7 @@ mod tests {
             room: create_test_room_with_deck(deck),
             ..create_test_app(mock_client)
         };
-        
+
         app.vote("☕")?;
         assert!(app.vote.is_some());
         if let Some(VoteData::Special(value)) = app.vote {
@@ -702,5 +716,76 @@ mod tests {
             room: create_test_room_with_deck(deck),
             ..create_test_app(mock_client)
         }
+    }
+
+    pub fn expect_notification(mock: &mut MockNotificationHandler, summary: String, body: String) {
+        mock.expect_notify_with_bell()
+            .with(eq(summary), eq(body))
+            .times(1)
+            .return_const(());
+    }
+
+    #[test]
+    fn test_notification_triggers_when_last_to_vote() -> AppResult<()> {
+        let mock_client = MockPokerClient::new();
+        let mut mock_notification = MockNotificationHandler::new();
+
+        // Set up notification expectation before boxing the mock
+        expect_notification(
+            &mut mock_notification,
+            "Planning Poker".to_string(),
+            "Your vote is the last one missing.".to_string(),
+        );
+
+        let mut app = App {
+            notification_handler: Box::new(mock_notification),
+            has_focus: false, // Ensure notification can trigger
+            config: Config {
+                disable_notifications: false,
+                ..Config::default()
+            },
+            ..create_test_app(mock_client)
+        };
+
+        // First create a room with players who haven't voted yet
+        let mut new_room = app.room.clone();
+        new_room.players.push(Player {
+            name: "Player 2".to_string(),
+            vote: Vote::Missing,
+            is_you: false,
+            user_type: UserType::Player,
+        });
+        new_room.players.push(Player {
+            name: "Player 3".to_string(),
+            vote: Vote::Missing,
+            is_you: false,
+            user_type: UserType::Player,
+        });
+
+        // Merge the room with missing votes and verify no notification is scheduled
+        app.merge_update(new_room.clone());
+        app.tick()?;
+        assert!(app.notify_vote_at.is_none());
+        assert!(!app.is_notified);
+
+        // Now update the room so other players have voted
+        let mut voted_room = new_room.clone();
+        voted_room.players[1].vote = Vote::Hidden;
+        voted_room.players[2].vote = Vote::Hidden;
+
+        // Merge the room with voted players and verify notification gets scheduled
+        app.merge_update(voted_room);
+        assert!(app.notify_vote_at.is_some());
+        assert!(!app.is_notified);
+
+        // Fast forward time past notification deadline
+        app.notify_vote_at = Some(Instant::now() - Duration::from_secs(1));
+        app.tick()?;
+
+        // Verify notification was sent
+        assert!(app.is_notified);
+        assert!(app.notify_vote_at.is_none());
+
+        Ok(())
     }
 }
