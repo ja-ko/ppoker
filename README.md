@@ -1,5 +1,6 @@
 # ppoker - Planning Poker in your terminal
 
+[![codecov](https://codecov.io/gh/ja-ko/ppoker/graph/badge.svg?token=FGE02UNPW4)](https://codecov.io/gh/ja-ko/ppoker)
 ## Client
 
 This is an alternative, cross-platform terminal client to the planning poker server provided by
