@@ -1,5 +1,7 @@
 use std::io;
+#[cfg(not(test))]
 use log::error;
+#[cfg(not(test))]
 use notify_rust::{Notification, Timeout};
 use crossterm::{execute};
 use crossterm::style::Print;
@@ -17,9 +19,11 @@ pub trait NotificationHandler {
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(test))]
 pub struct LinuxNotificationHandler;
 
 #[cfg(target_os = "linux")]
+#[cfg(not(test))]
 impl NotificationHandler for LinuxNotificationHandler {
     fn notify(&self, summary: &str, body: &str) {
         use notify_rust::{Hint, Urgency};
@@ -38,6 +42,7 @@ impl NotificationHandler for LinuxNotificationHandler {
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(not(test))]
 pub struct DefaultNotificationHandler;
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -55,11 +60,18 @@ impl NotificationHandler for DefaultNotificationHandler {
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(test))]
 pub fn create_notification_handler() -> impl NotificationHandler {
     LinuxNotificationHandler
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(not(test))]
 pub fn create_notification_handler() -> impl NotificationHandler {
     DefaultNotificationHandler
+}
+
+#[cfg(test)]
+pub fn create_notification_handler() -> impl NotificationHandler {
+    MockNotificationHandler::new()
 }

@@ -30,6 +30,9 @@ mod web;
 
 fn setup_logging() -> AppResult<()> {
     const MAX_LOGFILES: usize = 20;
+    tui_logger::init_logger(LevelFilter::Debug).expect("Unable to setup logging capture");
+    tui_logger::set_default_level(LevelFilter::Debug);
+    
     let filename_regex = Regex::new(r"main-(?P<index>\d+)\.log")?;
     let log_dir = get_logdir();
     if !log_dir.exists() {
@@ -80,9 +83,6 @@ fn run(app: &mut App, tui: &mut Tui<CrosstermBackend<Stderr>>) -> AppResult<()> 
 }
 
 fn setup() -> AppResult<Option<(App, Tui<CrosstermBackend<Stderr>>)>> {
-    tui_logger::init_logger(LevelFilter::Debug).expect("Unable to setup logging capture");
-    tui_logger::set_default_level(LevelFilter::Debug);
-
     setup_logging().unwrap_or_else(|err| error!("Failed to setup logging: {:?}", err));
 
     let config = get_config();
@@ -136,4 +136,48 @@ fn main() -> AppResult<()> {
     let result = execute();
     tui_logger::move_events();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use tempfile::TempDir;
+
+    #[test]
+    fn setup_logging_test() -> AppResult<()> {
+        let temp_dir = TempDir::new()?;
+        let old_logdir = get_logdir();
+        
+        // Override log directory for testing
+        std::env::set_var("HOME", temp_dir.path());
+
+        setup_logging()?;
+        
+        info!("Info Logging");
+        debug!("Debug Logging");
+
+        let log_files: Vec<_> = glob(get_logdir().join("main-*.log").to_str().unwrap())?
+            .map(|f| f.unwrap())
+            .collect();
+
+        assert!(!log_files.is_empty(), "No log files were created");
+        assert_eq!(log_files.len(), 1, "Expected exactly one log file");
+
+        // Wait a moment for logs to be written
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        tui_logger::move_events();
+
+        // Read and check log content
+        let log_content = std::fs::read_to_string(&log_files[0])?;
+        assert!(log_content.contains("Info Logging"), "Info log message not found");
+        assert!(log_content.contains("Debug Logging"), "Debug log message not found");
+
+        // Restore original log directory
+        if let Some(old_path) = old_logdir.to_str() {
+            std::env::set_var("HOME", old_path);
+        }
+
+        Ok(())
+    }
 }

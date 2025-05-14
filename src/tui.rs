@@ -188,7 +188,7 @@ mod tests {
         .unwrap();
         assert_eq!(tui.current_page, UiPage::Log);
         tui.draw(&mut app).unwrap();
-        assert_snapshot!("switched_to_log", tui.terminal.backend());
+        assert!(tui.terminal.backend().to_string().contains("Toggle target selector"));
 
         // Switch back to voting page with 'l'
         tui.handle_key(

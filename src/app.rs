@@ -319,6 +319,7 @@ pub mod tests {
     use crate::web::client::MockPokerClient;
     use mockall::predicate::*;
     use std::time::Duration;
+    use crate::notification::create_notification_handler;
 
     fn create_test_room() -> Room {
         create_test_room_with_deck(vec![
@@ -366,7 +367,7 @@ pub mod tests {
             has_updates: false,
             auto_reveal_at: None,
             history: vec![],
-            notification_handler: Box::new(MockNotificationHandler::new()),
+            notification_handler: Box::new(create_notification_handler()),
         }
     }
 
