@@ -1,6 +1,9 @@
 use std::io::Stderr;
 use std::path::PathBuf;
-use std::{fs, io};
+use std::{
+    fs,
+    io::{self},
+};
 
 use crate::app::{App, AppResult};
 use crate::config::{get_config, get_logdir};

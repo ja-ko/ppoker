@@ -2,14 +2,18 @@ mod changelog;
 mod changelog_renderer;
 
 use std::fs;
-use std::io;
+use std::io::{stdin, stdout, BufReader};
 use std::path::Path;
 
 use crate::config::Config;
 use log::{debug, error, info};
-use self_update::{cargo_crate_version, self_replace, Extract};
+use self_update::{cargo_crate_version, Extract};
 use semver::Version;
 use snafu::Snafu;
+
+#[cfg(test)]
+use mockall::{automock, predicate::*};
+use self_update::self_replace::self_replace;
 
 const GITHUB_OWNER: &str = "ja-ko";
 const GITHUB_REPO: &str = "ppoker";
@@ -52,10 +56,59 @@ impl From<semver::Error> for UpdateError {
     }
 }
 
-fn display_changelog(
+#[cfg_attr(test, automock)]
+trait BinaryOperations {
+    fn self_replace(&self, binary: &Path) -> Result<(), self_update::errors::Error>;
+    fn backup_binary(&self, path: &Path) -> Result<(), UpdateError>;
+}
+
+struct DefaultBinaryOperations;
+
+impl Default for DefaultBinaryOperations {
+    fn default() -> Self {
+        Self
+    }
+}
+
+impl BinaryOperations for DefaultBinaryOperations {
+    fn self_replace(&self, binary: &Path) -> Result<(), self_update::errors::Error> {
+        Ok(self_replace(binary)?)
+    }
+
+    fn backup_binary(&self, path: &Path) -> Result<(), UpdateError> {
+        let backup_path = path.with_extension("bak");
+        if backup_path.exists() {
+            fs::remove_file(&backup_path)?;
+        }
+        fs::copy(path, &backup_path)?;
+        Ok(())
+    }
+}
+
+#[cfg_attr(test, automock)]
+trait CrateVersion {
+    fn version(&self) -> &str;
+}
+
+struct DefaultCrateVersion;
+
+impl Default for DefaultCrateVersion {
+    fn default() -> Self {
+        Self
+    }
+}
+
+impl CrateVersion for DefaultCrateVersion {
+    fn version(&self) -> &str {
+        cargo_crate_version!()
+    }
+}
+
+fn display_changelog<W: std::io::Write>(
     url: &str,
     current_version: &str,
     target_version: &str,
+    stdout: &mut W,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let changelog = changelog::fetch_changelog(url)?;
     let current_version = Version::parse(current_version)?;
@@ -63,32 +116,38 @@ fn display_changelog(
 
     let sections = changelog::parse_changelog(&changelog, &current_version, &target_version);
     if !sections.is_empty() {
-        println!("\nChangelog:");
+        writeln!(stdout, "\nChangelog:")?;
         for section in sections {
-            changelog_renderer::render_changelog(&section.content, &mut io::stdout())?;
+            changelog_renderer::render_changelog(&section.content, stdout)?;
         }
     }
 
     Ok(())
 }
 
-fn backup_binary(path: impl AsRef<Path>) -> Result<(), UpdateError> {
-    let path = path.as_ref();
-    let backup_path = path.with_extension("bak");
-    if backup_path.exists() {
-        fs::remove_file(&backup_path)?;
-    }
-    fs::copy(path, &backup_path)?;
-    Ok(())
+pub fn self_update(config: &Config) -> Result<UpdateResult, UpdateError> {
+    self_update_impl(
+        config,
+        &mut stdout(),
+        &mut BufReader::new(stdin()),
+        &DefaultCrateVersion::default(),
+        &DefaultBinaryOperations::default(),
+    )
 }
 
-pub fn self_update(config: &Config) -> Result<UpdateResult, UpdateError> {
+fn self_update_impl<W: std::io::Write, R: std::io::BufRead>(
+    config: &Config,
+    mut stdout: &mut W,
+    stdin: &mut R,
+    version_provider: &impl CrateVersion,
+    binary_ops: &impl BinaryOperations,
+) -> Result<UpdateResult, UpdateError> {
     let update = self_update::backends::github::Update::configure()
         .repo_owner(GITHUB_OWNER)
         .repo_name(GITHUB_REPO)
         .bin_name(GITHUB_REPO)
         .show_download_progress(true)
-        .current_version(cargo_crate_version!())
+        .current_version(version_provider.version())
         .show_output(false)
         .bin_path_in_archive(BIN_PATH_TEMPLATE)
         .build()?;
@@ -120,13 +179,18 @@ pub fn self_update(config: &Config) -> Result<UpdateResult, UpdateError> {
         return Err(UpdateError::NoCompatibleAssetFound.into());
     };
 
-    println!("\nNew release found:");
-    println!("  * Current release is: v{}", update.current_version());
-    println!(
+    writeln!(stdout, "\nNew release found:")?;
+    writeln!(
+        stdout,
+        "  * Current release is: v{}",
+        update.current_version()
+    )?;
+    writeln!(
+        stdout,
         "  * Found release: {} v{}",
         asset.name, latest_release.version
-    );
-    println!("  * Download url: {}", asset.download_url);
+    )?;
+    writeln!(stdout, "  * Download url: {}", asset.download_url)?;
 
     // Try to fetch and display changelog
     let changelog_url = format!(
@@ -138,17 +202,21 @@ pub fn self_update(config: &Config) -> Result<UpdateResult, UpdateError> {
         &changelog_url,
         update.current_version().as_str(),
         latest_release.version.as_str(),
+        &mut stdout,
     ) {
         Ok(_) => (),
         Err(e) => debug!("Failed to fetch/parse changelog: {}", e),
     }
 
-    println!("\nThe new release will be downloaded and the existing binary will be replaced.");
-    print!("\nDo you want to continue? [Y/n] ");
-    ::std::io::Write::flush(&mut ::std::io::stdout())?;
+    writeln!(
+        stdout,
+        "\nThe new release will be downloaded and the existing binary will be replaced."
+    )?;
+    write!(stdout, "\nDo you want to continue? [Y/n] ")?;
+    stdout.flush()?;
 
     let mut response = String::new();
-    io::stdin().read_line(&mut response)?;
+    stdin.read_line(&mut response)?;
     let response = response.trim().to_lowercase();
     if !response.is_empty() && response != "y" {
         info!("User aborted update.");
@@ -183,13 +251,90 @@ pub fn self_update(config: &Config) -> Result<UpdateResult, UpdateError> {
 
     if config.keep_backup_on_update {
         info!("Creating backup of current binary");
-        if let Err(e) = backup_binary(update.bin_install_path()) {
+        if let Err(e) = binary_ops.backup_binary(update.bin_install_path().as_path()) {
             error!("Failed to create backup: {}", e);
         }
     }
 
-    self_replace::self_replace(binary)?;
+    binary_ops.self_replace(binary.as_path())?;
     info!("Update to v{} done.", latest_release.version);
 
     Ok(UpdateResult::Updated)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockall::predicate;
+    use std::io::Cursor;
+
+    #[test]
+    fn test_self_update() {
+        let mut mock_config = Config::default();
+        mock_config.keep_backup_on_update = true;
+
+        let mut output = Vec::new();
+        
+        let mut mock_version = MockCrateVersion::new();
+        mock_version
+            .expect_version()
+            .return_const("0.0.1".to_string());
+
+        let mut mock_binary_ops = MockBinaryOperations::default();
+        let mut input = Cursor::new("y\n");
+
+        mock_binary_ops
+            .expect_backup_binary()
+            .times(1)
+            .returning(|_| Ok(()));
+
+        mock_binary_ops
+            .expect_self_replace()
+            .times(1)
+            .with(predicate::function(|p: &Path| {
+                p.exists() && p.metadata().map(|m| m.len() > 0).unwrap_or(false)
+            }))
+            .returning(|_| Ok(()));
+
+        let result = self_update_impl(
+            &mock_config,
+            &mut output,
+            &mut input,
+            &mock_version,
+            &mock_binary_ops,
+        );
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), UpdateResult::Updated);
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("Do you want to continue?"));
+    }
+
+    #[test]
+    fn test_self_update_up_to_date() {
+        let mock_config = Config::default();
+        let mut output = Vec::new();
+
+        let mut mock_version = MockCrateVersion::new();
+        mock_version
+            .expect_version()
+            .return_const("999.0.0".to_string());
+
+        let mock_binary_ops = MockBinaryOperations::default();
+        let mut input = Cursor::new("");
+
+        let result = self_update_impl(
+            &mock_config,
+            &mut output,
+            &mut input,
+            &mock_version,
+            &mock_binary_ops,
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), UpdateResult::UpToDate);
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.is_empty());
+    }
 }
