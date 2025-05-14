@@ -549,7 +549,7 @@ pub mod tests {
         client2.vote(Some("3")).expect("Failed to vote");
 
         // Small delay to ensure messages are processed
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(250));
 
         // Get updates for both clients
         let (rooms1, logs1) = client1
@@ -560,7 +560,9 @@ pub mod tests {
             .expect("Failed to get updates for client 2");
 
         // Check room state - use the last update as it represents the final state
-        assert!(!rooms1.is_empty(), "Expected at least one room update");
+        assert!(!rooms1.is_empty(), "Expected at least one room1 update");
+        // Check room state - use the last update as it represents the final state
+        assert!(!rooms2.is_empty(), "Expected at least one room2 update");
         let room = &rooms1[rooms1.len() - 1];
         let room2 = &rooms2[rooms2.len() - 1];
         assert_eq!(room.players.len(), 2, "Expected 2 users in the room");
