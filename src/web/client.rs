@@ -122,13 +122,15 @@ impl PokerClient for WebPokerClient {
 
 #[cfg(test)]
 pub mod tests {
-    use super::PokerClient;
+    use super::{PokerClient, WebPokerClient};
     use crate::app::AppResult;
     use crate::models::{
         GamePhase, LogEntry, LogLevel, LogSource, Player, Room, UserType, Vote, VoteData,
     };
     use std::collections::HashMap;
-    use std::time::Instant;
+    use std::thread;
+    use std::time::{Duration, Instant};
+    use crate::config::Config;
 
     #[derive(Debug, Clone)]
     struct LocalUser {
@@ -216,7 +218,11 @@ pub mod tests {
                     self.current_user.vote_state.clone()
                 },
                 is_you: true,
-                user_type: if self.current_user.is_spectator { UserType::Spectator } else { UserType::Player },
+                user_type: if self.current_user.is_spectator {
+                    UserType::Spectator
+                } else {
+                    UserType::Player
+                },
             }];
 
             for user in self.other_users.values() {
@@ -238,7 +244,11 @@ pub mod tests {
                     name: user.name.clone(),
                     vote,
                     is_you: false,
-                    user_type: if user.is_spectator { UserType::Spectator } else { UserType::Player },
+                    user_type: if user.is_spectator {
+                        UserType::Spectator
+                    } else {
+                        UserType::Player
+                    },
                 });
             }
 
@@ -289,7 +299,7 @@ pub mod tests {
             self.queue_room_update();
             id
         }
-        
+
         #[allow(dead_code)]
         pub fn remove_user(&mut self, user_id: &str) {
             if let Some(user) = self.other_users.remove(user_id) {
@@ -521,5 +531,77 @@ pub mod tests {
         assert_eq!(logs[1].message, "Bob joined the room");
         assert_eq!(logs[2].message, "Alice: Hello everyone!");
         assert_eq!(logs[3].message, "Bob changed their name to Bobby");
+    }
+
+    #[test]
+    fn test_voting_and_chat() {
+        let config = Config::default();
+        let (mut client1, _, _) = WebPokerClient::new(&config).expect("Failed to create client 1");
+        let (mut client2, _, _) = WebPokerClient::new(&config).expect("Failed to create client 2");
+
+        // Let's have client1 vote and send a chat message
+        client1.vote(Some("5")).expect("Failed to vote");
+        client1
+            .chat("Hello from client 1!")
+            .expect("Failed to send chat");
+        thread::sleep(Duration::from_millis(10)); // work around a race condition in the server
+        // Client2 votes as well
+        client2.vote(Some("3")).expect("Failed to vote");
+
+        // Small delay to ensure messages are processed
+        thread::sleep(Duration::from_millis(100));
+
+        // Get updates for both clients
+        let (rooms1, logs1) = client1
+            .get_updates()
+            .expect("Failed to get updates for client 1");
+        let (rooms2, _) = client2
+            .get_updates()
+            .expect("Failed to get updates for client 2");
+
+        // Check room state - use the last update as it represents the final state
+        assert!(!rooms1.is_empty(), "Expected at least one room update");
+        let room = &rooms1[rooms1.len() - 1];
+        let room2 = &rooms2[rooms2.len() - 1];
+        assert_eq!(room.players.len(), 2, "Expected 2 users in the room");
+
+        // Find client1's vote
+        let client1_user = room
+            .players
+            .iter()
+            .find(|u| u.is_you)
+            .expect("Couldn't find self in players");
+        assert_eq!(
+            client1_user.vote,
+            Vote::Revealed(VoteData::Number(5)),
+            "Client 1's vote not correctly reflected"
+        );
+
+        // Find client2's vote
+        let client2_user = room2
+            .players
+            .iter()
+            .find(|u| u.is_you)
+            .expect("Couldn't find other player");
+
+        assert_eq!(
+            client2_user.vote,
+            Vote::Revealed(VoteData::Number(3)),
+            "Client 2's vote not correctly reflected"
+        );
+
+        // Check chat messages - use the last log as it should contain our message
+        assert!(!logs1.is_empty(), "Expected at least one chat message");
+        assert!(
+            logs1[logs1.len() - 1].message.contains("Hello from client 1!"),
+            "Chat message not found in log entries"
+        );
+
+        // Both clients should see the same final room state
+        assert_eq!(
+            rooms1[rooms1.len() - 1].players.len(),
+            rooms2[rooms2.len() - 1].players.len(),
+            "Room state inconsistent between clients"
+        );
     }
 }
