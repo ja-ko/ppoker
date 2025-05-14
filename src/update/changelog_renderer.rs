@@ -176,17 +176,3 @@ mod tests {
 
 }
 
-pub fn ask_to_show_changelog() -> io::Result<bool> {
-    execute!(
-        io::stdout(),
-        Print("\nDo you want to see the changelog? [Y/n] ")
-    )?;
-    io::stdout().flush()?;
-
-    let mut response = String::new();
-    io::stdin().read_line(&mut response)?;
-    let response = response.trim().to_lowercase();
-
-    Ok(response.is_empty() || response == "y")
-}
-

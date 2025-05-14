@@ -62,7 +62,7 @@ fn display_changelog(
     let target_version = Version::parse(target_version)?;
 
     let sections = changelog::parse_changelog(&changelog, &current_version, &target_version);
-    if !sections.is_empty() && changelog_renderer::ask_to_show_changelog()? {
+    if !sections.is_empty() {
         println!("\nChangelog:");
         for section in sections {
             changelog_renderer::render_changelog(&section.content, &mut io::stdout())?;
