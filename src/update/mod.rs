@@ -65,7 +65,7 @@ fn display_changelog(
     if !sections.is_empty() && changelog_renderer::ask_to_show_changelog()? {
         println!("\nChangelog:");
         for section in sections {
-            changelog_renderer::render_changelog(&section.content)?;
+            changelog_renderer::render_changelog(&section.content, &mut io::stdout())?;
         }
     }
 
