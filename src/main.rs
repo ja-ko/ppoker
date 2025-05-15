@@ -96,10 +96,10 @@ fn setup() -> AppResult<Option<(App, Tui<CrosstermBackend<Stderr>>)>> {
             }
             Ok(UpdateResult::UpToDate) => {}
             Err(e) => {
-                if matches!(e, UpdateError::NoCompatibleAssetFound)
-                    || matches!(e, UpdateError::UserCanceled)
-                {
+                if matches!(e, UpdateError::NoCompatibleAssetFound) {
                     warn!("Current release has no asset for current target.");
+                } else if matches!(e, UpdateError::UserCanceled) {
+                    // No log
                 } else {
                     error!("Failed to update the application. {}", e);
                     println!("Failed to update the application.");
