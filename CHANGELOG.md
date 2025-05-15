@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.1](https://github.com/ja-ko/ppoker/compare/v0.5.0...v0.5.1) (2025-05-15)
+
+
+### Features
+
+* **update:** remove interactive prompt for changelog display ([861f4de](https://github.com/ja-ko/ppoker/commit/861f4defabc057e520a3f9be92aafc22193c4eb8))
+
+
+### Bug Fixes
+
+* **ui/history:** resolve incorrect player sorting in history view ([b9164a9](https://github.com/ja-ko/ppoker/commit/b9164a9647f8264b0bb4393584fe927a9a8b2079))
+
 ## [0.5.0](https://github.com/ja-ko/ppoker/compare/v0.4.2...v0.5.0) (2025-05-11)
 
 
