@@ -140,6 +140,7 @@ fn main() -> AppResult<()> {
 
 #[cfg(test)]
 mod tests {
+    use temp_env::with_var;
     use super::*;
 
     use tempfile::TempDir;
@@ -147,36 +148,31 @@ mod tests {
     #[test]
     fn setup_logging_test() -> AppResult<()> {
         let temp_dir = TempDir::new()?;
-        let old_logdir = get_logdir();
         
         // Override log directory for testing
-        std::env::set_var("HOME", temp_dir.path());
+        with_var("HOME", Some(temp_dir.path().to_str().unwrap()), || {
+            setup_logging().unwrap();
 
-        setup_logging()?;
-        
-        info!("Info Logging");
-        debug!("Debug Logging");
+            info!("Info Logging");
+            debug!("Debug Logging");
 
-        let log_files: Vec<_> = glob(get_logdir().join("main-*.log").to_str().unwrap())?
-            .map(|f| f.unwrap())
-            .collect();
+            let log_files: Vec<_> = glob(get_logdir().join("main-*.log").to_str().unwrap()).unwrap()
+                .map(|f| f.unwrap())
+                .collect();
 
-        assert!(!log_files.is_empty(), "No log files were created");
-        assert_eq!(log_files.len(), 1, "Expected exactly one log file");
+            assert!(!log_files.is_empty(), "No log files were created");
+            assert_eq!(log_files.len(), 1, "Expected exactly one log file");
 
-        // Wait a moment for logs to be written
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        tui_logger::move_events();
+            // Wait a moment for logs to be written
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            tui_logger::move_events();
 
-        // Read and check log content
-        let log_content = std::fs::read_to_string(&log_files[0])?;
-        assert!(log_content.contains("Info Logging"), "Info log message not found");
-        assert!(log_content.contains("Debug Logging"), "Debug log message not found");
+            // Read and check log content
+            let log_content = std::fs::read_to_string(&log_files[0]).unwrap();
+            assert!(log_content.contains("Info Logging"), "Info log message not found");
+            assert!(log_content.contains("Debug Logging"), "Debug log message not found");
 
-        // Restore original log directory
-        if let Some(old_path) = old_logdir.to_str() {
-            std::env::set_var("HOME", old_path);
-        }
+        });
 
         Ok(())
     }

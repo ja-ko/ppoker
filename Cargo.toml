@@ -45,6 +45,7 @@ pretty_assertions = { version = "1", features = ["unstable"] }
 assert-json-diff = "2"
 mockall = "0.13"
 insta = "1.43.1"
+temp-env = "0.3"
 
 [profile.release]
 lto = true
