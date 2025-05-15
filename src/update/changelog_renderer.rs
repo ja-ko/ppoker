@@ -38,7 +38,7 @@ pub fn render_changelog<W: Write>(content: &str, writer: &mut W) -> io::Result<(
                 execute!(
                     writer,
                     ResetColor,
-                    SetAttribute(Attribute::NoBold),
+                    SetAttribute(Attribute::NormalIntensity),
                     SetAttribute(Attribute::NoUnderline),
                     Print("\n")
                 )?;
@@ -53,7 +53,7 @@ pub fn render_changelog<W: Write>(content: &str, writer: &mut W) -> io::Result<(
                 execute!(writer, SetAttribute(Attribute::Bold))?;
             }
             Event::End(TagEnd::Strong) => {
-                execute!(writer, SetAttribute(Attribute::NoBold))?;
+                execute!(writer, SetAttribute(Attribute::NormalIntensity))?;
             }
             Event::Text(text) => {
                 if commit_regex.is_match(&text) {
@@ -146,11 +146,10 @@ mod tests {
         const YELLOW: &str = "\x1b[38;5;11m";
         const DIM: &str = "\x1b[2m";
         const BOLD_START: &str = "\x1b[1m";
-        const BOLD_END: &str = "\x1b[21m";
+        const BOLD_END: &str = "\x1b[22m";
         const UNDERLINE_START: &str = "\x1b[4m";
         const UNDERLINE_END: &str = "\x1b[24m";
         const RESET: &str = "\x1b[0m";
-
 
         assert_eq!(writer.content, format!(r#"
 {CYAN}{UNDERLINE_START}{BOLD_START}0.5.0 (2025-05-11){RESET}{BOLD_END}{UNDERLINE_END}
