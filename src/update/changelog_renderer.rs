@@ -7,15 +7,14 @@ use regex::Regex;
 use std::io::{self, Write};
 
 fn get_terminal_width() -> u16 {
-    #[cfg(test)]
-    {
-        return 80;
-    }
-    #[cfg(not(test))]
-    {
+    // RustRover deadcode analysis can't properly interpret a the cfg(test) annotation here and
+    // always emits a deadcode warning that the rust compiler doesn't emit. This works around the
+    // problem.
+    if cfg!(test) {
+        80
+    } else {
         crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80)
     }
-
 }
 
 pub fn render_changelog<W: Write>(content: &str, writer: &mut W) -> io::Result<()> {
