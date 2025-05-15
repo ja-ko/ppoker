@@ -2,8 +2,15 @@
 filter = "test(web::client::tests::test_voting_and_chat)"
 retries = { backoff = "fixed", count = 5, delay = "1s" }
 
+[[profile.default.overrides]]
+filter = "test(config_tests::test_get_config_from_toml) | test(config_tests::test_env_vars_override_toml) | test(tests::setup_logging_test)"
+test-group = 'sets-env-vars'
+
 [profile.ci]
 fail-fast = false
 
 [profile.ci.junit]
 path = "junit.xml"
+
+[test-groups]
+sets-env-vars = { max-threads = 1 }
