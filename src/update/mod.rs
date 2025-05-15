@@ -330,8 +330,7 @@ mod tests {
             &mock_version,
             &mock_binary_ops,
         );
-
-        assert!(result.is_ok());
+        
         assert_eq!(result.unwrap(), UpdateResult::UpToDate);
 
         let output_str = String::from_utf8(output).unwrap();
