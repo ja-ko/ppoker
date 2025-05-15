@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/ja-ko/ppoker/compare/v0.5.1...v0.5.2) (2025-05-15)
+
+
+### Bug Fixes
+
+* **changelog:** replace the `NoBold` attribute with `NormalIntensity` ([2828a06](https://github.com/ja-ko/ppoker/commit/2828a06631c5c5392afbc484effbc57000d14d01))
+
 ## [0.5.1](https://github.com/ja-ko/ppoker/compare/v0.5.0...v0.5.1) (2025-05-15)
 
 
