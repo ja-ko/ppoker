@@ -1,0 +1,9 @@
+[[profile.default.overrides]]
+filter = "test(web::client::tests::test_voting_and_chat)"
+retries = { backoff = "fixed", count = 5, delay = "1s" }
+
+[profile.ci]
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"
