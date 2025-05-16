@@ -181,6 +181,9 @@ impl Page for VotingPage {
                 KeyCode::Enter => {
                     self.confirm_input(app)?;
                 }
+                KeyCode::Char('c') if event.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.cancel_input();
+                }
                 _ => {
                     self.text_input.handle_input(&event);
                 }
@@ -654,12 +657,13 @@ pub fn format_vote(vote: &Vote, own_vote: &Option<VoteData>) -> Span<'static> {
 mod tests {
     use crate::app::tests::create_test_app;
     use crate::models::{GamePhase, Vote, VoteData};
-    use crate::ui::tests::{send_input, tick};
+    use crate::ui::tests::{send_input, send_input_with_modifiers, tick};
     use crate::ui::VotingPage;
     use crate::web::client::tests::LocalMockPokerClient;
-    use crossterm::event::KeyCode;
+    use crossterm::event::{KeyCode, KeyModifiers};
     use insta::assert_snapshot;
     use ratatui::{backend::TestBackend, Terminal};
+    use crate::ui::voting::InputMode;
 
     #[test]
     fn test_render_page() {
@@ -814,5 +818,36 @@ mod tests {
         // Verify message appears in log
         assert!(app.log.iter().any(|entry| entry.message.contains("Hello!")));
         assert_snapshot!("After sending chat", terminal.backend());
+    }
+
+    #[test]
+    fn test_input_cancellation() {
+        let mut page = VotingPage::new();
+        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+
+        // Get initial state
+        tick(&mut terminal, &mut page, &mut app);
+
+        // Test chat mode cancellation with Esc
+        send_input(KeyCode::Char('c'), &mut terminal, &mut page, &mut app);
+        for c in "Test message".chars() {
+            send_input(KeyCode::Char(c), &mut terminal, &mut page, &mut app);
+        }
+        send_input(KeyCode::Esc, &mut terminal, &mut page, &mut app);
+        assert_eq!(page.input_mode, InputMode::Menu);
+        assert_eq!(page.text_input.text(), "");
+
+        // Test vote mode cancellation with Ctrl+C
+        send_input(KeyCode::Char('5'), &mut terminal, &mut page, &mut app);
+        send_input_with_modifiers(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+            &mut terminal,
+            &mut page,
+            &mut app,
+        );
+        assert_eq!(page.input_mode, InputMode::Menu);
+        assert_eq!(page.text_input.text(), "");
     }
 }

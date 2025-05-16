@@ -148,6 +148,11 @@ pub mod tests {
         page.input(app, KeyEvent::new(key, KeyModifiers::empty())).unwrap();
         tick(terminal, page, app);
     }
+    
+    pub fn send_input_with_modifiers<P: Page>(key: KeyCode, modifier: KeyModifiers, terminal: &mut Terminal<TestBackend>, page: &mut P, app: &mut App) {
+        page.input(app, KeyEvent::new(key, modifier)).unwrap();
+        tick(terminal, page, app);
+    }
 
     pub fn tick<P: Page>(terminal: &mut Terminal<TestBackend>, page: &mut P, app: &mut App) {
         app.update().unwrap();
