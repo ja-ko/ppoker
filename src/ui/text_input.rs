@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::prelude::Widget;
@@ -17,8 +17,44 @@ impl TextInput {
         }
     }
 
+    fn find_prev_word_boundary(&self, from: usize) -> usize {
+        let text = &self.input_buffer[..from];
+        let mut in_word = false;
+        for (i, c) in text.char_indices().rev() {
+            if c.is_whitespace() {
+                if in_word {
+                    return i + 1;
+                }
+            } else {
+                in_word = true;
+            }
+        }
+        0
+    }
+
+    fn find_next_word_boundary(&self, from: usize) -> usize {
+        let text = &self.input_buffer[from..];
+        let mut seen_space = false;
+        for (i, c) in text.char_indices() {
+            if c.is_whitespace() {
+                seen_space = true;
+            } else if seen_space {
+                return from + i;
+            }
+        }
+        self.input_buffer.len()
+    }
+
     pub fn handle_input(&mut self, event: &KeyEvent) -> bool {
         match event.code {
+            KeyCode::Left if event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.cursor_position = self.find_prev_word_boundary(self.cursor_position);
+                true
+            }
+            KeyCode::Right if event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.cursor_position = self.find_next_word_boundary(self.cursor_position);
+                true
+            }
             KeyCode::Backspace => {
                 if self.cursor_position > 0 {
                     let new_pos = self.input_buffer[..self.cursor_position]
@@ -108,6 +144,7 @@ impl TextInput {
         let paragraph = Paragraph::new(self.input_buffer.clone());
         paragraph.render(area, buf);
     }
+    
 }
 
 #[cfg(test)]
@@ -117,6 +154,10 @@ mod tests {
 
     fn make_key_event(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::empty())
+    }
+
+    fn make_ctrl_key_event(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL)
     }
 
     #[test]
@@ -273,6 +314,100 @@ mod tests {
         assert_eq!(input.input_buffer, "");
         input.handle_input(&make_key_event(KeyCode::Backspace));
         assert_eq!(input.input_buffer, "");
+    }
+
+
+    #[test]
+    fn test_word_movement() {
+        let mut input = TextInput::new();
+
+        // Build up text with spaces
+        input.set_text("The quick brown fox".to_string());
+        assert_eq!(input.cursor_position, 19);
+
+        // Test Ctrl+Left movement
+        input.handle_input(&make_ctrl_key_event(KeyCode::Left));
+        assert_eq!(input.cursor_position, 16); // Start of "fox"
+
+        input.handle_input(&make_ctrl_key_event(KeyCode::Left));
+        assert_eq!(input.cursor_position, 10); // Start of "brown"
+
+        input.handle_input(&make_ctrl_key_event(KeyCode::Left));
+        assert_eq!(input.cursor_position, 4); // Start of "quick"
+
+        input.handle_input(&make_ctrl_key_event(KeyCode::Left));
+        assert_eq!(input.cursor_position, 0); // Start of "The"
+        
+        input.handle_input(&make_ctrl_key_event(KeyCode::Left));
+        assert_eq!(input.cursor_position, 0); // Can't step further left on 0
+
+        // Test Ctrl+Right movement
+        input.handle_input(&make_ctrl_key_event(KeyCode::Right));
+        assert_eq!(input.cursor_position, 4); // After "The"
+
+        input.handle_input(&make_ctrl_key_event(KeyCode::Right));
+        assert_eq!(input.cursor_position, 10); // After "quick"
+
+        input.handle_input(&make_ctrl_key_event(KeyCode::Right));
+        assert_eq!(input.cursor_position, 16); // After "brown"
+
+        input.handle_input(&make_ctrl_key_event(KeyCode::Right));
+        assert_eq!(input.cursor_position, 19); // After "fox"
+        
+        input.handle_input(&make_ctrl_key_event(KeyCode::Right));
+        assert_eq!(input.cursor_position, 19); // Can't step further right on the last index
+    }
+
+    #[test]
+    fn test_utf8_word_movement() {
+        let mut input = TextInput::new();
+
+        // Text with emojis and UTF-8 characters
+        input.set_text("Hello 👋 नमस्ते world 🌎".to_string());
+
+        // Start from the end
+        assert!(input.cursor_position > 0);
+
+        // Test Ctrl+Left movement
+        input.handle_input(&make_ctrl_key_event(KeyCode::Left));
+        assert!(input.text()[input.cursor_position..].starts_with('🌎'));
+
+        input.handle_input(&make_ctrl_key_event(KeyCode::Left));
+        assert!(input.text()[input.cursor_position..].starts_with("world"));
+
+        input.handle_input(&make_ctrl_key_event(KeyCode::Left));
+        assert!(input.text()[input.cursor_position..].starts_with("नमस्ते"));
+
+        input.handle_input(&make_ctrl_key_event(KeyCode::Left));
+        assert!(input.text()[input.cursor_position..].starts_with('👋'));
+
+        input.handle_input(&make_ctrl_key_event(KeyCode::Left));
+        assert!(input.text()[input.cursor_position..].starts_with("Hello"));
+        assert_eq!(input.cursor_position, 0);
+
+        input.handle_input(&make_ctrl_key_event(KeyCode::Left)); // try stepping over left border
+        assert_eq!(input.cursor_position, 0);
+
+        // Test Ctrl+Right movement
+        input.handle_input(&make_ctrl_key_event(KeyCode::Right));
+        assert!(input.text()[..input.cursor_position].ends_with("Hello "));
+
+        input.handle_input(&make_ctrl_key_event(KeyCode::Right));
+        assert!(input.text()[..input.cursor_position].ends_with("👋 "));
+
+        input.handle_input(&make_ctrl_key_event(KeyCode::Right));
+        assert!(input.text()[..input.cursor_position].ends_with("नमस्ते "));
+
+        input.handle_input(&make_ctrl_key_event(KeyCode::Right));
+        assert!(input.text()[..input.cursor_position].ends_with("world "));
+
+        input.handle_input(&make_ctrl_key_event(KeyCode::Right));
+        assert!(input.text()[..input.cursor_position].ends_with('🌎'));
+        assert_eq!(input.cursor_position, 40);
+
+        input.handle_input(&make_ctrl_key_event(KeyCode::Right)); // try stepping over right border
+        assert_eq!(input.cursor_position, 40);
+
     }
 
 
