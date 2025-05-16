@@ -715,6 +715,46 @@ pub mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_vote_retraction() -> AppResult<()> {
+        let mut mock_client = MockPokerClient::new();
+        mock_client
+            .expect_vote()
+            .withf(|x: &Option<&str>| x.is_none())
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let mut app = create_test_app(Box::new(mock_client));
+
+        // Set initial vote
+        app.vote = Some(VoteData::Number(5));
+
+        // Retract vote using "-"
+        app.vote("-")?;
+
+        assert!(app.vote.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_rename() -> AppResult<()> {
+        let mut mock_client = MockPokerClient::new();
+        mock_client
+            .expect_change_name()
+            .withf(|name: &str| name == "New Name")
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let mut app = create_test_app(Box::new(mock_client));
+
+        app.rename("New Name".to_string())?;
+
+        assert_eq!(app.name, "New Name");
+
+        Ok(())
+    }
+
     fn create_test_app_with_special_deck(mock_client: MockPokerClient) -> App {
         let deck = vec!["1".to_string(), "coffee".to_string(), "?".to_string()];
         App {
@@ -793,4 +833,6 @@ pub mod tests {
 
         Ok(())
     }
+    
+    
 }

@@ -134,3 +134,53 @@ impl Ord for Player {
         self.partial_cmp(other).expect("Unable to compare players")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_player_ordering() {
+        let players = vec![
+            Player {
+                name: "Alice".to_string(),
+                vote: Vote::Revealed(VoteData::Number(3)),
+                is_you: false,
+                user_type: UserType::Player,
+            },
+            Player {
+                name: "Bob".to_string(),
+                vote: Vote::Hidden,
+                is_you: false,
+                user_type: UserType::Player,
+            },
+            Player {
+                name: "Charlie".to_string(),
+                vote: Vote::Revealed(VoteData::Number(1)),
+                is_you: false,
+                user_type: UserType::Player,
+            },
+            Player {
+                name: "David".to_string(),
+                vote: Vote::Missing,
+                is_you: false,
+                user_type: UserType::Player,
+            },
+            Player {
+                name: "Eve".to_string(),
+                vote: Vote::Revealed(VoteData::Special("?".to_string())),
+                is_you: false,
+                user_type: UserType::Player,
+            },
+        ];
+
+        let mut sorted = players.clone();
+        sorted.sort();
+
+        assert_eq!(sorted[0].name, "Charlie"); // 1
+        assert_eq!(sorted[1].name, "Alice");   // 3
+        assert_eq!(sorted[2].name, "Eve");     // Special
+        assert_eq!(sorted[3].name, "Bob");     // Hidden
+        assert_eq!(sorted[4].name, "David");   // Missing
+    }
+}

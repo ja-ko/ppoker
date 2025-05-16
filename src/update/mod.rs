@@ -336,4 +336,36 @@ mod tests {
         let output_str = String::from_utf8(output).unwrap();
         assert!(output_str.is_empty());
     }
+
+    #[test]
+    fn test_self_update_user_canceled() {
+        let mock_config = Config::default();
+        let mut output = Vec::new();
+
+        let mut mock_version = MockCrateVersion::new();
+        mock_version
+            .expect_version()
+            .return_const("0.0.1".to_string());
+
+        let mut mock_binary_ops = MockBinaryOperations::default();
+        mock_binary_ops
+            .expect_self_replace()
+            .times(0)
+            .returning(|_| Ok(()));
+
+        let mut input = Cursor::new("n\n");
+
+        let result = self_update_impl(
+            &mock_config,
+            &mut output,
+            &mut input,
+            &mock_version,
+            &mock_binary_ops,
+        );
+
+        assert!(matches!(result, Err(UpdateError::UserCanceled)));
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("Do you want to continue?"));
+    }
 }
