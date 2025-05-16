@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.3](https://github.com/ja-ko/ppoker/compare/v0.5.2...v0.5.3) (2025-05-16)
+
+
+### Features
+
+* **text_input:** add Ctrl+Arrow support for word-wise cursor navigation ([add3eed](https://github.com/ja-ko/ppoker/commit/add3eed84b6d73c819bbe217d605f1522686f5b6))
+* **ui/voting:** add input cancellation via Ctrl+C ([bab1a32](https://github.com/ja-ko/ppoker/commit/bab1a32cab39086b9efec347e1b3e8233b6373bb))
+
+
+### Bug Fixes
+
+* **config:** Fix skip_update_check being ignored from toml config ([ee050ba](https://github.com/ja-ko/ppoker/commit/ee050ba22c4d5e5f83bc6fc90edb34459b24f66b))
+* **config:** some test runners were failing config tests by passing cli arguments ([dab873f](https://github.com/ja-ko/ppoker/commit/dab873f550859d42d8d83bb4e5de16d9d1f6c097))
+* no longer print the wrong log message when a user cancels an update ([6d0bacd](https://github.com/ja-ko/ppoker/commit/6d0bacda22ea9d405576513a64af4b1e084df951))
+
 ## [0.5.2](https://github.com/ja-ko/ppoker/compare/v0.5.1...v0.5.2) (2025-05-15)
 
 
