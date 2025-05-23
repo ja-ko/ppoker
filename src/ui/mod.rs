@@ -51,8 +51,8 @@ fn render_box_colored(title: &str, color: Style, rect: Rect, frame: &mut Frame) 
 
 fn colored_box_style(game_phase: GamePhase) -> Style {
     match game_phase {
-        GamePhase::Playing => Style::new().white(),
         GamePhase::Revealed => Style::new().light_blue(),
+        _ => Style::new().white(),
     }
 }
 

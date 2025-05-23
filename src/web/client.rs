@@ -49,10 +49,10 @@ impl WebPokerClient {
                     (&room.log)
                         .iter()
                         .enumerate()
-                        .map(|(i, l)| {
-                            let mut result: LogEntry = l.into();
+                        .filter_map(|(i, l)| {
+                            let mut result: LogEntry = l.try_into().ok()?;
                             result.server_index = Some(i as u32);
-                            result
+                            Some(result)
                         })
                         .collect(),
                 ));
@@ -79,7 +79,7 @@ impl PokerClient for WebPokerClient {
                     return Err(Box::new(ServerClosedConnection));
                 }
                 IncomingMessage::RoomUpdate(room) => {
-                    let logs: Vec<LogEntry> = room.log.iter().map(|l| l.into()).collect();
+                    let logs: Vec<LogEntry> = room.log.iter().filter_map(|l| l.try_into().ok()).collect();
                     for i in 0..logs.len() {
                         if log_results.len() == i {
                             let mut entry = logs[i].clone();
@@ -256,6 +256,7 @@ pub mod tests {
             players.sort_by_key(|p| match p.user_type {
                 UserType::Player => 0,
                 UserType::Spectator => 1,
+                UserType::Unknown => 2,
             });
 
             let room = Room {

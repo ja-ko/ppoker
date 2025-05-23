@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::models::{
@@ -12,6 +13,8 @@ use crate::models::{
 pub enum UserType {
     Participant,
     Spectator,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -28,6 +31,8 @@ pub struct User {
 pub enum GamePhase {
     Playing,
     CardsRevealed,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
@@ -36,6 +41,8 @@ pub enum LogLevel {
     Chat,
     Info,
     Error,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -45,19 +52,27 @@ pub struct LogEntry {
     pub message: String,
 }
 
-impl Into<AppLogEntry> for &LogEntry {
-    fn into(self) -> AppLogEntry {
-        AppLogEntry {
-            timestamp: Instant::now(),
-            level: match self.level {
-                LogLevel::Chat => AppLogLevel::Chat,
-                LogLevel::Info => AppLogLevel::Info,
-                LogLevel::Error => AppLogLevel::Error,
+impl TryInto<AppLogEntry> for &LogEntry {
+    type Error = ();
+
+    fn try_into(self) -> Result<AppLogEntry, Self::Error> {
+        let level = match self.level {
+            LogLevel::Chat => AppLogLevel::Chat,
+            LogLevel::Info => AppLogLevel::Info,
+            LogLevel::Error => AppLogLevel::Error,
+            LogLevel::Unknown => {
+                warn!("Failed to convert LogLevel::Unknown to AppLogLevel");
+                return Err(());
             },
+        };
+
+        Ok(AppLogEntry {
+            timestamp: Instant::now(),
+            level,
             message: self.message.clone(),
             source: LogSource::Server,
             server_index: None,
-        }
+        })
     }
 }
 
@@ -97,6 +112,10 @@ impl Into<AppGamePhase> for GamePhase {
         match self {
             GamePhase::CardsRevealed => AppGamePhase::Revealed,
             GamePhase::Playing => AppGamePhase::Playing,
+            GamePhase::Unknown => {
+                warn!("Unknown GamePhase.");
+                AppGamePhase::Unknown
+            },
         }
     }
 }
@@ -106,6 +125,10 @@ impl Into<AppUserType> for UserType {
         match self {
             UserType::Spectator => AppUserType::Spectator,
             UserType::Participant => AppUserType::Player,
+            UserType::Unknown => {
+                warn!("Unknown UserType.");
+                AppUserType::Unknown
+            },
         }
     }
 }
@@ -249,5 +272,121 @@ mod tests {
                 );
         println!("{}", serde_json::to_string_pretty(&room).unwrap());
         assert_json_eq!(room, expected);
+    }
+
+    #[test]
+    fn test_parse_unknown_room_enum_values() {
+        // Test JSON with unknown enum values
+        let json_str = r#"{
+          "roomId": "unknown-test",
+          "deck": ["1", "2", "3"],
+          "gamePhase": "UNKNOWN_PHASE",
+          "users": [
+            {
+              "username": "user1",
+              "userType": "UNKNOWN_TYPE",
+              "yourUser": true,
+              "cardValue": "5"
+            }
+          ],
+          "average": "5",
+          "log": []
+        }"#;
+
+        // Parse the JSON
+        let room: Room = serde_json::from_str(json_str).unwrap();
+
+        // Check that unknown values were parsed as Unknown variants
+        assert_eq!(room.game_phase, GamePhase::Unknown);
+        assert_eq!(room.users[0].user_type, UserType::Unknown);
+        
+        // Check that conversion to AppRoom works
+        let app_room: AppRoom = (&room).into();
+        assert_eq!(app_room.phase, AppGamePhase::Unknown);
+        assert_eq!(app_room.players[0].user_type, AppUserType::Unknown);
+    }
+
+    #[test]
+    fn test_unknown_log_level_is_skipped() {
+        // JSON with an unknown log level
+        let json_str = r#"{
+          "roomId": "log-test",
+          "deck": ["1", "2", "3"],
+          "gamePhase": "PLAYING",
+          "users": [],
+          "average": "0",
+          "log": [
+            {
+              "level": "UNKNOWN_LEVEL",
+              "message": "This should be skipped"
+            }
+          ]
+        }"#;
+
+        let room: Room = serde_json::from_str(json_str).unwrap();
+        
+        // Check that log entry with unknown level exists in parsed Room
+        assert_eq!(room.log.len(), 1);
+        assert_eq!(room.log[0].level, LogLevel::Unknown);
+        
+        // But when converting to AppLogEntry, it should be skipped
+        let app_log_entries: Vec<AppLogEntry> = room.log
+            .iter()
+            .filter_map(|entry| entry.try_into().ok())
+            .collect();
+            
+        assert_eq!(app_log_entries.len(), 0, "LogEntry with Unknown level should be skipped");
+    }
+
+    #[test]
+    fn test_mixed_log_levels_filtering() {
+        // JSON with mix of valid and unknown log levels
+        let json_str = r#"{
+          "roomId": "mixed-logs",
+          "deck": ["1", "2", "3"],
+          "gamePhase": "PLAYING",
+          "users": [],
+          "average": "0",
+          "log": [
+            {
+              "level": "CHAT",
+              "message": "Valid chat message"
+            },
+            {
+              "level": "UNKNOWN_LEVEL",
+              "message": "This should be skipped"
+            },
+            {
+              "level": "INFO",
+              "message": "Valid info message"
+            },
+            {
+              "level": "ERROR",
+              "message": "Valid error message"
+            },
+            {
+              "level": "ANOTHER_UNKNOWN",
+              "message": "This should also be skipped"
+            }
+          ]
+        }"#;
+
+        let room: Room = serde_json::from_str(json_str).unwrap();
+        
+        // Check that all log entries exist in parsed Room
+        assert_eq!(room.log.len(), 5);
+        
+        // But when converting to AppLogEntry, unknown levels should be skipped
+        let app_log_entries: Vec<AppLogEntry> = room.log
+            .iter()
+            .filter_map(|entry| entry.try_into().ok())
+            .collect();
+            
+        assert_eq!(app_log_entries.len(), 3, "Only valid LogEntries should be included");
+        
+        // Check that the valid messages are preserved
+        assert_eq!(app_log_entries[0].message, "Valid chat message");
+        assert_eq!(app_log_entries[1].message, "Valid info message");
+        assert_eq!(app_log_entries[2].message, "Valid error message");
     }
 }

@@ -38,6 +38,7 @@ impl std::fmt::Display for Vote {
 pub enum UserType {
     Player,
     Spectator,
+    Unknown,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -52,6 +53,7 @@ pub struct Player {
 pub enum GamePhase {
     Playing,
     Revealed,
+    Unknown,
 }
 
 impl std::fmt::Display for GamePhase {
@@ -63,6 +65,9 @@ impl std::fmt::Display for GamePhase {
             GamePhase::Revealed => {
                 write!(f, "Waiting")
             }
+            GamePhase::Unknown => {
+                write!(f, "Unknown")
+            }       
         }
     }
 }
