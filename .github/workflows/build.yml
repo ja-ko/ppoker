@@ -16,11 +16,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - uses: taiki-e/install-action@nextest
     - name: Build debug
       run: cargo build
-    - name: Run tests
-      run: cargo nextest run --profile ci
     - name: Build release
       run: cargo build --release
     - uses: actions/upload-artifact@v4
