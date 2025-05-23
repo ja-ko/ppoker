@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.4](https://github.com/ja-ko/ppoker/compare/v0.5.3...v0.5.4) (2025-05-23)
+
+
+### Bug Fixes
+
+* add support for handling unknown enum variants ([fd243ee](https://github.com/ja-ko/ppoker/commit/fd243ee58b03a53f2747d74d8205a63b48d61bfa))
+
 ## [0.5.3](https://github.com/ja-ko/ppoker/compare/v0.5.2...v0.5.3) (2025-05-16)
 
 
