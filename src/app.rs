@@ -6,8 +6,6 @@ use crate::config::Config;
 use crate::models::{
     GamePhase, LogEntry, LogLevel, LogSource, Player, Room, UserType, Vote, VoteData,
 };
-#[cfg(test)]
-use crate::notification::MockNotificationHandler;
 use crate::notification::NotificationHandler;
 use crate::web::client::{PokerClient, WebPokerClient};
 
@@ -320,6 +318,7 @@ pub mod tests {
     use mockall::predicate::*;
     use std::time::Duration;
     use crate::notification::create_notification_handler;
+    use crate::notification::MockNotificationHandler;
 
     fn create_test_room() -> Room {
         create_test_room_with_deck(vec![

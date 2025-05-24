@@ -46,7 +46,8 @@ impl Page for HistoryPage {
 
     fn input(&mut self, _app: &mut App, event: KeyEvent) -> AppResult<UIAction> {
         return Ok(match event.code {
-            KeyCode::Esc | KeyCode::Char('q') => UIAction::Quit,
+            KeyCode::Char('q') => UIAction::Quit,
+            KeyCode::Esc => UIAction::ChangeView(UiPage::Voting),
             KeyCode::Char(c) if c == 'v' || c == '-' || c == 'h' || c.is_ascii_digit() => {
                 UIAction::ChangeView(UiPage::Voting)
             }

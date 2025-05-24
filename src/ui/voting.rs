@@ -28,6 +28,7 @@ pub enum InputMode {
     Chat,
     RevealConfirm,
     ResetConfirm,
+    QuitConfirm,
     AutoReveal,
 }
 
@@ -140,8 +141,11 @@ impl Page for VotingPage {
         match &self.input_mode {
             InputMode::Menu => {
                 match event.code {
-                    KeyCode::Esc | KeyCode::Char('q') => {
+                    KeyCode::Char('q') => {
                         return Ok(UIAction::Quit);
+                    }
+                    KeyCode::Esc => {
+                        self.input_mode = InputMode::QuitConfirm;
                     }
                     KeyCode::Char(c) if c.is_ascii_digit() => {
                         self.change_mode(InputMode::Vote, c.to_string(), app);
@@ -230,6 +234,16 @@ impl Page for VotingPage {
                 }
                 _ => {}
             },
+            InputMode::QuitConfirm => match event.code {
+                KeyCode::Char('y') | KeyCode::Char('q')| KeyCode::Enter => {
+                    return Ok(UIAction::Quit);
+                }
+                KeyCode::Char('n') | KeyCode::Esc => {
+                    self.input_mode = InputMode::Menu;
+                    return Ok(UIAction::Continue);
+                }
+                _ => {}
+            }
         }
         Ok(UIAction::Continue)
     }
@@ -483,6 +497,9 @@ impl VotingPage {
 
                 frame.render_widget(footer_entries(entries), rect);
             }
+            InputMode::QuitConfirm => {
+                render_confirmation_box("Confirm you want to quit?", rect, frame);
+            }
         }
     }
 
@@ -658,9 +675,9 @@ mod tests {
     use crate::app::tests::create_test_app;
     use crate::models::{GamePhase, Vote, VoteData};
     use crate::ui::tests::{send_input, send_input_with_modifiers, tick};
-    use crate::ui::VotingPage;
+    use crate::ui::{Page, UIAction, VotingPage};
     use crate::web::client::tests::LocalMockPokerClient;
-    use crossterm::event::{KeyCode, KeyModifiers};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use insta::assert_snapshot;
     use ratatui::{backend::TestBackend, Terminal};
     use crate::ui::voting::InputMode;
@@ -849,5 +866,30 @@ mod tests {
         );
         assert_eq!(page.input_mode, InputMode::Menu);
         assert_eq!(page.text_input.text(), "");
+    }
+
+    #[test]
+    fn test_quit_flow() {
+        let mut page = VotingPage::new();
+        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+
+        // Get initial state
+        tick(&mut terminal, &mut page, &mut app);
+        assert_eq!(page.input_mode, InputMode::Menu);
+
+        // Press ESC to trigger quit confirmation dialog
+        send_input(KeyCode::Esc, &mut terminal, &mut page, &mut app);
+        assert_eq!(page.input_mode, InputMode::QuitConfirm);
+        assert_snapshot!("Quit confirmation dialog", terminal.backend());
+
+        // Press 'N' to cancel quit
+        send_input(KeyCode::Char('n'), &mut terminal, &mut page, &mut app);
+        assert_eq!(page.input_mode, InputMode::Menu);
+        assert_snapshot!("After canceling quit", terminal.backend());
+
+        // Press 'q' again to confirm quit (this doesn't show a confirmation dialog)
+        let result = page.input(&mut app, KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty()));
+        assert!(matches!(result, Ok(UIAction::Quit)));
     }
 }
