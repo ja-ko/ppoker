@@ -444,6 +444,7 @@ mod tests {
     use insta::assert_snapshot;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use crossterm::event::KeyCode;
     #[test]
     fn test_parse_changelog_formatting() {
         let page = ChangelogPage {
@@ -552,6 +553,63 @@ mod tests {
         tick(&mut terminal, &mut page, &mut app);
 
         assert_snapshot!("changelog_page", terminal.backend());
+    }
+
+    #[test]
+    fn test_changelog_filtering() {
+        let mock_changelog = r#"## [1.0.0]
+### Major Features
+* Feature A
+* Feature B
+* Feature C
+
+### Bug Fixes
+* Fix A
+* Fix B
+* Fix C
+
+## [0.9.0]
+### Features
+* Feature 1
+* Feature 2
+* Feature 3
+
+### Bug Fixes
+* Fix 1
+* Fix 2
+* Fix 3
+
+## [0.8.0]
+### Features
+* Another Feature 1
+* Another Feature 2
+* Another Feature 3
+
+### Bug Fixes
+* Another Fix 1
+* Another Fix 2
+* Another Fix 3
+"#;
+
+        let mut page = ChangelogPage {
+            scroll_state: ScrollbarState::default(),
+            scroll: 0,
+            content_length: 0,
+            version_from: Some("0.9.0".to_string()),
+            filter_version: false,
+            changelog_content: mock_changelog,
+        };
+        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
+        let mut terminal = Terminal::new(TestBackend::new(80, 30)).unwrap();
+
+        tick(&mut terminal, &mut page, &mut app);
+        assert_snapshot!("changelog_filtering_full", terminal.backend());
+
+        send_input(KeyCode::Char('t'), &mut terminal, &mut page, &mut app);
+        assert_snapshot!("changelog_filtering_filtered", terminal.backend());
+
+        send_input(KeyCode::Char('t'), &mut terminal, &mut page, &mut app);
+        assert_snapshot!("changelog_filtering_full", terminal.backend());
     }
 
     #[test]
