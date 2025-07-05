@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.6](https://github.com/ja-ko/ppoker/compare/v0.5.5...v0.5.6) (2025-07-05)
+
+
+### Bug Fixes
+
+* **update:** Fix broken restart arguments after update ([ea0d506](https://github.com/ja-ko/ppoker/commit/ea0d506844126a5d31ef35aa5d063fcc370a71d9))
+
 ## [0.5.5](https://github.com/ja-ko/ppoker/compare/v0.5.4...v0.5.5) (2025-07-05)
 
 
