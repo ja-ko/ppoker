@@ -44,6 +44,7 @@ pub struct App {
     pub history: Vec<HistoryEntry>,
 
     pub notification_handler: Box<dyn NotificationHandler>,
+    pub has_seen_changelog: bool
 }
 
 impl App {
@@ -68,6 +69,7 @@ impl App {
             history: vec![],
             auto_reveal_at: None,
             notification_handler: Box::new(crate::notification::create_notification_handler()),
+            has_seen_changelog: false,
         };
         result.update_server_log(log);
 
@@ -367,6 +369,7 @@ pub mod tests {
             auto_reveal_at: None,
             history: vec![],
             notification_handler: Box::new(create_notification_handler()),
+            has_seen_changelog: false
         }
     }
 

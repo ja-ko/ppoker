@@ -16,7 +16,7 @@ use crate::app::{App, AppResult};
 use crate::models::{GamePhase, LogLevel, LogSource, Player, UserType, Vote, VoteData};
 use crate::ui::text_input::TextInput;
 use crate::ui::{
-    colored_box_style, footer_entries, format_duration, render_box, render_box_colored,
+    colored_box_style, footer_entries, FooterEntry, format_duration, render_box, render_box_colored,
     render_confirmation_box, trim_name, Page, UIAction, UiPage,
 };
 
@@ -156,6 +156,10 @@ impl Page for VotingPage {
                         self.change_mode(InputMode::Chat, String::new(), app)
                     }
                     KeyCode::Char('n') => self.change_mode(InputMode::Name, app.name.clone(), app),
+                    KeyCode::Char('u') => {
+                        app.has_seen_changelog = true;
+                        return Ok(UIAction::ChangeView(UiPage::Changelog));
+                    },
                     KeyCode::Char('l') => {
                         return Ok(UIAction::ChangeView(UiPage::Log));
                     }
@@ -489,11 +493,28 @@ impl VotingPage {
                 );
             }
             InputMode::Menu => {
-                let entries = if app.room.phase == GamePhase::Playing {
-                    vec!["Vote", "Reveal", "History", "Name change", "Chat", "Quit"]
+                let mut entries = if app.room.phase == GamePhase::Playing {
+                    vec![
+                        FooterEntry { name: "Vote".to_string(), shortcut: 'V', highlight: false },
+                        FooterEntry { name: "Reveal".to_string(), shortcut: 'R', highlight: false },
+                        FooterEntry { name: "History".to_string(), shortcut: 'H', highlight: false },
+                        FooterEntry { name: "Name change".to_string(), shortcut: 'N', highlight: false },
+                        FooterEntry { name: "Chat".to_string(), shortcut: 'C', highlight: false },
+                        FooterEntry { name: "Quit".to_string(), shortcut: 'Q', highlight: false },
+                    ]
                 } else {
-                    vec!["Restart", "History", "Name change", "Chat", "Quit"]
+                    vec![
+                        FooterEntry { name: "Restart".to_string(), shortcut: 'R', highlight: false },
+                        FooterEntry { name: "History".to_string(), shortcut: 'H', highlight: false },
+                        FooterEntry { name: "Name change".to_string(), shortcut: 'N', highlight: false },
+                        FooterEntry { name: "Chat".to_string(), shortcut: 'C', highlight: false },
+                        FooterEntry { name: "Quit".to_string(), shortcut: 'Q', highlight: false },
+                    ]
                 };
+
+                if app.config.changelog_from.is_some() {
+                    entries.insert(entries.len() - 1, FooterEntry { name: "Changelog".to_string(), shortcut: 'U', highlight: !app.has_seen_changelog });
+                }
 
                 frame.render_widget(footer_entries(entries), rect);
             }

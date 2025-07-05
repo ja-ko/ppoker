@@ -17,12 +17,14 @@ mod history;
 mod log;
 mod voting;
 mod text_input;
+pub mod changelog;
 
 #[derive(Debug, PartialEq, Clone, Copy, Hash, Ord, PartialOrd, Eq, Sequence)]
 pub enum UiPage {
     Voting,
     Log,
     History,
+    Changelog,
 }
 
 pub enum UIAction {
@@ -91,34 +93,73 @@ fn render_confirmation_box(prompt: &str, rect: Rect, frame: &mut Frame) {
     frame.render_widget(paragraph, inner);
 }
 
-fn footer_entries(entries: Vec<&str>) -> Paragraph {
-    let mut spans: Vec<Span> = entries
+pub struct FooterEntry {
+    pub name: String,
+    pub shortcut: char,
+    pub highlight: bool,
+}
+
+fn footer_entries(entries: Vec<FooterEntry>) -> Paragraph<'static> {
+    let mut spans: Vec<Span<'static>> = entries
         .iter()
-        .flat_map(|item| {
-            let (first, remaining) = if item.char_indices().into_iter().count() > 1 {
-                let split_idx = item
-                    .char_indices()
-                    .nth(1)
-                    .expect("Unable to split string")
-                    .0;
-                item.split_at(split_idx)
+        .flat_map(|entry| {
+            let name = &entry.name;
+            let shortcut = entry.shortcut;
+            let shortcut_style = Style::default()
+                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::UNDERLINED);
+
+            let mut result = vec![Span::raw(" ")];
+
+            // Check if the name contains the shortcut letter
+            if let Some(pos) = name.to_lowercase().find(shortcut.to_lowercase().next().unwrap_or(shortcut)) {
+                let mut char_indices = name.char_indices();
+                let shortcut_char_start = pos;
+                let shortcut_char_end = char_indices
+                    .find(|(idx, _)| *idx == pos)
+                    .and_then(|(_, c)| Some(pos + c.len_utf8()))
+                    .unwrap_or(pos + 1);
+
+                if shortcut_char_start > 0 {
+                    result.push(Span::raw(name[..shortcut_char_start].to_string()));
+                }
+
+                result.push(Span::styled(
+                    name[shortcut_char_start..shortcut_char_end].to_string(),
+                    shortcut_style
+                ));
+
+                // Add the rest of the name
+                if shortcut_char_end < name.len() {
+                    result.push(Span::raw(name[shortcut_char_end..].to_string()));
+                }
             } else {
-                (*item, "")
-            };
-            vec![
-                Span::raw(" "),
-                Span::styled(
-                    first,
-                    Style::default()
-                        .add_modifier(Modifier::BOLD)
-                        .add_modifier(Modifier::UNDERLINED),
-                ),
-                Span::raw(remaining),
-                Span::raw(" |"),
-            ]
+                // The shortcut isn't in the string, so we add (shortcut) at the end
+                result.push(Span::raw(name.to_string()));
+                result.push(Span::raw(" ("));
+                result.push(Span::styled(
+                    shortcut.to_string(),
+                    shortcut_style
+                ));
+                result.push(Span::raw(")"));
+            }
+
+            if entry.highlight {
+                result = result.into_iter().map(|span| {
+                    let content = span.content.to_string();
+                    let new_style = span.style.fg(Color::Yellow);
+                    Span::styled(content, new_style)
+                }).collect();
+            }
+            result.push(Span::raw(" |"));
+
+            result
         })
         .collect();
-    spans.remove(spans.len() - 1);
+
+    if !spans.is_empty() {
+        spans.remove(spans.len() - 1);
+    }
 
     Paragraph::new(vec![Line::from(""), Line::from(spans)])
 }
@@ -148,7 +189,7 @@ pub mod tests {
         page.input(app, KeyEvent::new(key, KeyModifiers::empty())).unwrap();
         tick(terminal, page, app);
     }
-    
+
     pub fn send_input_with_modifiers<P: Page>(key: KeyCode, modifier: KeyModifiers, terminal: &mut Terminal<TestBackend>, page: &mut P, app: &mut App) {
         page.input(app, KeyEvent::new(key, modifier)).unwrap();
         tick(terminal, page, app);

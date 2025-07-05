@@ -32,7 +32,7 @@ fn setup_logging() -> AppResult<()> {
     const MAX_LOGFILES: usize = 20;
     tui_logger::init_logger(LevelFilter::Debug).expect("Unable to setup logging capture");
     tui_logger::set_default_level(LevelFilter::Debug);
-    
+
     let filename_regex = Regex::new(r"main-(?P<index>\d+)\.log")?;
     let log_dir = get_logdir();
     if !log_dir.exists() {
@@ -41,9 +41,10 @@ fn setup_logging() -> AppResult<()> {
     let mut existing_files: Vec<PathBuf> = glob(log_dir.join("main-*.log").to_str().unwrap())?
         .map(|f| f.unwrap())
         .collect();
-    existing_files.sort_by_cached_key(|f| {
-        let metadata = fs::metadata(f).unwrap();
-        return FileTime::from_creation_time(&metadata);
+    existing_files.sort_by_cached_key(|file_path| {
+        fs::metadata(file_path)
+            .ok()
+            .and_then(|metadata| FileTime::from_creation_time(&metadata))
     });
 
     let delete_files = existing_files.len().checked_sub(MAX_LOGFILES).unwrap_or(0);
@@ -86,6 +87,7 @@ fn setup() -> AppResult<Option<(App, Tui<CrosstermBackend<Stderr>>)>> {
     setup_logging().unwrap_or_else(|err| error!("Failed to setup logging: {:?}", err));
 
     let config = get_config();
+    let tui_config = config.clone();
 
     if !config.skip_update_check {
         let res = self_update(&config);
@@ -114,7 +116,7 @@ fn setup() -> AppResult<Option<(App, Tui<CrosstermBackend<Stderr>>)>> {
     let backend = CrosstermBackend::new(io::stderr());
     let terminal = Terminal::new(backend)?;
     let events = EventHandler::new(250);
-    let mut tui = Tui::new(terminal, events);
+    let mut tui = Tui::new(terminal, events, tui_config);
     tui.init()?;
 
     Ok(Some((app, tui)))
@@ -148,7 +150,7 @@ mod tests {
     #[test]
     fn setup_logging_test() -> AppResult<()> {
         let temp_dir = TempDir::new()?;
-        
+
         // Override log directory for testing
         with_var("HOME", Some(temp_dir.path().to_str().unwrap()), || {
             setup_logging().unwrap();

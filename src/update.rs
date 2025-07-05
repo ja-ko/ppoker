@@ -1,9 +1,7 @@
-mod changelog;
-mod changelog_renderer;
-
 use std::fs;
 use std::io::{stdin, stdout, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process;
 
 use crate::config::Config;
 use log::{debug, error, info};
@@ -14,6 +12,7 @@ use snafu::Snafu;
 #[cfg(test)]
 use mockall::{automock, predicate::*};
 use self_update::self_replace::self_replace;
+use subprocess::{Exec};
 
 const GITHUB_OWNER: &str = "ja-ko";
 const GITHUB_REPO: &str = "ppoker";
@@ -104,25 +103,29 @@ impl CrateVersion for DefaultCrateVersion {
     }
 }
 
-fn display_changelog<W: std::io::Write>(
-    url: &str,
-    current_version: &str,
-    target_version: &str,
-    stdout: &mut W,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let changelog = changelog::fetch_changelog(url)?;
-    let current_version = Version::parse(current_version)?;
-    let target_version = Version::parse(target_version)?;
+#[cfg_attr(test, automock)]
+pub trait Restarter {
+    fn restart(&self, exe_path: &PathBuf);
+}
 
-    let sections = changelog::parse_changelog(&changelog, &current_version, &target_version);
-    if !sections.is_empty() {
-        writeln!(stdout, "\nChangelog:")?;
-        for section in sections {
-            changelog_renderer::render_changelog(&section.content, stdout)?;
-        }
+struct DefaultRestarter;
+
+impl Default for DefaultRestarter {
+    fn default() -> Self {
+        Self
     }
+}
 
-    Ok(())
+impl Restarter for DefaultRestarter {
+    fn restart(&self, exe_path: &PathBuf) {
+        println!("{}", exe_path.to_str().unwrap());
+        Exec::cmd(exe_path)
+            .arg(format!("--changelog-from {}", cargo_crate_version!()))
+            .popen()
+            .expect("Failed to start new binary");
+        info!("Successfully executed updated binary, exiting.");
+        process::exit(0);
+    }
 }
 
 pub fn self_update(config: &Config) -> Result<UpdateResult, UpdateError> {
@@ -132,16 +135,20 @@ pub fn self_update(config: &Config) -> Result<UpdateResult, UpdateError> {
         &mut BufReader::new(stdin()),
         &DefaultCrateVersion::default(),
         &DefaultBinaryOperations::default(),
+        &DefaultRestarter::default(),
     )
 }
 
 fn self_update_impl<W: std::io::Write, R: std::io::BufRead>(
     config: &Config,
-    mut stdout: &mut W,
+    stdout: &mut W,
     stdin: &mut R,
     version_provider: &impl CrateVersion,
     binary_ops: &impl BinaryOperations,
+    restarter: &impl Restarter,
 ) -> Result<UpdateResult, UpdateError> {
+    let exe_path = std::env::current_exe()?;
+
     let update = self_update::backends::github::Update::configure()
         .repo_owner(GITHUB_OWNER)
         .repo_name(GITHUB_REPO)
@@ -192,35 +199,25 @@ fn self_update_impl<W: std::io::Write, R: std::io::BufRead>(
     )?;
     writeln!(stdout, "  * Download url: {}", asset.download_url)?;
 
-    // Try to fetch and display changelog
-    let changelog_url = format!(
-        "https://raw.githubusercontent.com/{}/{}/v{}/CHANGELOG.md",
-        GITHUB_OWNER, GITHUB_REPO, latest_release.version
-    );
-
-    match display_changelog(
-        &changelog_url,
-        update.current_version().as_str(),
-        latest_release.version.as_str(),
-        &mut stdout,
-    ) {
-        Ok(_) => (),
-        Err(e) => debug!("Failed to fetch/parse changelog: {}", e),
-    }
-
     writeln!(
         stdout,
         "\nThe new release will be downloaded and the existing binary will be replaced."
     )?;
-    write!(stdout, "\nDo you want to continue? [Y/n] ")?;
-    stdout.flush()?;
 
-    let mut response = String::new();
-    stdin.read_line(&mut response)?;
-    let response = response.trim().to_lowercase();
-    if !response.is_empty() && response != "y" {
-        info!("User aborted update.");
-        return Err(UpdateError::UserCanceled);
+    if !config.always_update {
+        write!(stdout, "\nDo you want to continue? [Y/n] ")?;
+        stdout.flush()?;
+
+        let mut response = String::new();
+        stdin.read_line(&mut response)?;
+        let response = response.trim().to_lowercase();
+        if !response.is_empty() && response != "y" {
+            info!("User aborted update.");
+            return Err(UpdateError::UserCanceled);
+        }
+    } else {
+        writeln!(stdout, "\nAutomatic update enabled, proceeding with update...")?;
+        info!("Automatic update in progress");
     }
 
     let tmp_dir = tempfile::TempDir::new()?;
@@ -259,8 +256,14 @@ fn self_update_impl<W: std::io::Write, R: std::io::BufRead>(
     binary_ops.self_replace(binary.as_path())?;
     info!("Update to v{} done.", latest_release.version);
 
-    Ok(UpdateResult::Updated)
+    let result = UpdateResult::Updated;
+
+    info!("Update successful, restarting application...");
+    restarter.restart(&exe_path);
+
+    Ok(result)
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -274,14 +277,16 @@ mod tests {
         mock_config.keep_backup_on_update = true;
 
         let mut output = Vec::new();
-        
+
         let mut mock_version = MockCrateVersion::new();
         mock_version
             .expect_version()
             .return_const("0.0.1".to_string());
 
         let mut mock_binary_ops = MockBinaryOperations::default();
+        let mut mock_restarter = MockRestarter::new();
         let mut input = Cursor::new("y\n");
+        let exe_path = std::env::current_exe().unwrap();
 
         mock_binary_ops
             .expect_backup_binary()
@@ -296,12 +301,20 @@ mod tests {
             }))
             .returning(|_| Ok(()));
 
+        // Expect restart to be called exactly once with the correct executable path
+        mock_restarter
+            .expect_restart()
+            .times(1)
+            .with(predicate::eq(exe_path))
+            .returning(|_| ());
+
         let result = self_update_impl(
             &mock_config,
             &mut output,
             &mut input,
             &mock_version,
             &mock_binary_ops,
+            &mock_restarter,
         );
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), UpdateResult::Updated);
@@ -321,6 +334,7 @@ mod tests {
             .return_const("999.0.0".to_string());
 
         let mock_binary_ops = MockBinaryOperations::default();
+        let mock_restarter = MockRestarter::new();
         let mut input = Cursor::new("");
 
         let result = self_update_impl(
@@ -329,8 +343,9 @@ mod tests {
             &mut input,
             &mock_version,
             &mock_binary_ops,
+            &mock_restarter,
         );
-        
+
         assert_eq!(result.unwrap(), UpdateResult::UpToDate);
 
         let output_str = String::from_utf8(output).unwrap();
@@ -353,6 +368,7 @@ mod tests {
             .times(0)
             .returning(|_| Ok(()));
 
+        let mock_restarter = MockRestarter::new();
         let mut input = Cursor::new("n\n");
 
         let result = self_update_impl(
@@ -361,6 +377,7 @@ mod tests {
             &mut input,
             &mock_version,
             &mock_binary_ops,
+            &mock_restarter,
         );
 
         assert!(matches!(result, Err(UpdateError::UserCanceled)));

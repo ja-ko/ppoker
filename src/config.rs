@@ -40,6 +40,11 @@ pub struct Cli {
     #[arg(short = 'N', long)]
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(crate) disable_notifications: bool,
+
+    /// Display a changelog between the current version and the given version.
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) changelog_from: Option<String>,
 }
 
 impl Default for Cli {
@@ -51,6 +56,7 @@ impl Default for Cli {
             disable_auto_reveal: false,
             disable_notifications: false,
             skip_update_check: false,
+            changelog_from: None,
         }
     }
 }
@@ -64,6 +70,8 @@ pub struct Config {
     pub disable_notifications: bool,
     pub disable_auto_reveal: bool,
     pub keep_backup_on_update: bool,
+    pub always_update: bool,
+    pub changelog_from: Option<String>,
 }
 
 impl Default for Config {
@@ -76,6 +84,8 @@ impl Default for Config {
             disable_notifications: false,
             disable_auto_reveal: false,
             keep_backup_on_update: true,
+            always_update: false,
+            changelog_from: None,
         }
     }
 }

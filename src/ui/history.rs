@@ -8,7 +8,7 @@ use crate::app::{App, AppResult, HistoryEntry};
 use crate::models::GamePhase;
 use crate::ui::voting::{format_vote, render_overview, render_own_vote};
 use crate::ui::{
-    colored_box_style, footer_entries, format_duration, render_box, render_box_colored, Page,
+    colored_box_style, footer_entries, FooterEntry, format_duration, render_box, render_box_colored, Page,
     UIAction, UiPage,
 };
 
@@ -100,11 +100,14 @@ impl HistoryPage {
     }
 
     fn render_footer(&mut self, app: &mut App, rect: Rect, frame: &mut Frame) {
-        let entries = vec!["Vote", "↑", "↓", "Quit"];
-        let mut footer = footer_entries(entries);
-        if app.has_updates {
-            footer = footer.style(Style::new().yellow());
-        }
+        let entries = vec![
+            FooterEntry { name: "Vote".to_string(), shortcut: 'V', highlight: app.has_updates },
+            FooterEntry { name: "↑".to_string(), shortcut: '↑', highlight: false },
+            FooterEntry { name: "↓".to_string(), shortcut: '↓', highlight: false },
+            FooterEntry { name: "Quit".to_string(), shortcut: 'Q', highlight: false },
+        ];
+
+        let footer = footer_entries(entries);
         frame.render_widget(footer, rect);
     }
 

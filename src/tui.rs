@@ -10,11 +10,13 @@ use log::debug;
 use ratatui::prelude::*;
 
 use crate::app::{App, AppResult};
+use crate::config::{Config};
 use crate::events::{Event, EventHandler, FocusChange};
 use crate::ui::HistoryPage;
 use crate::ui::LogPage;
 use crate::ui::VotingPage;
 use crate::ui::{Page, UIAction, UiPage};
+use crate::ui::changelog::ChangelogPage;
 
 pub struct Tui<B: Backend> {
     terminal: Terminal<B>,
@@ -24,7 +26,7 @@ pub struct Tui<B: Backend> {
 }
 
 impl<B: Backend> Tui<B> {
-    pub fn new(terminal: Terminal<B>, events: EventHandler) -> Self {
+    pub fn new(terminal: Terminal<B>, events: EventHandler, config: Config) -> Self {
         let mut pages: HashMap<UiPage, Box<dyn Page>> = HashMap::new();
         enum_iterator::all::<UiPage>().for_each(|page| match page {
             UiPage::Voting => {
@@ -35,6 +37,9 @@ impl<B: Backend> Tui<B> {
             }
             UiPage::History => {
                 pages.insert(page, Box::new(HistoryPage::new()));
+            }
+            UiPage::Changelog => {
+                pages.insert(page, Box::new(ChangelogPage::new(config.changelog_from.clone())));
             }
         });
         Self {
@@ -145,7 +150,7 @@ mod tests {
     fn create_test_tui() -> (Tui<TestBackend>, App) {
         let terminal = create_test_terminal();
         let events = EventHandler::new(100);
-        let tui = Tui::new(terminal, events);
+        let tui = Tui::new(terminal, events, Config::default());
         let app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
         (tui, app)
     }
