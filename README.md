@@ -78,4 +78,5 @@ disable_auto_reveal = false
 skip_update_check = false
 disable_notifications = false
 keep_backup_on_update = true
+always_update = false
 ```
