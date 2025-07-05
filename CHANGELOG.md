@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.5](https://github.com/ja-ko/ppoker/compare/v0.5.4...v0.5.5) (2025-07-05)
+
+
+### Features
+
+* allow backing out of `history` via `ESC` ([28798a8](https://github.com/ja-ko/ppoker/commit/28798a8cc3e48f4e6d8b557ac7bfdc7774dff64f)), closes [#68](https://github.com/ja-ko/ppoker/issues/68)
+* **changelog:** New changelog view from inside the app ([e09ed80](https://github.com/ja-ko/ppoker/commit/e09ed8000f6f20edbf36231ebe4d450e06638809)), closes [#74](https://github.com/ja-ko/ppoker/issues/74)
+
 ## [0.5.4](https://github.com/ja-ko/ppoker/compare/v0.5.3...v0.5.4) (2025-05-23)
 
 

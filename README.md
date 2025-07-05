@@ -19,9 +19,9 @@ Download the current version for your operating system from
 
 <!-- x-release-please-start-version -->
 
-* [Linux](https://github.com/ja-ko/ppoker/releases/download/v0.5.4/ppoker-x86_64-unknown-linux-gnu.tar.gz)
-* [Windows](https://github.com/ja-ko/ppoker/releases/download/v0.5.4/ppoker-x86_64-pc-windows-msvc.zip)
-* [Mac](https://github.com/ja-ko/ppoker/releases/download/v0.5.4/ppoker-x86_64-apple-darwin.tar.gz)
+* [Linux](https://github.com/ja-ko/ppoker/releases/download/v0.5.5/ppoker-x86_64-unknown-linux-gnu.tar.gz)
+* [Windows](https://github.com/ja-ko/ppoker/releases/download/v0.5.5/ppoker-x86_64-pc-windows-msvc.zip)
+* [Mac](https://github.com/ja-ko/ppoker/releases/download/v0.5.5/ppoker-x86_64-apple-darwin.tar.gz)
 
 <!-- x-release-please-end -->
 
