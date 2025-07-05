@@ -120,7 +120,8 @@ impl Restarter for DefaultRestarter {
     fn restart(&self, exe_path: &PathBuf) {
         println!("{}", exe_path.to_str().unwrap());
         Exec::cmd(exe_path)
-            .arg(format!("--changelog-from {}", cargo_crate_version!()))
+            .arg("--changelog-from")
+            .arg(format!("{}", cargo_crate_version!()))
             .popen()
             .expect("Failed to start new binary");
         info!("Successfully executed updated binary, exiting.");
