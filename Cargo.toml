@@ -45,7 +45,7 @@ self_update = { version = "0.42", features = ["archive-tar", "compression-flate2
 pretty_assertions = { version = "1", features = ["unstable"] }
 assert-json-diff = "2"
 mockall = "0.14"
-insta = "1.44.3"
+insta = "1.45.0"
 temp-env = "0.3"
 
 [profile.release]
