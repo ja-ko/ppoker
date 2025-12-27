@@ -9,13 +9,13 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ratatui = { version = "0.29", features = ["unstable-rendered-line-info"] }
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 crossterm = { version = "0.29", features = ["event-stream"] }
 notify-rust = "4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tungstenite = { version = "0.28", features = ["native-tls"] }
-tui-big-text = "0.7"
+tui-big-text = "0.8"
 urlencoding = "2"
 log = "0.4"
 snafu = "0.8"
@@ -45,7 +45,7 @@ self_update = { version = "0.42", features = ["archive-tar", "compression-flate2
 pretty_assertions = { version = "1", features = ["unstable"] }
 assert-json-diff = "2"
 mockall = "0.14"
-insta = "1.44.3"
+insta = "1.45.0"
 temp-env = "0.3"
 
 [profile.release]
