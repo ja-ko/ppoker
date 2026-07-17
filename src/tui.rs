@@ -10,7 +10,7 @@ use log::debug;
 use ratatui::prelude::*;
 
 use crate::app::{App, AppResult};
-use crate::config::{Config};
+use crate::config::Config;
 use crate::events::{Event, EventHandler, FocusChange};
 use crate::ui::HistoryPage;
 use crate::ui::LogPage;
@@ -25,7 +25,10 @@ pub struct Tui<B: Backend> {
     pages: HashMap<UiPage, Box<dyn Page>>,
 }
 
-impl<B: Backend> Tui<B> {
+impl<B: Backend> Tui<B>
+where
+    B::Error: 'static,
+{
     pub fn new(terminal: Terminal<B>, events: EventHandler, config: Config) -> Self {
         let mut pages: HashMap<UiPage, Box<dyn Page>> = HashMap::new();
         enum_iterator::all::<UiPage>().for_each(|page| match page {
