@@ -6,13 +6,14 @@ use std::process;
 use crate::config::Config;
 use log::{debug, error, info};
 use self_update::{cargo_crate_version, Extract};
+use self_update::update::{Release, ReleaseAsset, ReleaseUpdate};
 use semver::Version;
 use snafu::Snafu;
 
 #[cfg(test)]
 use mockall::{automock, predicate::*};
 use self_update::self_replace::self_replace;
-use subprocess::{Exec};
+use subprocess::Exec;
 
 const GITHUB_OWNER: &str = "ja-ko";
 const GITHUB_REPO: &str = "ppoker";
@@ -85,21 +86,81 @@ impl BinaryOperations for DefaultBinaryOperations {
 }
 
 #[cfg_attr(test, automock)]
-trait CrateVersion {
-    fn version(&self) -> &str;
+trait UpdateOperations {
+    fn current_version(&self) -> String;
+    fn target(&self) -> String;
+    fn bin_name(&self) -> String;
+    fn bin_install_path(&self) -> PathBuf;
+    fn get_latest_release(&self) -> Result<Release, self_update::errors::Error>;
+    fn download_and_extract(
+        &self,
+        asset: &ReleaseAsset,
+        tmp_dir: &Path,
+        filename: &str,
+    ) -> Result<PathBuf, UpdateError>;
 }
 
-struct DefaultCrateVersion;
+struct DefaultUpdateOperations {
+    update: Box<dyn ReleaseUpdate>,
+}
 
-impl Default for DefaultCrateVersion {
-    fn default() -> Self {
-        Self
+impl DefaultUpdateOperations {
+    fn new(current_version: &str) -> Result<Self, self_update::errors::Error> {
+        let update = self_update::backends::github::Update::configure()
+            .repo_owner(GITHUB_OWNER)
+            .repo_name(GITHUB_REPO)
+            .bin_name(GITHUB_REPO)
+            .show_download_progress(true)
+            .current_version(current_version)
+            .show_output(false)
+            .bin_path_in_archive(BIN_PATH_TEMPLATE)
+            .build()?;
+        Ok(Self { update })
     }
 }
 
-impl CrateVersion for DefaultCrateVersion {
-    fn version(&self) -> &str {
-        cargo_crate_version!()
+impl UpdateOperations for DefaultUpdateOperations {
+    fn current_version(&self) -> String {
+        self.update.current_version()
+    }
+
+    fn target(&self) -> String {
+        self.update.target()
+    }
+
+    fn bin_name(&self) -> String {
+        self.update.bin_name()
+    }
+
+    fn bin_install_path(&self) -> PathBuf {
+        self.update.bin_install_path()
+    }
+
+    fn get_latest_release(&self) -> Result<Release, self_update::errors::Error> {
+        self.update.get_latest_release()
+    }
+
+    fn download_and_extract(
+        &self,
+        asset: &ReleaseAsset,
+        tmp_dir: &Path,
+        filename: &str,
+    ) -> Result<PathBuf, UpdateError> {
+        let tmp_tarball_path = tmp_dir.join(&asset.name);
+        let tmp_tarball = fs::File::create(&tmp_tarball_path)?;
+
+        info!("Downloading release asset to {:?}.", tmp_tarball_path);
+        self_update::Download::from_url(&asset.download_url)
+            .set_header(
+                reqwest::header::ACCEPT,
+                "application/octet-stream".parse().unwrap(),
+            )
+            .show_progress(true)
+            .download_to(&tmp_tarball)?;
+
+        info!("Extracting {} from archive.", filename);
+        Extract::from_source(&tmp_tarball_path).extract_file(tmp_dir, filename)?;
+        Ok(tmp_dir.join(filename))
     }
 }
 
@@ -122,7 +183,8 @@ impl Restarter for DefaultRestarter {
         Exec::cmd(exe_path)
             .arg("--changelog-from")
             .arg(format!("{}", cargo_crate_version!()))
-            .popen()
+            .detached()
+            .start()
             .expect("Failed to start new binary");
         info!("Successfully executed updated binary, exiting.");
         process::exit(0);
@@ -130,11 +192,12 @@ impl Restarter for DefaultRestarter {
 }
 
 pub fn self_update(config: &Config) -> Result<UpdateResult, UpdateError> {
+    let update = DefaultUpdateOperations::new(cargo_crate_version!())?;
     self_update_impl(
         config,
         &mut stdout(),
         &mut BufReader::new(stdin()),
-        &DefaultCrateVersion::default(),
+        &update,
         &DefaultBinaryOperations::default(),
         &DefaultRestarter::default(),
     )
@@ -144,21 +207,11 @@ fn self_update_impl<W: std::io::Write, R: std::io::BufRead>(
     config: &Config,
     stdout: &mut W,
     stdin: &mut R,
-    version_provider: &impl CrateVersion,
+    update: &impl UpdateOperations,
     binary_ops: &impl BinaryOperations,
     restarter: &impl Restarter,
 ) -> Result<UpdateResult, UpdateError> {
     let exe_path = std::env::current_exe()?;
-
-    let update = self_update::backends::github::Update::configure()
-        .repo_owner(GITHUB_OWNER)
-        .repo_name(GITHUB_REPO)
-        .bin_name(GITHUB_REPO)
-        .show_download_progress(true)
-        .current_version(version_provider.version())
-        .show_output(false)
-        .bin_path_in_archive(BIN_PATH_TEMPLATE)
-        .build()?;
 
     debug!(
         "Current binary: v{} - {}",
@@ -222,24 +275,8 @@ fn self_update_impl<W: std::io::Write, R: std::io::BufRead>(
     }
 
     let tmp_dir = tempfile::TempDir::new()?;
-    let tmp_tarball_path = tmp_dir.path().join(&asset.name);
-    let tmp_tarball = ::std::fs::File::create(&tmp_tarball_path)?;
-
-    info!("Downloading release asset to {:?}.", tmp_tarball_path);
-
-    self_update::Download::from_url(&asset.download_url)
-        .set_header(
-            reqwest::header::ACCEPT,
-            "application/octet-stream".parse().unwrap(),
-        )
-        .show_progress(true)
-        .download_to(&tmp_tarball)?;
-
     let path_in_archive = format!("ppoker-{}/{}", update.target(), update.bin_name());
-    let filename = path_in_archive.as_str();
-    info!("Extracting {} from archive.", filename);
-    Extract::from_source(&tmp_tarball_path).extract_file(tmp_dir.path(), filename)?;
-    let binary = tmp_dir.path().join(filename);
+    let binary = update.download_and_extract(&asset, tmp_dir.path(), &path_in_archive)?;
 
     info!(
         "Replacing binary file {:?} with {:?}",
@@ -272,6 +309,34 @@ mod tests {
     use mockall::predicate;
     use std::io::Cursor;
 
+    fn mock_update(current_version: &str, latest_version: &str) -> MockUpdateOperations {
+        let target = self_update::get_target().to_owned();
+        let latest_version = latest_version.to_owned();
+        let mut update = MockUpdateOperations::new();
+        update
+            .expect_current_version()
+            .return_const(current_version.to_owned());
+        update.expect_target().return_const(target.clone());
+        update
+            .expect_bin_name()
+            .return_const(GITHUB_REPO.to_owned());
+        update
+            .expect_bin_install_path()
+            .returning(|| std::env::current_exe().unwrap());
+        update.expect_get_latest_release().return_once(move || {
+            Ok(Release {
+                name: "Test release".to_owned(),
+                version: latest_version,
+                assets: vec![ReleaseAsset {
+                    download_url: "https://example.com/ppoker.tar.gz".to_owned(),
+                    name: format!("ppoker-{target}.tar.gz"),
+                }],
+                ..Release::default()
+            })
+        });
+        update
+    }
+
     #[test]
     fn test_self_update() {
         let mut mock_config = Config::default();
@@ -279,11 +344,16 @@ mod tests {
 
         let mut output = Vec::new();
 
-        let mut mock_version = MockCrateVersion::new();
-        mock_version
-            .expect_version()
-            .return_const("0.0.1".to_string());
-
+        let mut mock_update = mock_update("0.0.1", "1.0.0");
+        mock_update
+            .expect_download_and_extract()
+            .times(1)
+            .returning(|_, tmp_dir, filename| {
+                let binary = tmp_dir.join(filename);
+                fs::create_dir_all(binary.parent().unwrap())?;
+                fs::write(&binary, b"test binary")?;
+                Ok(binary)
+            });
         let mut mock_binary_ops = MockBinaryOperations::default();
         let mut mock_restarter = MockRestarter::new();
         let mut input = Cursor::new("y\n");
@@ -313,7 +383,7 @@ mod tests {
             &mock_config,
             &mut output,
             &mut input,
-            &mock_version,
+            &mock_update,
             &mock_binary_ops,
             &mock_restarter,
         );
@@ -329,11 +399,7 @@ mod tests {
         let mock_config = Config::default();
         let mut output = Vec::new();
 
-        let mut mock_version = MockCrateVersion::new();
-        mock_version
-            .expect_version()
-            .return_const("999.0.0".to_string());
-
+        let mock_update = mock_update("999.0.0", "1.0.0");
         let mock_binary_ops = MockBinaryOperations::default();
         let mock_restarter = MockRestarter::new();
         let mut input = Cursor::new("");
@@ -342,7 +408,7 @@ mod tests {
             &mock_config,
             &mut output,
             &mut input,
-            &mock_version,
+            &mock_update,
             &mock_binary_ops,
             &mock_restarter,
         );
@@ -358,11 +424,7 @@ mod tests {
         let mock_config = Config::default();
         let mut output = Vec::new();
 
-        let mut mock_version = MockCrateVersion::new();
-        mock_version
-            .expect_version()
-            .return_const("0.0.1".to_string());
-
+        let mock_update = mock_update("0.0.1", "1.0.0");
         let mut mock_binary_ops = MockBinaryOperations::default();
         mock_binary_ops
             .expect_self_replace()
@@ -376,7 +438,7 @@ mod tests {
             &mock_config,
             &mut output,
             &mut input,
-            &mock_version,
+            &mock_update,
             &mock_binary_ops,
             &mock_restarter,
         );

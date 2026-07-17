@@ -77,7 +77,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            name: whoami::username(),
+            name: whoami::username().unwrap_or_else(|_| "unknown".to_owned()),
             room: petname::petname(3, "").expect("Failed to generate random room name"),
             server: "wss://pp.discordia.network/".to_owned(),
             skip_update_check: false,

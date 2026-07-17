@@ -13,7 +13,7 @@ expression: terminal.backend()
 "                                                                               █"
 "Bug Fixes                                                                      █"
 "* Fix A                                                                        █"
-"* Fix B                                                                        █"
+"* Fix B                                                                        ║"
 "* Fix C                                                                        ║"
 "* Fix D                                                                        ║"
 "* Fix E                                                                        ║"
