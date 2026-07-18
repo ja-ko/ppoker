@@ -4,8 +4,8 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Cell, Row, Table, TableState};
 use ratatui::Frame;
 
-use crate::app::{App, AppResult, HistoryEntry};
-use crate::models::GamePhase;
+use crate::app::{App, AppResult};
+use crate::models::{GamePhase, HistoryEntry};
 use crate::ui::voting::{format_vote, render_overview, render_own_vote};
 use crate::ui::{
     colored_box_style, footer_entries, FooterEntry, format_duration, render_box, render_box_colored, Page,
@@ -26,7 +26,7 @@ impl HistoryPage {
 
 impl Page for HistoryPage {
     fn render(&mut self, app: &mut App, frame: &mut Frame) {
-        if self.history_state.selected().is_none() && app.history.len() > 0 {
+        if self.history_state.selected().is_none() && !app.history().is_empty() {
             self.history_state.select(Some(0));
         }
 
@@ -54,8 +54,8 @@ impl Page for HistoryPage {
             KeyCode::Down => {
                 if let Some(s) = self.history_state.selected() {
                     let mut new_index = s.saturating_add(1);
-                    if new_index >= _app.history.len() {
-                        new_index = _app.history.len().saturating_sub(1);
+                    if new_index >= _app.history().len() {
+                        new_index = _app.history().len().saturating_sub(1);
                     }
                     self.history_state.select(Some(new_index));
                 }
@@ -81,12 +81,12 @@ impl HistoryPage {
         let [vote_summary, players] =
             Layout::vertical([Constraint::Length(9), Constraint::Fill(1)]).areas(detail);
 
-        let current_entry = self.history_state.selected().map(|idx| &app.history[idx]);
+        let current_entry = self.history_state.selected().map(|idx| &app.history()[idx]);
 
         if let Some(current_entry) = current_entry {
             render_own_vote(
                 &current_entry.votes,
-                current_entry.average,
+                current_entry.average.unwrap_or(f32::NAN),
                 GamePhase::Revealed,
                 &current_entry.own_vote,
                 &current_entry.deck,
@@ -115,12 +115,12 @@ impl HistoryPage {
         let inner = render_box("History", rect, frame);
 
         let rows: Vec<Row> = app
-            .history
+            .history()
             .iter()
             .map(|entry| {
                 Row::new(vec![
                     Cell::from(Span::raw(entry.round_number.to_string())),
-                    Cell::from(Span::raw(format!("{:.1}", entry.average))),
+                    Cell::from(Span::raw(format!("{:.1}", entry.average.unwrap_or(f32::NAN)))),
                     Cell::from(Span::raw(format_duration(&entry.length))),
                 ])
             })

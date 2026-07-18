@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::fmt::Formatter;
+use std::time::Duration;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum VoteData {
@@ -90,6 +91,25 @@ pub struct Room {
     pub deck: Vec<String>,
     pub phase: GamePhase,
     pub players: Vec<Player>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct LogEntry {
+    pub timestamp: Duration,
+    pub level: LogLevel,
+    pub message: String,
+    pub source: LogSource,
+    pub server_index: Option<u32>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct HistoryEntry {
+    pub round_number: u32,
+    pub average: Option<f32>,
+    pub length: Duration,
+    pub votes: Vec<Player>,
+    pub deck: Vec<String>,
+    pub own_vote: Option<VoteData>,
 }
 
 fn vote_rank(vote: &Vote) -> i32 {

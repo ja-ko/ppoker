@@ -399,23 +399,23 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 
 #### Implementation
 
-- [ ] [IMPLEMENTER] Extract the smallest shared behavior from existing `PokerClient`/`App` code.
-- [ ] [IMPLEMENTER] Introduce the shared transport boundary and mandatory monotonic clock used by both native and WASM clients.
-- [ ] [IMPLEMENTER] Preserve the existing native `tungstenite` socket behind the shared transport boundary and add a deterministic fake transport. Keep concrete browser WebSocket code out of `ppoker-core`.
-- [ ] [IMPLEMENTER] Move authoritative room state, protocol/activity logging, round tracking, completed-round history, and statistics into `ppoker-core`.
-- [ ] [IMPLEMENTER] Keep native notifications, focus, changelog, auto reveal, diagnostic logging, and their state and delivery outside `ppoker-core`.
-- [ ] [IMPLEMENTER] Keep native `App` methods and TUI reads as close to their original form as practical.
-- [ ] [IMPLEMENTER] Add explicit participant/spectator connection input without global spectator read-only policy.
-- [ ] [IMPLEMENTER] Preserve native Ping behavior without requiring browser Ping support.
-- [ ] [IMPLEMENTER] Do not add reconnect, pending-command, effect/reducer, or notification-event systems.
+- [x] [IMPLEMENTER] Extract the smallest shared behavior from existing `PokerClient`/`App` code.
+- [x] [IMPLEMENTER] Introduce the shared transport boundary and mandatory monotonic clock used by both native and WASM clients.
+- [x] [IMPLEMENTER] Preserve the existing native `tungstenite` socket behind the shared transport boundary and add a deterministic fake transport. Keep concrete browser WebSocket code out of `ppoker-core`.
+- [x] [IMPLEMENTER] Move authoritative room state, protocol/activity logging, round tracking, completed-round history, and statistics into `ppoker-core`.
+- [x] [IMPLEMENTER] Keep native notifications, focus, changelog, auto reveal, diagnostic logging, and their state and delivery outside `ppoker-core`.
+- [x] [IMPLEMENTER] Keep native `App` methods and TUI reads as close to their original form as practical.
+- [x] [IMPLEMENTER] Add explicit participant/spectator connection input without global spectator read-only policy.
+- [x] [IMPLEMENTER] Preserve native Ping behavior without requiring browser Ping support.
+- [x] [IMPLEMENTER] Do not add reconnect, pending-command, effect/reducer, or notification-event systems.
 
 #### Acceptance
 
-- [ ] [TEST] Existing native tests and snapshots pass unchanged.
-- [ ] [TEST] Deterministic fake transport tests pass without sleeps or network.
-- [ ] [TEST] Existing native live WSS tests pass in their existing organization.
-- [ ] [TEST] Core client checks for native and `wasm32-unknown-unknown`.
-- [ ] [TEST] Rust coverage is measured and targets at least 80% in every Rust metric without enforcement.
+- [x] [TEST] Existing native tests and snapshots pass unchanged.
+- [x] [TEST] Deterministic fake transport tests pass without sleeps or network.
+- [x] [TEST] Existing native live WSS tests pass in their existing organization.
+- [x] [TEST] Core client checks for native and `wasm32-unknown-unknown`.
+- [x] [TEST] Rust coverage is measured and targets at least 80% in every Rust metric without enforcement.
 - [ ] [REVIEW] A reviewer can trace moved native behavior directly into the shared code.
 
 ### Slice 4: Typed WASM Facade

@@ -2,7 +2,10 @@ use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
 use log::{debug, info};
-use ppoker_core::protocol::{build_room_url, decode_room_snapshot, ConnectionRole, RoomSnapshot};
+use ppoker_core::client::{Transport, TransportEvent};
+use ppoker_core::protocol::{build_room_url, ConnectionRole};
+#[cfg(test)]
+use ppoker_core::protocol::{decode_room_snapshot, RoomSnapshot};
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
@@ -13,8 +16,10 @@ use crate::config::Config;
 pub struct PokerSocket {
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
     last_ping: Instant,
+    opened_pending: bool,
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 pub enum IncomingMessage {
     Close,
@@ -48,6 +53,7 @@ impl PokerSocket {
         Ok(Self {
             socket,
             last_ping: Instant::now(),
+            opened_pending: true,
         })
     }
 
@@ -57,6 +63,7 @@ impl PokerSocket {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn read(&mut self) -> AppResult<Option<IncomingMessage>> {
         if Instant::now() - self.last_ping > Duration::from_secs(30) {
             self.ping()?;
@@ -91,6 +98,7 @@ impl PokerSocket {
         Ok(None)
     }
 
+    #[cfg(test)]
     pub fn read_all(&mut self) -> AppResult<Vec<IncomingMessage>> {
         let mut result = vec![];
         loop {
@@ -108,6 +116,56 @@ impl PokerSocket {
         self.last_ping = Instant::now();
 
         Ok(())
+    }
+}
+
+impl Transport for PokerSocket {
+    fn poll_event(&mut self) -> Option<TransportEvent> {
+        if self.opened_pending {
+            self.opened_pending = false;
+            return Some(TransportEvent::Opened);
+        }
+        if Instant::now() - self.last_ping > Duration::from_secs(30) {
+            if let Err(error) = self.ping() {
+                return Some(TransportEvent::Error(error.to_string()));
+            }
+        }
+
+        match self.socket.read() {
+            Err(tungstenite::Error::Io(error))
+                if error.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                None
+            }
+            Err(error) => Some(TransportEvent::Error(error.to_string())),
+            Ok(Message::Text(text)) => {
+                debug!("Got message from server: {}", text);
+                Some(TransportEvent::Text(text.to_string()))
+            }
+            Ok(Message::Binary(data)) => Some(TransportEvent::Binary { length: data.len() }),
+            Ok(Message::Close(_)) => {
+                debug!("Server closed connection.");
+                Some(TransportEvent::Closed)
+            }
+            Ok(Message::Ping(data)) => {
+                debug!("Ping: {:?}", data);
+                None
+            }
+            Ok(Message::Pong(data)) => {
+                debug!("Pong: {:?}", data);
+                None
+            }
+            Ok(Message::Frame(_)) => None,
+        }
+    }
+
+    fn send_text(&mut self, message: String) -> Result<(), String> {
+        self.send_request(message)
+            .map_err(|error| error.to_string())
+    }
+
+    fn close(&mut self) {
+        let _ = self.socket.close(None);
     }
 }
 

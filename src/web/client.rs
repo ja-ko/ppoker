@@ -2,147 +2,68 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use log::{error, info};
-use ppoker_core::protocol::{
-    encode_change_name, encode_chat_message, encode_retract_vote, encode_reveal_cards,
-    encode_start_new_round, encode_vote, ServerLogEntry,
-};
+use ppoker_core::client::{Clock, WebPokerClient};
+use ppoker_core::protocol::RoomSnapshot;
 use snafu::Snafu;
 
 use crate::app::AppResult;
 use crate::config::Config;
-use crate::models::{LogEntry, LogSource, Room};
-use crate::web::client::ClientError::{ServerClosedConnection, ServerUpdateMissing};
-use crate::web::ws::{IncomingMessage, PokerSocket};
+use crate::web::client::ClientError::ServerUpdateMissing;
+use crate::web::ws::PokerSocket;
+
+pub use ppoker_core::client::PokerClient;
 
 #[derive(Debug, Snafu)]
 pub enum ClientError {
     #[snafu(display("Server did not send room update in time."))]
     ServerUpdateMissing,
-    #[snafu(display("Server closed connection."))]
-    ServerClosedConnection,
 }
 
-#[cfg_attr(test, mockall::automock)]
-pub trait PokerClient {
-    fn get_updates(&mut self) -> AppResult<(Vec<Room>, Vec<LogEntry>)>;
-    fn vote<'a>(&mut self, card_value: Option<&'a str>) -> AppResult<()>;
-    fn change_name<'a>(&mut self, name: &'a str) -> AppResult<()>;
-    fn chat<'a>(&mut self, message: &'a str) -> AppResult<()>;
-    fn reveal(&mut self) -> AppResult<()>;
-    fn reset(&mut self) -> AppResult<()>;
+pub struct NativeClock {
+    baseline: Instant,
 }
 
-#[derive(Debug)]
-pub struct WebPokerClient {
-    pub socket: PokerSocket,
-}
-
-impl WebPokerClient {
-    pub fn new(config: &Config) -> AppResult<(Self, Room, Vec<LogEntry>)> {
-        let mut result = Self {
-            socket: PokerSocket::connect(config)?,
-        };
-        for i in 0..20 {
-            let room_update = result.socket.read()?;
-            if let Some(IncomingMessage::RoomUpdate(snapshot)) = room_update {
-                info!("Got initial room state with delay {}ms.", i * 20);
-                return Ok((
-                    result,
-                    snapshot.room,
-                    snapshot.log.iter().map(native_log_entry).collect(),
-                ));
-            } else {
-                thread::sleep(Duration::from_millis(20));
-            }
-        }
-
-        error!("Server did not send initial room update.");
-        return Err(Box::new(ServerUpdateMissing));
-    }
-}
-
-impl PokerClient for WebPokerClient {
-    fn get_updates(&mut self) -> AppResult<(Vec<Room>, Vec<LogEntry>)> {
-        let messages = self.socket.read_all()?;
-        let mut result = vec![];
-        let mut log_results = vec![];
-
-        for message in messages {
-            match &message {
-                IncomingMessage::Close => {
-                    info!("Server closed connection. Terminating.");
-                    return Err(Box::new(ServerClosedConnection));
-                }
-                IncomingMessage::RoomUpdate(snapshot) => {
-                    append_server_log_entries(&mut log_results, &snapshot.log);
-                    result.push(snapshot.room.clone());
-                }
-            }
-        }
-
-        Ok((result, log_results))
-    }
-
-    fn vote(&mut self, card_value: Option<&str>) -> AppResult<()> {
-        let request = match card_value {
-            Some(card_value) => encode_vote(card_value)?,
-            None => encode_retract_vote()?,
-        };
-        self.socket.send_request(request)?;
-
-        Ok(())
-    }
-
-    fn change_name(&mut self, name: &str) -> AppResult<()> {
-        self.socket.send_request(encode_change_name(name)?)
-    }
-
-    fn chat(&mut self, message: &str) -> AppResult<()> {
-        self.socket.send_request(encode_chat_message(message)?)
-    }
-
-    fn reveal(&mut self) -> AppResult<()> {
-        self.socket.send_request(encode_reveal_cards()?)
-    }
-
-    fn reset(&mut self) -> AppResult<()> {
-        self.socket.send_request(encode_start_new_round()?)
-    }
-}
-
-fn native_log_entry(entry: &ServerLogEntry) -> LogEntry {
-    LogEntry {
-        timestamp: Instant::now(),
-        level: entry.level,
-        message: entry.message.clone(),
-        source: LogSource::Server,
-        server_index: Some(entry.server_index),
-    }
-}
-
-fn append_server_log_entries(result: &mut Vec<LogEntry>, entries: &[ServerLogEntry]) {
-    for entry in entries {
-        if !result
-            .iter()
-            .any(|existing| existing.server_index == Some(entry.server_index))
-        {
-            result.push(native_log_entry(entry));
+impl NativeClock {
+    pub fn new() -> Self {
+        Self {
+            baseline: Instant::now(),
         }
     }
+}
+
+impl Clock for NativeClock {
+    fn now(&self) -> Duration {
+        self.baseline.elapsed()
+    }
+}
+
+pub fn connect(config: &Config) -> AppResult<(WebPokerClient, RoomSnapshot)> {
+    let mut result = WebPokerClient::new();
+    result.connect(Box::new(PokerSocket::connect(config)?))?;
+    for i in 0..20 {
+        if let Some(snapshot) = result.get_update()? {
+            info!("Got initial room state with delay {}ms.", i * 20);
+            return Ok((result, snapshot));
+        } else {
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    error!("Server did not send initial room update.");
+    Err(Box::new(ServerUpdateMissing))
 }
 
 #[cfg(test)]
 pub mod tests {
-    use super::{append_server_log_entries, PokerClient, WebPokerClient};
-    use crate::app::AppResult;
-    use crate::models::{
-        GamePhase, LogEntry, LogLevel, LogSource, Player, Room, UserType, Vote, VoteData,
-    };
-    use ppoker_core::protocol::decode_room_snapshot;
-    use std::collections::HashMap;
-    use std::thread;
-    use std::time::{Duration, Instant};
+    use super::{connect, NativeClock, PokerClient};
     use crate::config::Config;
+    use crate::models::{GamePhase, LogLevel, Player, Room, UserType, Vote, VoteData};
+    use ppoker_core::client::{ClientResult, Session};
+    use ppoker_core::protocol::{decode_room_snapshot, RoomSnapshot, ServerLogEntry};
+    use std::collections::HashMap;
+    use std::rc::Rc;
+    use std::thread;
+    use std::time::Duration;
 
     #[derive(Debug, Clone)]
     struct LocalUser {
@@ -158,7 +79,7 @@ pub mod tests {
         other_users: HashMap<String, LocalUser>,
         cards_revealed: bool,
         pending_updates: Vec<Room>,
-        log_entries: Vec<LogEntry>,
+        log_entries: Vec<ServerLogEntry>,
         next_user_id: u32,
     }
 
@@ -206,12 +127,10 @@ pub mod tests {
         }
 
         fn add_log_entry(&mut self, message: &str) {
-            let entry = LogEntry {
-                timestamp: Instant::now(),
+            let entry = ServerLogEntry {
                 level: LogLevel::Info,
                 message: message.to_string(),
-                source: LogSource::Server,
-                server_index: Some(self.log_entries.len() as u32),
+                server_index: self.log_entries.len() as u32,
             };
             self.log_entries.push(entry);
         }
@@ -354,12 +273,22 @@ pub mod tests {
     }
 
     impl PokerClient for LocalMockPokerClient {
-        fn get_updates(&mut self) -> AppResult<(Vec<Room>, Vec<LogEntry>)> {
-            let rooms = std::mem::take(&mut self.pending_updates);
-            Ok((rooms, self.log_entries.clone()))
+        fn ensure_ready(&self) -> ClientResult<()> {
+            Ok(())
         }
 
-        fn vote(&mut self, card_value: Option<&str>) -> AppResult<()> {
+        fn get_updates(&mut self) -> ClientResult<Vec<RoomSnapshot>> {
+            let rooms = std::mem::take(&mut self.pending_updates);
+            Ok(rooms
+                .into_iter()
+                .map(|room| RoomSnapshot {
+                    room,
+                    log: self.log_entries.clone(),
+                })
+                .collect())
+        }
+
+        fn vote(&mut self, card_value: Option<&str>) -> ClientResult<()> {
             let name = self.current_user.name.clone();
             self.current_user.vote_state = match card_value {
                 Some(value) => {
@@ -380,7 +309,7 @@ pub mod tests {
             Ok(())
         }
 
-        fn change_name(&mut self, name: &str) -> AppResult<()> {
+        fn change_name(&mut self, name: &str) -> ClientResult<()> {
             let old_name = self.current_user.name.clone();
             self.current_user.name = name.to_string();
             self.add_log_entry(&format!("{} changed their name to {}", old_name, name));
@@ -388,13 +317,13 @@ pub mod tests {
             Ok(())
         }
 
-        fn chat(&mut self, message: &str) -> AppResult<()> {
+        fn chat(&mut self, message: &str) -> ClientResult<()> {
             self.add_log_entry(&format!("{}: {}", self.current_user.name, message));
             self.queue_room_update();
             Ok(())
         }
 
-        fn reveal(&mut self) -> AppResult<()> {
+        fn reveal(&mut self) -> ClientResult<()> {
             if !self.cards_revealed {
                 self.cards_revealed = true;
 
@@ -404,7 +333,7 @@ pub mod tests {
             Ok(())
         }
 
-        fn reset(&mut self) -> AppResult<()> {
+        fn reset(&mut self) -> ClientResult<()> {
             self.cards_revealed = false;
             // Clear all votes
             self.current_user.vote_state = Vote::Missing;
@@ -417,6 +346,8 @@ pub mod tests {
             self.queue_room_update();
             Ok(())
         }
+
+        fn close(&mut self) {}
     }
 
     #[test]
@@ -452,13 +383,14 @@ pub mod tests {
             }"#,
         )
         .unwrap();
-        let mut logs = vec![];
-
-        append_server_log_entries(&mut logs, &initial.log);
-        append_server_log_entries(&mut logs, &appended.log);
+        let mut session = Session::new("Alice".to_string(), Rc::new(NativeClock::new()));
+        session.apply_room_snapshot(initial);
+        session.apply_room_snapshot(appended);
 
         assert_eq!(
-            logs.iter()
+            session
+                .log()
+                .iter()
                 .map(|entry| (entry.server_index, entry.message.as_str()))
                 .collect::<Vec<_>>(),
             [
@@ -483,8 +415,8 @@ pub mod tests {
         client.user_vote(&bob_id, Some("?"));
 
         // Get updates and verify initial state
-        let (rooms, _logs) = client.get_updates().unwrap();
-        let latest_room = rooms.last().unwrap();
+        let rooms = client.get_updates().unwrap();
+        let latest_room = &rooms.last().unwrap().room;
 
         assert_eq!(latest_room.players.len(), 2);
 
@@ -499,8 +431,8 @@ pub mod tests {
         client.reveal().unwrap();
 
         // Get updates and verify revealed votes
-        let (rooms, _) = client.get_updates().unwrap();
-        let latest_room = rooms.last().unwrap();
+        let rooms = client.get_updates().unwrap();
+        let latest_room = &rooms.last().unwrap().room;
 
         // Both votes should be revealed now
         assert!(matches!(
@@ -515,8 +447,8 @@ pub mod tests {
         client.reset().unwrap();
 
         // Get updates and verify votes are cleared
-        let (rooms, _) = client.get_updates().unwrap();
-        let latest_room = rooms.last().unwrap();
+        let rooms = client.get_updates().unwrap();
+        let latest_room = &rooms.last().unwrap().room;
 
         assert!(matches!(&latest_room.players[0].vote, Vote::Missing)); // Alice's vote cleared
         assert!(matches!(&latest_room.players[1].vote, Vote::Missing)); // Bob's vote cleared
@@ -536,8 +468,8 @@ pub mod tests {
         client.user_vote(&bob_id, Some("8"));
 
         // Check initial state
-        let (rooms, _) = client.get_updates().unwrap();
-        let room = rooms.last().unwrap();
+        let rooms = client.get_updates().unwrap();
+        let room = &rooms.last().unwrap().room;
         assert!(matches!(
             &room.players[0].vote,
             Vote::Revealed(VoteData::Number(5))
@@ -548,8 +480,8 @@ pub mod tests {
         client.vote(Some("13")).unwrap();
 
         // Check updated state
-        let (rooms, _) = client.get_updates().unwrap();
-        let room = rooms.last().unwrap();
+        let rooms = client.get_updates().unwrap();
+        let room = &rooms.last().unwrap().room;
         assert!(matches!(
             &room.players[0].vote,
             Vote::Revealed(VoteData::Number(13))
@@ -560,8 +492,8 @@ pub mod tests {
         client.reveal().unwrap();
 
         // Check final state
-        let (rooms, _) = client.get_updates().unwrap();
-        let room = rooms.last().unwrap();
+        let rooms = client.get_updates().unwrap();
+        let room = &rooms.last().unwrap().room;
         assert!(matches!(
             &room.players[0].vote,
             Vote::Revealed(VoteData::Number(13))
@@ -586,7 +518,8 @@ pub mod tests {
         client.user_change_name(&bob_id, "Bobby");
 
         // Get updates and verify logs
-        let (_, logs) = client.get_updates().unwrap();
+        let updates = client.get_updates().unwrap();
+        let logs = &updates.last().unwrap().log;
 
         // Should contain 3 messages: join, chat, name change
         assert_eq!(logs.len(), 4);
@@ -599,15 +532,16 @@ pub mod tests {
     #[test]
     fn test_voting_and_chat() {
         let config = Config::default();
-        let (mut client1, _, _) = WebPokerClient::new(&config).expect("Failed to create client 1");
-        let (mut client2, _, _) = WebPokerClient::new(&config).expect("Failed to create client 2");
+        let (mut client1, _) = connect(&config).expect("Failed to create client 1");
+        let (mut client2, _) = connect(&config).expect("Failed to create client 2");
 
         // Let's have client1 vote and send a chat message
         client1.vote(Some("5")).expect("Failed to vote");
         client1
             .chat("Hello from client 1!")
             .expect("Failed to send chat");
-        thread::sleep(Duration::from_millis(10)); // work around a race condition in the server
+        // Work around a race condition in the server.
+        thread::sleep(Duration::from_millis(10));
         // Client2 votes as well
         client2.vote(Some("3")).expect("Failed to vote");
 
@@ -615,10 +549,10 @@ pub mod tests {
         thread::sleep(Duration::from_millis(250));
 
         // Get updates for both clients
-        let (rooms1, logs1) = client1
+        let rooms1 = client1
             .get_updates()
             .expect("Failed to get updates for client 1");
-        let (rooms2, _) = client2
+        let rooms2 = client2
             .get_updates()
             .expect("Failed to get updates for client 2");
 
@@ -626,8 +560,8 @@ pub mod tests {
         assert!(!rooms1.is_empty(), "Expected at least one room1 update");
         // Check room state - use the last update as it represents the final state
         assert!(!rooms2.is_empty(), "Expected at least one room2 update");
-        let room = &rooms1[rooms1.len() - 1];
-        let room2 = &rooms2[rooms2.len() - 1];
+        let room = &rooms1[rooms1.len() - 1].room;
+        let room2 = &rooms2[rooms2.len() - 1].room;
         assert_eq!(room.players.len(), 2, "Expected 2 users in the room");
 
         // Find client1's vote
@@ -656,16 +590,19 @@ pub mod tests {
         );
 
         // Check chat messages - use the last log as it should contain our message
+        let logs1 = &rooms1[rooms1.len() - 1].log;
         assert!(!logs1.is_empty(), "Expected at least one chat message");
         assert!(
-            logs1[logs1.len() - 1].message.contains("Hello from client 1!"),
+            logs1[logs1.len() - 1]
+                .message
+                .contains("Hello from client 1!"),
             "Chat message not found in log entries"
         );
 
         // Both clients should see the same final room state
         assert_eq!(
-            rooms1[rooms1.len() - 1].players.len(),
-            rooms2[rooms2.len() - 1].players.len(),
+            rooms1[rooms1.len() - 1].room.players.len(),
+            rooms2[rooms2.len() - 1].room.players.len(),
             "Room state inconsistent between clients"
         );
     }

@@ -78,7 +78,7 @@ impl Page for VotingPage {
         let log = chunks[1];
 
         let (votes, spectators) = if app
-            .room
+            .room()
             .players
             .iter()
             .any(|p| p.user_type == UserType::Spectator)
@@ -92,23 +92,22 @@ impl Page for VotingPage {
             (left_side, None)
         };
 
-        if app.room.phase != self.last_phase {
+        if app.room().phase != self.last_phase {
             if self.input_mode != InputMode::Name {
                 self.input_mode = InputMode::Menu;
             }
-            self.last_phase = app.room.phase;
+            self.last_phase = app.room().phase;
         }
 
-        match app.room.phase {
-            GamePhase::Revealed if app.history.len() > 0 => {
+        match app.room().phase {
+            GamePhase::Revealed if !app.history().is_empty() => {
                 let entry = app
-                    .history
-                    .as_slice()
+                    .history()
                     .last()
                     .expect("Can't get last item of history.");
                 render_own_vote(
                     &entry.votes,
-                    entry.average,
+                    entry.average.unwrap_or(f32::NAN),
                     GamePhase::Revealed,
                     &entry.own_vote,
                     &entry.deck,
@@ -118,11 +117,11 @@ impl Page for VotingPage {
             }
             _ => {
                 render_own_vote(
-                    &app.room.players,
+                    &app.room().players,
                     app.average_votes(),
-                    app.room.phase,
-                    &app.vote,
-                    &app.room.deck,
+                    app.room().phase,
+                    app.own_vote(),
+                    &app.room().deck,
                     vote_view,
                     frame,
                 );
@@ -155,7 +154,9 @@ impl Page for VotingPage {
                     KeyCode::Char('c') if !event.modifiers.contains(KeyModifiers::CONTROL) => {
                         self.change_mode(InputMode::Chat, String::new(), app)
                     }
-                    KeyCode::Char('n') => self.change_mode(InputMode::Name, app.name.clone(), app),
+                    KeyCode::Char('n') => {
+                        self.change_mode(InputMode::Name, app.name().to_string(), app)
+                    }
                     KeyCode::Char('u') => {
                         app.has_seen_changelog = true;
                         return Ok(UIAction::ChangeView(UiPage::Changelog));
@@ -164,8 +165,8 @@ impl Page for VotingPage {
                         return Ok(UIAction::ChangeView(UiPage::Log));
                     }
                     KeyCode::Char('r') => {
-                        if app.room.phase == GamePhase::Playing {
-                            if app.room.players.iter().any(|p| {
+                        if app.room().phase == GamePhase::Playing {
+                            if app.room().players.iter().any(|p| {
                                 p.user_type != UserType::Spectator && p.vote == Vote::Missing
                             }) {
                                 self.input_mode = InputMode::RevealConfirm;
@@ -281,7 +282,7 @@ impl VotingPage {
     }
 
     pub fn change_mode(&mut self, mode: InputMode, default_text: String, app: &App) {
-        if mode == InputMode::Vote && app.room.phase == GamePhase::Playing {
+        if mode == InputMode::Vote && app.room().phase == GamePhase::Playing {
             self.start_input(mode, default_text)
         } else if mode == InputMode::Name || mode == InputMode::Chat {
             self.start_input(mode, default_text)
@@ -297,7 +298,7 @@ impl VotingPage {
         let buffer = VotingPage::sanitize_string(self.text_input.text());
 
         match self.input_mode {
-            InputMode::Vote if app.room.phase == GamePhase::Playing => {
+            InputMode::Vote if app.room().phase == GamePhase::Playing => {
                 app.vote(buffer.as_str())?;
                 self.cancel_input();
             }
@@ -321,13 +322,13 @@ impl VotingPage {
     }
 
     fn render_votes(&mut self, app: &mut App, rect: Rect, frame: &mut Frame) {
-        let rect = render_box_colored("Players", colored_box_style(app.room.phase), rect, frame);
+        let rect = render_box_colored("Players", colored_box_style(app.room().phase), rect, frame);
 
         let mut longest_name: usize = 0;
 
-        let mut players = app.room.players.clone();
+        let mut players = app.room().players.clone();
         players.retain(|p| p.user_type == UserType::Player);
-        if app.room.phase == GamePhase::Revealed {
+        if app.room().phase == GamePhase::Revealed {
             players.sort();
         } else {
             players.sort_by(|p, p2| p.name.cmp(&p2.name))
@@ -348,7 +349,7 @@ impl VotingPage {
 
                 Row::new(vec![
                     Cell::from(Span::styled(name, player_color)),
-                    Cell::from(format_vote(&player.vote, &app.vote)),
+                    Cell::from(format_vote(&player.vote, app.own_vote())),
                 ])
             })
             .collect();
@@ -371,11 +372,11 @@ impl VotingPage {
     }
 
     fn render_spectators(&mut self, app: &mut App, rect: Rect, frame: &mut Frame) {
-        let rect = render_box_colored("Spectators", colored_box_style(app.room.phase), rect, frame);
+        let rect = render_box_colored("Spectators", colored_box_style(app.room().phase), rect, frame);
 
         let mut longest_name: usize = 0;
 
-        let mut spectators = app.room.players.clone();
+        let mut spectators = app.room().players.clone();
         spectators.retain(|p| p.user_type == UserType::Spectator);
         spectators.sort();
 
@@ -389,7 +390,7 @@ impl VotingPage {
 
                 Row::new(vec![
                     Cell::from(Span::styled(name, Style::new())),
-                    Cell::from(format_vote(&spectator.vote, &app.vote)),
+                    Cell::from(format_vote(&spectator.vote, app.own_vote())),
                 ])
             })
             .collect();
@@ -406,11 +407,11 @@ impl VotingPage {
     }
 
     fn render_log(&mut self, app: &mut App, rect: Rect, frame: &mut Frame) {
-        let rect = render_box_colored("Log", colored_box_style(app.room.phase), rect, frame);
+        let rect = render_box_colored("Log", colored_box_style(app.room().phase), rect, frame);
 
         let entries: Vec<ListItem> = app
-            .log
-            .iter()
+            .activity_log()
+            .into_iter()
             .map(|logentry| {
                 let color = match logentry.level {
                     LogLevel::Chat => Style::new().light_blue(),
@@ -451,7 +452,7 @@ impl VotingPage {
 
                 self.render_text_input("Vote", layout[0], frame);
                 let mut spans: Vec<Span> = app
-                    .room
+                    .room()
                     .deck
                     .iter()
                     .flat_map(|item| vec![Span::raw(" "), Span::raw(item.clone()), Span::raw(" |")])
@@ -493,7 +494,7 @@ impl VotingPage {
                 );
             }
             InputMode::Menu => {
-                let mut entries = if app.room.phase == GamePhase::Playing {
+                let mut entries = if app.room().phase == GamePhase::Playing {
                     vec![
                         FooterEntry { name: "Vote".to_string(), shortcut: 'V', highlight: false },
                         FooterEntry { name: "Reveal".to_string(), shortcut: 'R', highlight: false },
@@ -623,30 +624,30 @@ pub(super) fn render_own_vote(
 pub(super) fn render_overview(app: &mut App, rect: Rect, frame: &mut Frame) {
     let rect = render_box("Overview", rect, frame);
 
-    let name = trim_name(app.name.as_str());
-    let state_color = if app.room.phase == GamePhase::Playing {
+    let name = trim_name(app.name());
+    let state_color = if app.room().phase == GamePhase::Playing {
         Style::new().yellow()
     } else {
         Style::new().light_blue()
     };
 
-    let duration = if app.room.phase == GamePhase::Revealed && app.history.len() > 0 {
-        format_duration(&app.history[app.history.len() - 1].length)
+    let duration = if app.room().phase == GamePhase::Revealed && !app.history().is_empty() {
+        format_duration(&app.history()[app.history().len() - 1].length)
     } else {
-        format_duration(&(Instant::now() - app.round_start))
+        format_duration(&app.round_elapsed())
     };
 
     let mut text = Line::from(vec![
         Span::raw("Name: "),
         Span::raw(name).bold(),
         Span::raw(" | Room: "),
-        Span::raw(app.room.name.as_str()).bold(),
+        Span::raw(app.room().name.as_str()).bold(),
         Span::raw(" | Server: "),
         Span::raw(app.config.server.as_str()).bold(),
         Span::raw(" | State: "),
-        Span::raw(format!("{}", app.room.phase)).style(state_color.bold()),
+        Span::raw(format!("{}", app.room().phase)).style(state_color.bold()),
         Span::raw(" | Round: "),
-        Span::raw(app.round_number.to_string()).bold(),
+        Span::raw(app.round_number().to_string()).bold(),
         Span::raw(format!(" ({})", duration)),
     ]);
 
@@ -744,7 +745,7 @@ mod tests {
 
         // Get initial room state
         tick(&mut terminal, &mut page, &mut app);
-        assert!(!app.room.players.is_empty());
+        assert!(!app.room().players.is_empty());
 
         // Send a number key event
         send_input(KeyCode::Char('5'), &mut terminal, &mut page, &mut app);
@@ -752,7 +753,7 @@ mod tests {
 
         // Verify vote was registered
         assert!(matches!(
-            app.room.players[0].vote,
+            app.room().players[0].vote,
             Vote::Revealed(VoteData::Number(5))
         ));
         assert_snapshot!("After voting", terminal.backend());
@@ -761,7 +762,7 @@ mod tests {
         send_input(KeyCode::Char('r'), &mut terminal, &mut page, &mut app);
 
         // Verify cards are revealed
-        assert_eq!(app.room.phase, GamePhase::Revealed);
+        assert_eq!(app.room().phase, GamePhase::Revealed);
         assert_snapshot!("After reveal", terminal.backend());
 
         // Press 'r' again to restart
@@ -772,8 +773,8 @@ mod tests {
         send_input(KeyCode::Enter, &mut terminal, &mut page, &mut app);
 
         // Verify game was reset
-        assert_eq!(app.room.phase, GamePhase::Playing);
-        assert!(matches!(app.room.players[0].vote, Vote::Missing));
+        assert_eq!(app.room().phase, GamePhase::Playing);
+        assert!(matches!(app.room().players[0].vote, Vote::Missing));
         assert_snapshot!("After restart", terminal.backend());
     }
 
@@ -788,7 +789,7 @@ mod tests {
 
         // Get initial room state
         tick(&mut terminal, &mut page, &mut app);
-        assert_eq!(app.room.players.len(), 2);
+        assert_eq!(app.room().players.len(), 2);
 
         // Vote with local user
         send_input(KeyCode::Char('5'), &mut terminal, &mut page, &mut app);
@@ -798,14 +799,14 @@ mod tests {
         send_input(KeyCode::Char('r'), &mut terminal, &mut page, &mut app);
 
         // Verify still in playing phase
-        assert_eq!(app.room.phase, GamePhase::Playing);
+        assert_eq!(app.room().phase, GamePhase::Playing);
         assert_snapshot!("Reveal confirmation", terminal.backend());
 
         // Cancel reveal
         send_input(KeyCode::Char('n'), &mut terminal, &mut page, &mut app);
 
         // Verify still in playing phase
-        assert_eq!(app.room.phase, GamePhase::Playing);
+        assert_eq!(app.room().phase, GamePhase::Playing);
         assert_snapshot!("After cancel", terminal.backend());
     }
 
@@ -854,7 +855,10 @@ mod tests {
         send_input(KeyCode::Enter, &mut terminal, &mut page, &mut app);
 
         // Verify message appears in log
-        assert!(app.log.iter().any(|entry| entry.message.contains("Hello!")));
+        assert!(app
+            .activity_log()
+            .iter()
+            .any(|entry| entry.message.contains("Hello!")));
         assert_snapshot!("After sending chat", terminal.backend());
     }
 
