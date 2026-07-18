@@ -1,3 +1,8 @@
+[workspace]
+members = [".", "crates/ppoker-core"]
+default-members = ["."]
+resolver = "2"
+
 [package]
 name = "ppoker"
 description = "Client for planning poker - https://github.com/sne11ius/pp"
@@ -9,6 +14,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ppoker-core = { path = "crates/ppoker-core" }
 ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 crossterm = { version = "0.29", features = ["event-stream"] }
 notify-rust = "4"
