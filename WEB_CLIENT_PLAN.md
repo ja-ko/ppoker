@@ -424,20 +424,20 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 
 #### Implementation
 
-- [ ] [IMPLEMENTER] Add `ppoker-wasm` with a thin typed facade over the portable client.
-- [ ] [IMPLEMENTER] Add the concrete `web-sys::WebSocket` transport with retained callbacks and deterministic terminal cleanup.
-- [ ] [IMPLEMENTER] Generate structured TypeScript types without handwritten domain duplication.
-- [ ] [IMPLEMENTER] Add structured JS errors and safe option conversion.
-- [ ] [IMPLEMENTER] Exclude notification, focus, changelog, auto-reveal, diagnostic-log, and speculative contracts from the generated API.
-- [ ] [IMPLEMENTER] Ignore generated wasm-pack output.
+- [x] [IMPLEMENTER] Add `ppoker-wasm` with a thin typed facade over the portable client.
+- [x] [IMPLEMENTER] Add the concrete `web-sys::WebSocket` transport with retained callbacks and deterministic terminal cleanup.
+- [x] [IMPLEMENTER] Generate structured TypeScript types without handwritten domain duplication.
+- [x] [IMPLEMENTER] Add structured JS errors and safe option conversion.
+- [x] [IMPLEMENTER] Exclude notification, focus, changelog, auto-reveal, diagnostic-log, and speculative contracts from the generated API.
+- [x] [IMPLEMENTER] Ignore generated wasm-pack output.
 
 #### Acceptance
 
-- [ ] [TEST] Native facade unit tests pass.
-- [ ] [TEST] `wasm-pack build` succeeds from a clean output directory.
-- [ ] [TEST] Headless browser wasm-bindgen tests pass.
-- [ ] [TEST] `wasm-pack build` emits the expected generated declaration file; strict TypeScript consumption is validated in Slice 5.
-- [ ] [TEST] Rust coverage is measured and targets at least 80% in every Rust metric without enforcement.
+- [x] [TEST] Native facade unit tests pass.
+- [x] [TEST] `wasm-pack build` succeeds from a clean output directory.
+- [x] [TEST] Headless browser wasm-bindgen tests pass.
+- [x] [TEST] `wasm-pack build` emits the expected generated declaration file; strict TypeScript consumption is validated in Slice 5.
+- [x] [TEST] Rust coverage is measured and targets at least 80% in every Rust metric without enforcement.
 - [ ] [REVIEW] The facade contains conversion/lifecycle code only, not duplicated client behavior.
 
 ### Slice 5: pnpm TypeScript Client Package

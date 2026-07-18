@@ -146,6 +146,12 @@ impl WebPokerClient {
         self.terminal_error.as_ref()
     }
 
+    pub fn fail_transport(&mut self, message: impl Into<String>) -> ClientError {
+        let error = ClientError::transport(message);
+        self.finish(Some(error.clone()));
+        error
+    }
+
     pub fn get_update(&mut self) -> ClientResult<Option<RoomSnapshot>> {
         if let Some(error) = self.pending_error.take() {
             return Err(error);
@@ -845,6 +851,26 @@ mod tests {
         let error = failed_send.chat("hello").unwrap_err();
         assert_eq!(error.code, ClientErrorCode::Transport);
         assert_eq!(send_state.borrow().closes, 1);
+    }
+
+    #[test]
+    fn transport_creation_failures_can_be_recorded_before_connect() {
+        let mut client = WebPokerClient::new();
+
+        let error = client.fail_transport("socket construction failed");
+
+        assert_eq!(error.code, ClientErrorCode::Transport);
+        assert_eq!(client.status(), ConnectionStatus::Closed);
+        assert_eq!(client.terminal_error(), Some(&error));
+        assert_eq!(
+            client
+                .connect(Box::new(FakeTransport(Rc::new(RefCell::new(
+                    FakeTransportState::default()
+                )))))
+                .unwrap_err()
+                .code,
+            ClientErrorCode::Closed
+        );
     }
 
     #[test]
