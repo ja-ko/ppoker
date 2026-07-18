@@ -1,14 +1,17 @@
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use log::{error, info};
+use ppoker_core::protocol::{
+    encode_change_name, encode_chat_message, encode_retract_vote, encode_reveal_cards,
+    encode_start_new_round, encode_vote, ServerLogEntry,
+};
 use snafu::Snafu;
 
 use crate::app::AppResult;
 use crate::config::Config;
-use crate::models::{LogEntry, Room};
+use crate::models::{LogEntry, LogSource, Room};
 use crate::web::client::ClientError::{ServerClosedConnection, ServerUpdateMissing};
-use crate::web::dto::UserRequest;
 use crate::web::ws::{IncomingMessage, PokerSocket};
 
 #[derive(Debug, Snafu)]
@@ -41,20 +44,12 @@ impl WebPokerClient {
         };
         for i in 0..20 {
             let room_update = result.socket.read()?;
-            if let Some(IncomingMessage::RoomUpdate(room)) = room_update {
+            if let Some(IncomingMessage::RoomUpdate(snapshot)) = room_update {
                 info!("Got initial room state with delay {}ms.", i * 20);
                 return Ok((
                     result,
-                    (&room).into(),
-                    (&room.log)
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, l)| {
-                            let mut result: LogEntry = l.try_into().ok()?;
-                            result.server_index = Some(i as u32);
-                            Some(result)
-                        })
-                        .collect(),
+                    snapshot.room,
+                    snapshot.log.iter().map(native_log_entry).collect(),
                 ));
             } else {
                 thread::sleep(Duration::from_millis(20));
@@ -78,16 +73,9 @@ impl PokerClient for WebPokerClient {
                     info!("Server closed connection. Terminating.");
                     return Err(Box::new(ServerClosedConnection));
                 }
-                IncomingMessage::RoomUpdate(room) => {
-                    let logs: Vec<LogEntry> = room.log.iter().filter_map(|l| l.try_into().ok()).collect();
-                    for i in 0..logs.len() {
-                        if log_results.len() == i {
-                            let mut entry = logs[i].clone();
-                            entry.server_index = Some(i as u32);
-                            log_results.push(entry);
-                        }
-                    }
-                    result.push(room.into());
+                IncomingMessage::RoomUpdate(snapshot) => {
+                    append_server_log_entries(&mut log_results, &snapshot.log);
+                    result.push(snapshot.room.clone());
                 }
             }
         }
@@ -96,37 +84,61 @@ impl PokerClient for WebPokerClient {
     }
 
     fn vote(&mut self, card_value: Option<&str>) -> AppResult<()> {
-        self.socket
-            .send_request(UserRequest::PlayCard { card_value })?;
+        let request = match card_value {
+            Some(card_value) => encode_vote(card_value)?,
+            None => encode_retract_vote()?,
+        };
+        self.socket.send_request(request)?;
 
         Ok(())
     }
 
     fn change_name(&mut self, name: &str) -> AppResult<()> {
-        self.socket.send_request(UserRequest::ChangeName { name })
+        self.socket.send_request(encode_change_name(name)?)
     }
 
     fn chat(&mut self, message: &str) -> AppResult<()> {
-        self.socket
-            .send_request(UserRequest::ChatMessage { message })
+        self.socket.send_request(encode_chat_message(message)?)
     }
 
     fn reveal(&mut self) -> AppResult<()> {
-        self.socket.send_request(UserRequest::RevealCards)
+        self.socket.send_request(encode_reveal_cards()?)
     }
 
     fn reset(&mut self) -> AppResult<()> {
-        self.socket.send_request(UserRequest::StartNewRound)
+        self.socket.send_request(encode_start_new_round()?)
+    }
+}
+
+fn native_log_entry(entry: &ServerLogEntry) -> LogEntry {
+    LogEntry {
+        timestamp: Instant::now(),
+        level: entry.level,
+        message: entry.message.clone(),
+        source: LogSource::Server,
+        server_index: Some(entry.server_index),
+    }
+}
+
+fn append_server_log_entries(result: &mut Vec<LogEntry>, entries: &[ServerLogEntry]) {
+    for entry in entries {
+        if !result
+            .iter()
+            .any(|existing| existing.server_index == Some(entry.server_index))
+        {
+            result.push(native_log_entry(entry));
+        }
     }
 }
 
 #[cfg(test)]
 pub mod tests {
-    use super::{PokerClient, WebPokerClient};
+    use super::{append_server_log_entries, PokerClient, WebPokerClient};
     use crate::app::AppResult;
     use crate::models::{
         GamePhase, LogEntry, LogLevel, LogSource, Player, Room, UserType, Vote, VoteData,
     };
+    use ppoker_core::protocol::decode_room_snapshot;
     use std::collections::HashMap;
     use std::thread;
     use std::time::{Duration, Instant};
@@ -405,6 +417,56 @@ pub mod tests {
             self.queue_room_update();
             Ok(())
         }
+    }
+
+    #[test]
+    fn unknown_log_level_does_not_collide_with_an_appended_log() {
+        let initial = decode_room_snapshot(
+            r#"{
+                "roomId":"log-room",
+                "deck":[],
+                "gamePhase":"PLAYING",
+                "users":[],
+                "average":"0",
+                "log":[
+                    {"level":"INFO","message":"first"},
+                    {"level":"FUTURE_LEVEL","message":"unknown"},
+                    {"level":"CHAT","message":"third"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let appended = decode_room_snapshot(
+            r#"{
+                "roomId":"log-room",
+                "deck":[],
+                "gamePhase":"PLAYING",
+                "users":[],
+                "average":"0",
+                "log":[
+                    {"level":"INFO","message":"first"},
+                    {"level":"FUTURE_LEVEL","message":"unknown"},
+                    {"level":"CHAT","message":"third"},
+                    {"level":"INFO","message":"appended"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let mut logs = vec![];
+
+        append_server_log_entries(&mut logs, &initial.log);
+        append_server_log_entries(&mut logs, &appended.log);
+
+        assert_eq!(
+            logs.iter()
+                .map(|entry| (entry.server_index, entry.message.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (Some(0), "first"),
+                (Some(2), "third"),
+                (Some(3), "appended")
+            ]
+        );
     }
 
     #[test]

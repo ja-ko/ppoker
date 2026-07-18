@@ -98,16 +98,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "assert-json-diff"
-version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47e4f2b81832e72834d7518d8487a0396a28cc408186a2e8854c0f98011faf12"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "async-broadcast"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2708,7 +2698,6 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 name = "ppoker"
 version = "0.5.6"
 dependencies = [
- "assert-json-diff",
  "clap",
  "crossterm",
  "directories",
@@ -2731,7 +2720,6 @@ dependencies = [
  "self_update 0.44.0",
  "semver",
  "serde",
- "serde_json",
  "snafu",
  "subprocess",
  "temp-env",
@@ -2739,13 +2727,18 @@ dependencies = [
  "tui-big-text",
  "tui-logger",
  "tungstenite",
- "urlencoding",
  "whoami",
 ]
 
 [[package]]
 name = "ppoker-core"
 version = "0.0.0"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "url",
+]
 
 [[package]]
 name = "predicates"

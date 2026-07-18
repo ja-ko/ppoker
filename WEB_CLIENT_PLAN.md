@@ -381,17 +381,17 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 
 #### Implementation
 
-- [ ] [IMPLEMENTER] Move existing DTO/request conversion into a private protocol module before redesigning it.
-- [ ] [IMPLEMENTER] Add only the normalization and URL adaptations required by the shared model and connection roles.
-- [ ] [IMPLEMENTER] Keep upstream sentinel/request details private.
-- [ ] [IMPLEMENTER] Preserve exact command JSON and full-snapshot behavior.
+- [x] [IMPLEMENTER] Move existing DTO/request conversion into a private protocol module before redesigning it.
+- [x] [IMPLEMENTER] Add only the normalization and URL adaptations required by the shared model and connection roles.
+- [x] [IMPLEMENTER] Keep upstream sentinel/request details private.
+- [x] [IMPLEMENTER] Preserve exact command JSON and full-snapshot behavior.
 
 #### Acceptance
 
-- [ ] [TEST] Deterministic protocol fixtures cover decode, encode, unknown values, and URL safety.
-- [ ] [TEST] Existing native command behavior remains unchanged.
-- [ ] [TEST] Rust coverage is measured and targets at least 80% in every Rust metric without enforcement.
-- [ ] [REVIEW] No wire DTO is exposed to TUI, WASM, or TypeScript consumers.
+- [x] [TEST] Deterministic protocol fixtures cover decode, encode, unknown values, and URL safety.
+- [x] [TEST] Existing native command behavior remains unchanged.
+- [x] [TEST] Rust coverage is measured and targets at least 80% in every Rust metric without enforcement.
+- [x] [REVIEW] No wire DTO is exposed to TUI, WASM, or TypeScript consumers.
 
 ### Slice 3: Minimal Portable Client And Transport
 
