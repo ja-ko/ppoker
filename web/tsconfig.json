@@ -13,6 +13,7 @@
     "noPropertyAccessFromIndexSignature": true,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
+    "jsx": "react-jsx",
     "skipLibCheck": false,
     "noEmit": true,
     "types": ["node", "vitest/globals"]

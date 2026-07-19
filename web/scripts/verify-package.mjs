@@ -118,6 +118,9 @@ try {
         packageManager: "pnpm@10.34.5",
         dependencies: {
           "@ppoker/web-client": `file:${archive}`,
+          "@types/react": "19.2.17",
+          react: "19.2.7",
+          "react-dom": "19.2.7",
         },
       },
       null,
@@ -185,6 +188,49 @@ void hasNoRawFree;
     consumerRoot,
   );
 
+  const reactTypeFixture = join(consumerRoot, "react-consumer.ts");
+  await writeFile(
+    reactTypeFixture,
+    `import type { ComponentProps } from "react";
+import {
+  createPokerClientStore,
+  type PokerClientPort,
+  type PokerClientSnapshot,
+} from "@ppoker/web-client";
+import {
+  PokerClientProvider,
+  usePokerClientSnapshot,
+  usePokerClientStore,
+} from "@ppoker/web-client/react";
+
+declare const port: PokerClientPort;
+const store = createPokerClientStore(port);
+const provider: ComponentProps<typeof PokerClientProvider> = { store };
+const snapshot: PokerClientSnapshot = usePokerClientSnapshot();
+void usePokerClientStore;
+void snapshot.room?.players[0]?.vote;
+void provider;
+`,
+  );
+  run(
+    process.execPath,
+    [
+      join(packageRoot, "node_modules/typescript/bin/tsc"),
+      "--strict",
+      "--noEmit",
+      "--target",
+      "ES2022",
+      "--module",
+      "NodeNext",
+      "--moduleResolution",
+      "NodeNext",
+      "--lib",
+      "ES2023,DOM,DOM.Iterable,ESNext.Disposable",
+      reactTypeFixture,
+    ],
+    consumerRoot,
+  );
+
   const runtimeFixture = join(consumerRoot, "consumer.mjs");
   await writeFile(
     runtimeFixture,
@@ -248,7 +294,89 @@ if (fetchCount !== 0 || socketCount !== 0) {
 }
 `,
   );
-  run(process.execPath, [runtimeFixture], consumerRoot);
+  const noReactLoader = join(consumerRoot, "no-react-loader.mjs");
+  await writeFile(
+    noReactLoader,
+    `export function resolve(specifier, context, nextResolve) {
+  if (specifier === "react" || specifier.startsWith("react/")) {
+    throw new Error("base entrypoint attempted to execute React");
+  }
+  return nextResolve(specifier, context);
+}
+`,
+  );
+  run(
+    process.execPath,
+    ["--experimental-loader", noReactLoader, runtimeFixture],
+    consumerRoot,
+  );
+
+  const reactRuntimeFixture = join(consumerRoot, "react-consumer.mjs");
+  await writeFile(
+    reactRuntimeFixture,
+    `import { createElement } from "react";
+import { renderToString } from "react-dom/server";
+import { createPokerClientStore } from "@ppoker/web-client";
+import {
+  PokerClientProvider,
+  usePokerClientSnapshot,
+  usePokerClientStore,
+} from "@ppoker/web-client/react";
+
+let closeCount = 0;
+let snapshot = {
+  revision: 0,
+  status: "disconnected",
+  terminalError: null,
+  room: null,
+  localName: "React consumer",
+  localVote: null,
+  activity: [],
+  currentRound: { number: 0, startedAtMs: null },
+  history: [],
+  statistics: { average: null },
+};
+const client = {
+  connect() {},
+  poll() { return false; },
+  snapshot() { return snapshot; },
+  vote() {},
+  retractVote() {},
+  rename() {},
+  chat() {},
+  reveal() {},
+  startNewRound() {},
+  close() {
+    closeCount += 1;
+    snapshot = { ...snapshot, revision: 1, status: "closed" };
+  },
+};
+const store = createPokerClientStore(client);
+function View() {
+  if (usePokerClientStore() !== store) {
+    throw new Error("React entrypoint returned a different store");
+  }
+  const value = usePokerClientSnapshot();
+  return createElement("span", null, value.status + ":" + value.revision);
+}
+const html = renderToString(
+  createElement(
+    PokerClientProvider,
+    { store },
+    createElement(View),
+  ),
+);
+if (!html.includes("disconnected:0") || closeCount !== 0) {
+  throw new Error("React entrypoint violated SSR or provider ownership");
+}
+store.dispose();
+store.dispose();
+if (closeCount !== 1 || store.getSnapshot().status !== "closed") {
+  throw new Error("installed store did not dispose deterministically");
+}
+`,
+  );
+  run(process.execPath, [reactRuntimeFixture], consumerRoot);
 
   const installedDistribution = join(
     consumerRoot,
@@ -256,6 +384,8 @@ if (fetchCount !== 0 || socketCount !== 0) {
   );
   await stat(join(installedDistribution, "index.js"));
   await stat(join(installedDistribution, "index.d.ts"));
+  await stat(join(installedDistribution, "react.js"));
+  await stat(join(installedDistribution, "react.d.ts"));
   await stat(join(installedDistribution, "ppoker_wasm_bg.wasm"));
   const installedFiles = await readdir(installedDistribution, {
     recursive: true,
@@ -272,8 +402,31 @@ if (fetchCount !== 0 || socketCount !== 0) {
       "utf8",
     ),
   );
-  if (Object.keys(installedPackage.exports).join(",") !== ".") {
+  if (Object.keys(installedPackage.exports).join(",") !== ".,./react") {
     throw new Error("package exports include a non-authored entrypoint");
+  }
+  if (
+    installedPackage.peerDependencies?.react !== "^18.0.0 || ^19.0.0" ||
+    installedPackage.dependencies?.react !== undefined
+  ) {
+    throw new Error("packaged React dependency is not peer-only");
+  }
+  const installedIndex = await readFile(
+    join(installedDistribution, "index.js"),
+    "utf8",
+  );
+  const installedReact = await readFile(
+    join(installedDistribution, "react.js"),
+    "utf8",
+  );
+  if (/from\s*["']react(?:\/jsx-runtime)?["']/u.test(installedIndex)) {
+    throw new Error("installed base entrypoint imports React");
+  }
+  if (
+    !/from\s*["']react["']/u.test(installedReact) ||
+    !/from\s*["']react\/jsx-runtime["']/u.test(installedReact)
+  ) {
+    throw new Error("installed React entrypoint did not externalize React");
   }
 
   const browserFixture = join(consumerRoot, "browser.html");
@@ -412,7 +565,7 @@ try {
   }
 
   console.log(
-    `verified pnpm 10 isolated install, public declarations, no-map package, no-network DataView initialization, default Chromium WASM loading, browser DataView initialization, zero WebSockets, and ${wasmRequests.toString()} packaged WASM requests`,
+    `verified pnpm 10 isolated install, base and React declarations, React-blocked base import, one-instance React SSR, peer/external React, no-map package, no-network DataView initialization, default Chromium WASM loading, browser DataView initialization, zero WebSockets, and ${wasmRequests.toString()} packaged WASM requests`,
   );
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });

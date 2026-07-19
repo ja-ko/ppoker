@@ -43,8 +43,18 @@ run(pnpm, ["exec", "vite", "build"]);
 
 await stat(join(distribution, "ppoker_wasm_bg.wasm"));
 const builtJavaScript = await readFile(join(distribution, "index.js"), "utf8");
+const builtReact = await readFile(join(distribution, "react.js"), "utf8");
 for (const forbiddenPath of ["src/generated", "../crates", packageRoot]) {
-  if (builtJavaScript.includes(forbiddenPath)) {
+  if (
+    builtJavaScript.includes(forbiddenPath) ||
+    builtReact.includes(forbiddenPath)
+  ) {
     throw new Error(`built JavaScript contains source path: ${forbiddenPath}`);
   }
+}
+if (/from\s*["']react(?:\/jsx-runtime)?["']/u.test(builtJavaScript)) {
+  throw new Error("base entrypoint imports React");
+}
+if (!/from\s*["']react["']/u.test(builtReact)) {
+  throw new Error("React entrypoint does not externalize React");
 }

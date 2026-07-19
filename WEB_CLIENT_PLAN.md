@@ -468,20 +468,20 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 
 #### Implementation
 
-- [ ] [IMPLEMENTER] Add the external store with injectable port, stable snapshots, one shared polling interval, commands, and disposal.
-- [ ] [IMPLEMENTER] Add provider and hooks using `useSyncExternalStore`.
-- [ ] [IMPLEMENTER] Add deep-readonly public types and protect cached snapshots from mutation.
-- [ ] [IMPLEMENTER] Keep provider ownership non-owning: unmount unsubscribes but does not connect, close, or dispose the caller-owned store.
-- [ ] [IMPLEMENTER] Provide a stable, deeply immutable, side-effect-free server snapshot.
-- [ ] [IMPLEMENTER] Keep TypeScript policy limited to lifecycle and subscription behavior.
-- [ ] [IMPLEMENTER] Do not add speculative notification or event-queue infrastructure.
+- [x] [IMPLEMENTER] Add the external store with injectable port, stable snapshots, one shared polling interval, commands, and disposal.
+- [x] [IMPLEMENTER] Add provider and hooks using `useSyncExternalStore`.
+- [x] [IMPLEMENTER] Add deep-readonly public types and protect cached snapshots from mutation.
+- [x] [IMPLEMENTER] Keep provider ownership non-owning: unmount unsubscribes but does not connect, close, or dispose the caller-owned store.
+- [x] [IMPLEMENTER] Provide a stable, deeply immutable, side-effect-free server snapshot.
+- [x] [IMPLEMENTER] Keep TypeScript policy limited to lifecycle and subscription behavior.
+- [x] [IMPLEMENTER] Do not add speculative notification or event-queue infrastructure.
 
 #### Acceptance
 
-- [ ] [TEST] Store lifecycle, revision, polling, command, immutability, and cleanup tests pass.
-- [ ] [TEST] Provider/hook and Strict Mode tests pass.
-- [ ] [TEST] Formatting, ESLint, `tsc --noEmit`, Vitest, coverage generation, and Vite build pass.
-- [ ] [TEST] Frontend coverage is measured and targets at least 80% in every frontend metric without enforcement.
+- [x] [TEST] Store lifecycle, revision, polling, command, immutability, and cleanup tests pass.
+- [x] [TEST] Provider/hook and Strict Mode tests pass.
+- [x] [TEST] Formatting, ESLint, `tsc --noEmit`, Vitest, coverage generation, and Vite build pass.
+- [x] [TEST] Frontend coverage is measured and targets at least 80% in every frontend metric without enforcement.
 - [ ] [REVIEW] React code wraps generated/shared contracts and does not recreate Rust behavior.
 
 ### Slice 7: Focused Automation And Package Documentation

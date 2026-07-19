@@ -43,12 +43,16 @@ export default defineConfig({
     assetsDir: "",
     emptyOutDir: false,
     lib: {
-      entry: fileURLToPath(new URL("./src/index.ts", import.meta.url)),
-      fileName: "index",
+      entry: {
+        index: fileURLToPath(new URL("./src/index.ts", import.meta.url)),
+        react: fileURLToPath(new URL("./src/react.tsx", import.meta.url)),
+      },
+      fileName: (_format, entryName) => `${entryName}.js`,
       formats: ["es"],
     },
     minify: true,
     rollupOptions: {
+      external: ["react", "react/jsx-runtime"],
       output: {
         assetFileNames: "[name][extname]",
       },

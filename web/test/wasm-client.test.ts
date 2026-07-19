@@ -234,6 +234,9 @@ describe("WasmPokerClient", () => {
     expect(rawClient(1).connect).not.toHaveBeenCalled();
     expect(participant.snapshot()).toEqual(initialSnapshot("Participant"));
     expect(spectator.snapshot()).toEqual(initialSnapshot("Spectator"));
+    expect(Object.isFrozen(participant.snapshot())).toBe(true);
+    expect(Object.isFrozen(participant.snapshot().currentRound)).toBe(true);
+    expect(Object.isFrozen(participant.snapshot().activity)).toBe(true);
   });
 
   it("delegates connect, poll, snapshots, and every command", async () => {

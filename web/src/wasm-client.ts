@@ -2,48 +2,47 @@ import initializeGeneratedWasm, {
   WasmPokerClient as GeneratedWasmPokerClient,
 } from "./generated/ppoker-wasm/ppoker_wasm.js";
 import type {
-  ActivityLevel,
-  ActivitySnapshot,
-  ActivitySource,
-  ClientErrorSnapshot,
+  ActivityLevel as GeneratedActivityLevel,
+  ActivitySnapshot as GeneratedActivitySnapshot,
+  ActivitySource as GeneratedActivitySource,
+  ClientErrorSnapshot as GeneratedClientErrorSnapshot,
   ClientOptions,
-  ClientRole,
-  ClientSnapshot,
-  CurrentRoundSnapshot,
-  ErrorCode,
-  ErrorDetails,
-  HistorySnapshot,
-  PhaseSnapshot,
-  PlayerRole,
-  PlayerSnapshot,
-  RoomSnapshot,
-  SnapshotStatus,
-  StatisticsSnapshot,
-  VoteSnapshot,
-  VoteValueSnapshot,
+  ClientRole as GeneratedClientRole,
+  ClientSnapshot as GeneratedClientSnapshot,
+  CurrentRoundSnapshot as GeneratedCurrentRoundSnapshot,
+  ErrorCode as GeneratedErrorCode,
+  ErrorDetails as GeneratedErrorDetails,
+  HistorySnapshot as GeneratedHistorySnapshot,
+  PhaseSnapshot as GeneratedPhaseSnapshot,
+  PlayerRole as GeneratedPlayerRole,
+  PlayerSnapshot as GeneratedPlayerSnapshot,
+  RoomSnapshot as GeneratedRoomSnapshot,
+  SnapshotStatus as GeneratedSnapshotStatus,
+  StatisticsSnapshot as GeneratedStatisticsSnapshot,
+  VoteSnapshot as GeneratedVoteSnapshot,
+  VoteValueSnapshot as GeneratedVoteValueSnapshot,
 } from "./generated/ppoker-wasm/ppoker_wasm.js";
+import { deepFreeze, type DeepReadonly } from "./readonly.js";
 
-export type {
-  ActivityLevel,
-  ActivitySnapshot,
-  ActivitySource,
-  ClientErrorSnapshot,
-  ClientOptions,
-  ClientRole,
-  ClientSnapshot,
-  CurrentRoundSnapshot,
-  ErrorCode,
-  ErrorDetails,
-  HistorySnapshot,
-  PhaseSnapshot,
-  PlayerRole,
-  PlayerSnapshot,
-  RoomSnapshot,
-  SnapshotStatus,
-  StatisticsSnapshot,
-  VoteSnapshot,
-  VoteValueSnapshot,
-};
+export type ActivityLevel = GeneratedActivityLevel;
+export type ActivitySnapshot = DeepReadonly<GeneratedActivitySnapshot>;
+export type ActivitySource = GeneratedActivitySource;
+export type ClientErrorSnapshot = DeepReadonly<GeneratedClientErrorSnapshot>;
+export type { ClientOptions };
+export type ClientRole = GeneratedClientRole;
+export type ClientSnapshot = DeepReadonly<GeneratedClientSnapshot>;
+export type CurrentRoundSnapshot = DeepReadonly<GeneratedCurrentRoundSnapshot>;
+export type ErrorCode = GeneratedErrorCode;
+export type ErrorDetails = DeepReadonly<GeneratedErrorDetails>;
+export type HistorySnapshot = DeepReadonly<GeneratedHistorySnapshot>;
+export type PhaseSnapshot = GeneratedPhaseSnapshot;
+export type PlayerRole = GeneratedPlayerRole;
+export type PlayerSnapshot = DeepReadonly<GeneratedPlayerSnapshot>;
+export type RoomSnapshot = DeepReadonly<GeneratedRoomSnapshot>;
+export type SnapshotStatus = GeneratedSnapshotStatus;
+export type StatisticsSnapshot = DeepReadonly<GeneratedStatisticsSnapshot>;
+export type VoteSnapshot = DeepReadonly<GeneratedVoteSnapshot>;
+export type VoteValueSnapshot = DeepReadonly<GeneratedVoteValueSnapshot>;
 
 export type PpokerWasmInitInput =
   ArrayBuffer | ArrayBufferView<ArrayBuffer> | Response | WebAssembly.Module;
@@ -90,7 +89,7 @@ export class WasmPokerClient {
     }
 
     this.#client = new GeneratedWasmPokerClient(options);
-    this.#lastSnapshot = this.#client.snapshot();
+    this.#lastSnapshot = deepFreeze(this.#client.snapshot());
   }
 
   connect(): void {
@@ -103,7 +102,7 @@ export class WasmPokerClient {
 
   snapshot(): ClientSnapshot {
     if (this.#client !== undefined) {
-      this.#lastSnapshot = this.#client.snapshot();
+      this.#lastSnapshot = deepFreeze(this.#client.snapshot());
     }
     return this.#lastSnapshot;
   }
@@ -141,7 +140,7 @@ export class WasmPokerClient {
     this.#client = undefined;
     try {
       client.close();
-      this.#lastSnapshot = client.snapshot();
+      this.#lastSnapshot = deepFreeze(client.snapshot());
     } finally {
       client.free();
     }

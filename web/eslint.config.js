@@ -7,7 +7,7 @@ export default tseslint.config(
     ignores: ["coverage/**", "dist/**", "src/generated/**"],
   },
   {
-    files: ["**/*.ts"],
+    files: ["**/*.{ts,tsx}"],
     extends: [
       eslint.configs.recommended,
       ...tseslint.configs.strictTypeChecked,

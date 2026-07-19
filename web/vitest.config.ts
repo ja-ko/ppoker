@@ -4,13 +4,13 @@ export default defineConfig({
   test: {
     clearMocks: true,
     environment: "jsdom",
-    include: ["test/**/*.test.ts"],
+    include: ["test/**/*.test.{ts,tsx}"],
     restoreMocks: true,
     unstubGlobals: true,
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "lcov"],
-      include: ["src/**/*.ts"],
+      include: ["src/**/*.{ts,tsx}"],
       exclude: ["src/generated/**"],
     },
   },

@@ -1,5 +1,6 @@
 import {
   WasmPokerClient,
+  createPokerClientStore,
   initializePpokerWasm,
   type ActivityLevel,
   type ActivitySnapshot,
@@ -8,11 +9,15 @@ import {
   type ClientOptions,
   type ClientRole,
   type ClientSnapshot,
+  type DeepReadonly,
   type ErrorCode,
   type HistorySnapshot,
   type PhaseSnapshot,
   type PlayerRole,
   type PlayerSnapshot,
+  type PokerClientPort,
+  type PokerClientSnapshot,
+  type PokerClientStore,
   type RoomSnapshot,
   type SnapshotStatus,
   type VoteSnapshot,
@@ -206,6 +211,8 @@ function inspectSnapshot(snapshot: ClientSnapshot): void {
 
 declare const client: WasmPokerClient;
 declare const snapshot: ClientSnapshot;
+declare const port: PokerClientPort;
+declare const store: PokerClientStore;
 const participant: ClientRole = "participant";
 const spectatorOptions: ClientOptions = {
   endpoint: "wss://example.test",
@@ -229,18 +236,43 @@ void initializePpokerWasm;
 void participant;
 void spectatorOptions;
 inspectSnapshot(snapshot);
+inspectSnapshot(store.getSnapshot());
+inspectSnapshot(store.getServerSnapshot());
+const createdStore = createPokerClientStore(port, { pollIntervalMs: 25 });
+createdStore.connect();
+void createdStore.poll();
+createdStore.vote("5");
+createdStore.retractVote();
+createdStore.rename("Store name");
+createdStore.chat("Store message");
+createdStore.reveal();
+createdStore.startNewRound();
+createdStore.dispose();
+createdStore[Symbol.dispose]();
+
+declare const readonlySnapshot: PokerClientSnapshot;
+type DerivedReadonlySnapshot = DeepReadonly<ClientSnapshot>;
+const derivedReadonlySnapshot: DerivedReadonlySnapshot = readonlySnapshot;
+// @ts-expect-error snapshots are deeply readonly
+readonlySnapshot.room.players[0].name = "mutated";
+// @ts-expect-error snapshot collections are deeply readonly
+readonlySnapshot.history[0] = snapshot.history[0];
+void derivedReadonlySnapshot;
 
 type SnapshotIsTyped = Assert<NotAny<ClientSnapshot>>;
 type RoomIsTyped = Assert<NotAny<RoomSnapshot>>;
 type PlayerIsTyped = Assert<NotAny<PlayerSnapshot>>;
 type VoteIsTyped = Assert<NotAny<VoteSnapshot>>;
+type StoreSnapshotIsTyped = Assert<NotAny<PokerClientSnapshot>>;
 const noRawFree: HasNoRawFree = true;
 const snapshotIsTyped: SnapshotIsTyped = true;
 const roomIsTyped: RoomIsTyped = true;
 const playerIsTyped: PlayerIsTyped = true;
 const voteIsTyped: VoteIsTyped = true;
+const storeSnapshotIsTyped: StoreSnapshotIsTyped = true;
 void noRawFree;
 void snapshotIsTyped;
 void roomIsTyped;
 void playerIsTyped;
 void voteIsTyped;
+void storeSnapshotIsTyped;

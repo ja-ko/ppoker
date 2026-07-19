@@ -23,3 +23,12 @@ export {
   type VoteSnapshot,
   type VoteValueSnapshot,
 } from "./wasm-client.js";
+
+export {
+  createPokerClientStore,
+  type PokerClientPort,
+  type PokerClientSnapshot,
+  type PokerClientStore,
+  type PokerClientStoreOptions,
+} from "./client-store.js";
+export type { DeepReadonly } from "./readonly.js";
