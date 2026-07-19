@@ -1,13 +1,13 @@
 import type {
-  ActivitySnapshot,
-  ClientErrorSnapshot,
+  ClientError,
   ClientOptions,
   ClientSnapshot,
-  HistorySnapshot,
-  PlayerSnapshot,
-  RoomSnapshot,
-  VoteSnapshot,
-  VoteValueSnapshot,
+  HistoryEntry,
+  LogEntry,
+  Player,
+  Room,
+  Vote,
+  VoteData,
 } from "../src/generated/ppoker-wasm/ppoker_wasm.js";
 
 type IsAny<Value> = 0 extends 1 & Value ? true : false;
@@ -16,26 +16,17 @@ function notAny<Value>(value: IsAny<Value> extends true ? never : Value): void {
   void value;
 }
 
-function inspectVoteValue(value: VoteValueSnapshot): number | string {
-  switch (value.kind) {
-    case "number":
-      return value.value;
-    case "special":
-      return value.value;
-    default: {
-      const exhaustive: never = value;
-      return exhaustive;
-    }
-  }
+function inspectVoteData(value: VoteData): number | string {
+  return value.kind === "number" ? value.value : value.value;
 }
 
-function inspectVote(vote: VoteSnapshot): number | string | null {
+function inspectVote(vote: Vote): number | string | null {
   switch (vote.state) {
     case "missing":
     case "hidden":
       return null;
     case "revealed":
-      return inspectVoteValue(vote.value);
+      return inspectVoteData(vote.value);
     default: {
       const exhaustive: never = vote;
       return exhaustive;
@@ -43,71 +34,55 @@ function inspectVote(vote: VoteSnapshot): number | string | null {
   }
 }
 
-function inspectPlayer(player: PlayerSnapshot): void {
+function inspectPlayer(player: Player): void {
   notAny(player.name);
   notAny(player.vote);
   notAny(player.isYou);
-  notAny(player.role);
+  notAny(player.userType);
   void inspectVote(player.vote);
 }
 
-function inspectRoom(room: RoomSnapshot): void {
+function inspectRoom(room: Room): void {
   notAny(room.name);
   notAny(room.deck);
   notAny(room.phase);
-  notAny(room.players);
   room.players.forEach(inspectPlayer);
 }
 
-function inspectHistory(history: HistorySnapshot): void {
-  notAny(history.roundNumber);
-  notAny(history.average);
-  notAny(history.durationMs);
-  notAny(history.votes);
-  notAny(history.deck);
-  notAny(history.localVote);
-  history.votes.forEach(inspectPlayer);
-  if (history.localVote !== null) inspectVoteValue(history.localVote);
+function inspectHistory(entry: HistoryEntry): void {
+  const average: number | null = entry.average;
+  const ownVote: VoteData | null = entry.ownVote;
+  notAny(entry.lengthMs);
+  entry.votes.forEach(inspectPlayer);
+  void average;
+  if (ownVote !== null) inspectVoteData(ownVote);
 }
 
-function inspectActivity(activity: ActivitySnapshot): void {
-  notAny(activity.timestampMs);
-  notAny(activity.level);
-  notAny(activity.message);
-  notAny(activity.source);
-  notAny(activity.serverIndex);
+function inspectLog(entry: LogEntry): void {
+  const serverIndex: number | null = entry.serverIndex;
+  notAny(entry.timestampMs);
+  notAny(entry.level);
+  notAny(entry.source);
+  void serverIndex;
 }
 
-function inspectError(error: ClientErrorSnapshot): void {
+function inspectError(error: ClientError): void {
   notAny(error.code);
   notAny(error.message);
-  notAny(error.details);
-  void error.details?.field;
-  void error.details?.reason;
 }
 
 function inspectSnapshot(snapshot: ClientSnapshot): void {
   notAny(snapshot.revision);
   notAny(snapshot.status);
-  notAny(snapshot.terminalError);
-  notAny(snapshot.room);
-  notAny(snapshot.localName);
-  notAny(snapshot.localVote);
-  notAny(snapshot.activity);
-  notAny(snapshot.currentRound);
-  notAny(snapshot.history);
-  notAny(snapshot.statistics);
+  notAny(snapshot.roundStartedAtMs);
   if (snapshot.terminalError !== null) inspectError(snapshot.terminalError);
   if (snapshot.room !== null) inspectRoom(snapshot.room);
-  if (snapshot.localVote !== null) inspectVoteValue(snapshot.localVote);
-  snapshot.activity.forEach(inspectActivity);
+  if (snapshot.localVote !== null) inspectVoteData(snapshot.localVote);
+  snapshot.log.forEach(inspectLog);
   snapshot.history.forEach(inspectHistory);
 }
 
 declare const options: ClientOptions;
 declare const snapshot: ClientSnapshot;
-notAny(options.endpoint);
-notAny(options.room);
-notAny(options.name);
 notAny(options.role);
 inspectSnapshot(snapshot);

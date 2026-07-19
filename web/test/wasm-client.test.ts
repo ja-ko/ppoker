@@ -72,15 +72,11 @@ function initialSnapshot(name: string): ClientSnapshot {
     room: null,
     localName: name,
     localVote: null,
-    activity: [],
-    currentRound: {
-      number: 0,
-      startedAtMs: null,
-    },
+    log: [],
+    roundNumber: 0,
+    roundStartedAtMs: null,
     history: [],
-    statistics: {
-      average: null,
-    },
+    average: null,
   };
 }
 
@@ -235,8 +231,7 @@ describe("WasmPokerClient", () => {
     expect(participant.snapshot()).toEqual(initialSnapshot("Participant"));
     expect(spectator.snapshot()).toEqual(initialSnapshot("Spectator"));
     expect(Object.isFrozen(participant.snapshot())).toBe(true);
-    expect(Object.isFrozen(participant.snapshot().currentRound)).toBe(true);
-    expect(Object.isFrozen(participant.snapshot().activity)).toBe(true);
+    expect(Object.isFrozen(participant.snapshot().log)).toBe(true);
   });
 
   it("delegates connect, poll, snapshots, and every command", async () => {

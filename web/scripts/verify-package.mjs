@@ -143,13 +143,13 @@ try {
   type ClientOptions,
   type ClientSnapshot,
   type PpokerWasmInitInput,
-  type VoteSnapshot,
+  type Vote,
 } from "@ppoker/web-client";
 
 type Assert<Value extends true> = Value;
 type HasNoRawFree = Assert<"free" extends keyof WasmPokerClient ? false : true>;
 
-function inspectVote(vote: VoteSnapshot): number | string | null {
+function inspectVote(vote: Vote): number | string | null {
   if (vote.state === "revealed") {
     return vote.value.value;
   }
@@ -331,10 +331,11 @@ let snapshot = {
   room: null,
   localName: "React consumer",
   localVote: null,
-  activity: [],
-  currentRound: { number: 0, startedAtMs: null },
+  log: [],
+  roundNumber: 0,
+  roundStartedAtMs: null,
   history: [],
-  statistics: { average: null },
+  average: null,
 };
 const client = {
   connect() {},

@@ -43,15 +43,11 @@ const SERVER_SNAPSHOT: PokerClientSnapshot = deepFreeze({
   room: null,
   localName: "",
   localVote: null,
-  activity: [],
-  currentRound: {
-    number: 0,
-    startedAtMs: null,
-  },
+  log: [],
+  roundNumber: 0,
+  roundStartedAtMs: null,
   history: [],
-  statistics: {
-    average: null,
-  },
+  average: null,
 });
 
 const CLOSED_MESSAGE = "Client is closed.";

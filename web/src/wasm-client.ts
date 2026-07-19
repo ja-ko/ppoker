@@ -2,54 +2,52 @@ import initializeGeneratedWasm, {
   WasmPokerClient as GeneratedWasmPokerClient,
 } from "./generated/ppoker-wasm/ppoker_wasm.js";
 import type {
-  ActivityLevel as GeneratedActivityLevel,
-  ActivitySnapshot as GeneratedActivitySnapshot,
-  ActivitySource as GeneratedActivitySource,
-  ClientErrorSnapshot as GeneratedClientErrorSnapshot,
+  ClientError,
+  ClientErrorCode,
   ClientOptions,
-  ClientRole as GeneratedClientRole,
   ClientSnapshot as GeneratedClientSnapshot,
-  CurrentRoundSnapshot as GeneratedCurrentRoundSnapshot,
-  ErrorCode as GeneratedErrorCode,
-  ErrorDetails as GeneratedErrorDetails,
-  HistorySnapshot as GeneratedHistorySnapshot,
-  PhaseSnapshot as GeneratedPhaseSnapshot,
-  PlayerRole as GeneratedPlayerRole,
-  PlayerSnapshot as GeneratedPlayerSnapshot,
-  RoomSnapshot as GeneratedRoomSnapshot,
-  SnapshotStatus as GeneratedSnapshotStatus,
-  StatisticsSnapshot as GeneratedStatisticsSnapshot,
-  VoteSnapshot as GeneratedVoteSnapshot,
-  VoteValueSnapshot as GeneratedVoteValueSnapshot,
+  ConnectionRole,
+  ConnectionStatus,
+  GamePhase,
+  HistoryEntry,
+  InvalidOptionsDetails,
+  LogEntry,
+  LogLevel,
+  LogSource,
+  Player,
+  Room,
+  UserType,
+  Vote,
+  VoteData,
 } from "./generated/ppoker-wasm/ppoker_wasm.js";
 import { deepFreeze, type DeepReadonly } from "./readonly.js";
 
-export type ActivityLevel = GeneratedActivityLevel;
-export type ActivitySnapshot = DeepReadonly<GeneratedActivitySnapshot>;
-export type ActivitySource = GeneratedActivitySource;
-export type ClientErrorSnapshot = DeepReadonly<GeneratedClientErrorSnapshot>;
-export type { ClientOptions };
-export type ClientRole = GeneratedClientRole;
 export type ClientSnapshot = DeepReadonly<GeneratedClientSnapshot>;
-export type CurrentRoundSnapshot = DeepReadonly<GeneratedCurrentRoundSnapshot>;
-export type ErrorCode = GeneratedErrorCode;
-export type ErrorDetails = DeepReadonly<GeneratedErrorDetails>;
-export type HistorySnapshot = DeepReadonly<GeneratedHistorySnapshot>;
-export type PhaseSnapshot = GeneratedPhaseSnapshot;
-export type PlayerRole = GeneratedPlayerRole;
-export type PlayerSnapshot = DeepReadonly<GeneratedPlayerSnapshot>;
-export type RoomSnapshot = DeepReadonly<GeneratedRoomSnapshot>;
-export type SnapshotStatus = GeneratedSnapshotStatus;
-export type StatisticsSnapshot = DeepReadonly<GeneratedStatisticsSnapshot>;
-export type VoteSnapshot = DeepReadonly<GeneratedVoteSnapshot>;
-export type VoteValueSnapshot = DeepReadonly<GeneratedVoteValueSnapshot>;
+export type {
+  ClientError,
+  ClientErrorCode,
+  ClientOptions,
+  ConnectionRole,
+  ConnectionStatus,
+  GamePhase,
+  HistoryEntry,
+  InvalidOptionsDetails,
+  LogEntry,
+  LogLevel,
+  LogSource,
+  Player,
+  Room,
+  UserType,
+  Vote,
+  VoteData,
+};
 
 export type PpokerWasmInitInput =
   ArrayBuffer | ArrayBufferView<ArrayBuffer> | Response | WebAssembly.Module;
 
 export interface PpokerClientError extends Error {
-  readonly code: ErrorCode;
-  readonly details?: ErrorDetails;
+  readonly code: ClientErrorCode | "InvalidOptions";
+  readonly details?: InvalidOptionsDetails;
 }
 
 let initialization: Promise<void> | undefined;
@@ -158,7 +156,10 @@ export class WasmPokerClient {
   }
 }
 
-function clientError(code: ErrorCode, message: string): PpokerClientError {
+function clientError(
+  code: ClientErrorCode,
+  message: string,
+): PpokerClientError {
   return Object.assign(new Error(message), { code });
 }
 

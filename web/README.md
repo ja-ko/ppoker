@@ -3,7 +3,8 @@
 `@ppoker/web-client` is the typed browser client foundation for ppoker. It wraps
 the generated Rust/WASM client and provides an optional React external store,
 provider, and hooks. Importing the package does not initialize WASM or open a
-WebSocket.
+WebSocket. The root Rust package, core/WASM crates, and this private package use
+one synchronized release version.
 
 ## Setup
 
@@ -16,12 +17,12 @@ corepack prepare pnpm@10.34.5 --activate
 pnpm install --frozen-lockfile
 ```
 
-WASM generation also requires the Rust target and the pinned Cargo tools:
+WASM generation also requires the Rust target and `wasm-pack`. `wasm-pack`
+selects the `wasm-bindgen` CLI compatible with `Cargo.lock`:
 
 ```sh
 rustup target add wasm32-unknown-unknown
-cargo install wasm-pack --version 0.15.0 --locked
-cargo install wasm-bindgen-cli --version 0.2.126 --locked
+cargo install wasm-pack --locked
 pnpm run wasm:generate
 ```
 
@@ -89,6 +90,13 @@ The provider does not connect, close, or dispose the store. The caller that
 creates the store owns it and must call `dispose()` after its final use.
 Provider unmount only removes hook subscriptions; it does not close the client.
 
+Snapshot domain values use the `ppoker-core` model names directly: `Room`,
+`Player`, `Vote`, `VoteData`, `GamePhase`, `UserType`, `LogEntry`,
+`HistoryEntry`, `ConnectionStatus`, `ClientError`, and their related enums.
+Log timestamps, history lengths, and the aggregate round start are finite,
+JavaScript-safe millisecond `number` values. Optional snapshot values are
+serialized as `null`.
+
 ## Validation
 
 The package scripts are:
@@ -111,9 +119,7 @@ server is used.
 
 ```sh
 cargo check --workspace --all-targets
-cargo check -p ppoker-core --target wasm32-unknown-unknown
-cargo check -p ppoker-wasm --target wasm32-unknown-unknown
-wasm-pack test --mode no-install --headless --chrome crates/ppoker-wasm
+wasm-pack test --headless --chrome crates/ppoker-wasm
 ```
 
 Generated files under `src/generated/`, build files under `dist/`, coverage,

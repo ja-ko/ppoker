@@ -6,7 +6,12 @@
   "packages": {
     ".": {
       "extra-files": [
-        "README.md"
+        "README.md",
+        {
+          "type": "json",
+          "path": "web/package.json",
+          "jsonpath": "$.version"
+        }
       ]
     }
   }

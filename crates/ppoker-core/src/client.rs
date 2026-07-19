@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use log::warn;
+use serde::Serialize;
 
 use crate::models::{GamePhase, HistoryEntry, LogEntry, LogLevel, LogSource, Room, Vote, VoteData};
 use crate::protocol::{
@@ -15,7 +16,8 @@ pub trait Clock {
     fn now(&self) -> Duration;
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
 pub enum ClientErrorCode {
     NotReady,
     Closed,
@@ -23,7 +25,9 @@ pub enum ClientErrorCode {
     Protocol,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
+#[serde(rename_all = "camelCase")]
 pub struct ClientError {
     pub code: ClientErrorCode,
     pub message: String,
@@ -69,7 +73,9 @@ impl Error for ClientError {}
 
 pub type ClientResult<T> = Result<T, ClientError>;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
+#[serde(rename_all = "camelCase")]
 pub enum ConnectionStatus {
     Disconnected,
     Connecting,

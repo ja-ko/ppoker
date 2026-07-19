@@ -2,7 +2,13 @@ use std::cmp::Ordering;
 use std::fmt::Formatter;
 use std::time::Duration;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+use serde::Serialize;
+
+const MAX_SAFE_INTEGER: u128 = 9_007_199_254_740_991;
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
+#[serde(tag = "kind", content = "value", rename_all = "camelCase")]
 pub enum VoteData {
     Number(u8),
     Special(String),
@@ -17,7 +23,9 @@ impl std::fmt::Display for VoteData {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
+#[serde(tag = "state", content = "value", rename_all = "camelCase")]
 pub enum Vote {
     Missing,
     Hidden,
@@ -34,14 +42,18 @@ impl std::fmt::Display for Vote {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
+#[serde(rename_all = "camelCase")]
 pub enum UserType {
     Player,
     Spectator,
     Unknown,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
+#[serde(rename_all = "camelCase")]
 pub struct Player {
     pub name: String,
     pub vote: Vote,
@@ -49,7 +61,9 @@ pub struct Player {
     pub user_type: UserType,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
+#[serde(rename_all = "camelCase")]
 pub enum GamePhase {
     Playing,
     Revealed,
@@ -72,20 +86,26 @@ impl std::fmt::Display for GamePhase {
     }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, Serialize)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
+#[serde(rename_all = "camelCase")]
 pub enum LogLevel {
     Chat,
     Info,
     Error,
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, Serialize)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
+#[serde(rename_all = "camelCase")]
 pub enum LogSource {
     Server,
     Client,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
+#[serde(rename_all = "camelCase")]
 pub struct Room {
     pub name: String,
     pub deck: Vec<String>,
@@ -93,8 +113,13 @@ pub struct Room {
     pub players: Vec<Player>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
+#[cfg_attr(feature = "typescript", tsify(missing_as_null))]
+#[serde(rename_all = "camelCase")]
 pub struct LogEntry {
+    #[serde(rename = "timestampMs", serialize_with = "serialize_duration_ms")]
+    #[cfg_attr(feature = "typescript", tsify(type = "number"))]
     pub timestamp: Duration,
     pub level: LogLevel,
     pub message: String,
@@ -102,14 +127,32 @@ pub struct LogEntry {
     pub server_index: Option<u32>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
+#[cfg_attr(feature = "typescript", tsify(missing_as_null))]
+#[serde(rename_all = "camelCase")]
 pub struct HistoryEntry {
     pub round_number: u32,
     pub average: Option<f32>,
+    #[serde(rename = "lengthMs", serialize_with = "serialize_duration_ms")]
+    #[cfg_attr(feature = "typescript", tsify(type = "number"))]
     pub length: Duration,
     pub votes: Vec<Player>,
     pub deck: Vec<String>,
     pub own_vote: Option<VoteData>,
+}
+
+fn serialize_duration_ms<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let milliseconds = duration.as_millis();
+    if milliseconds > MAX_SAFE_INTEGER {
+        return Err(serde::ser::Error::custom(
+            "duration exceeds the JavaScript safe integer range",
+        ));
+    }
+    serializer.serialize_f64(milliseconds as f64)
 }
 
 fn vote_rank(vote: &Vote) -> i32 {
@@ -197,5 +240,48 @@ mod tests {
         assert_eq!(sorted[2].name, "Eve"); // Special
         assert_eq!(sorted[3].name, "Bob"); // Hidden
         assert_eq!(sorted[4].name, "David"); // Missing
+    }
+
+    #[test]
+    fn web_serialization_uses_core_names_safe_milliseconds_and_nulls() {
+        let entry = HistoryEntry {
+            round_number: 2,
+            average: None,
+            length: Duration::from_millis(2500),
+            votes: vec![Player {
+                name: "Alice".to_string(),
+                vote: Vote::Revealed(VoteData::Number(5)),
+                is_you: true,
+                user_type: UserType::Player,
+            }],
+            deck: vec!["5".to_string()],
+            own_vote: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(entry).unwrap(),
+            serde_json::json!({
+                "roundNumber": 2,
+                "average": null,
+                "lengthMs": 2500.0,
+                "votes": [{
+                    "name": "Alice",
+                    "vote": { "state": "revealed", "value": { "kind": "number", "value": 5 } },
+                    "isYou": true,
+                    "userType": "player"
+                }],
+                "deck": ["5"],
+                "ownVote": null
+            })
+        );
+
+        let unsafe_entry = LogEntry {
+            timestamp: Duration::from_millis((MAX_SAFE_INTEGER + 1) as u64),
+            level: LogLevel::Info,
+            message: String::new(),
+            source: LogSource::Client,
+            server_index: None,
+        };
+        assert!(serde_json::to_value(unsafe_entry).is_err());
     }
 }

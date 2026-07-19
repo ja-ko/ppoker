@@ -88,16 +88,14 @@ describe("createPokerClientStore snapshots", () => {
       room: null,
       localName: "",
       localVote: null,
-      activity: [],
-      currentRound: { number: 0, startedAtMs: null },
+      log: [],
+      roundNumber: 0,
+      roundStartedAtMs: null,
       history: [],
-      statistics: { average: null },
+      average: null,
     });
     expect(Object.isFrozen(firstStore.getServerSnapshot())).toBe(true);
-    expect(Object.isFrozen(firstStore.getServerSnapshot().activity)).toBe(true);
-    expect(Object.isFrozen(firstStore.getServerSnapshot().currentRound)).toBe(
-      true,
-    );
+    expect(Object.isFrozen(firstStore.getServerSnapshot().log)).toBe(true);
     expect(first.client.snapshot).toHaveBeenCalledOnce();
     expect(first.client.poll).not.toHaveBeenCalled();
     expect(first.client.connect).not.toHaveBeenCalled();
@@ -110,34 +108,26 @@ describe("createPokerClientStore snapshots", () => {
     const nestedValues = [
       snapshot,
       snapshot.terminalError,
-      snapshot.terminalError?.details,
       snapshot.room,
       snapshot.room?.deck,
       snapshot.room?.players,
       snapshot.room?.players[0],
       snapshot.room?.players[0]?.vote,
       snapshot.localVote,
-      snapshot.activity,
-      snapshot.activity[0],
-      snapshot.currentRound,
+      snapshot.log,
+      snapshot.log[0],
       snapshot.history,
       snapshot.history[0],
       snapshot.history[0]?.votes,
       snapshot.history[0]?.votes[0],
       snapshot.history[0]?.deck,
-      snapshot.history[0]?.localVote,
-      snapshot.statistics,
+      snapshot.history[0]?.ownVote,
     ];
     for (const value of nestedValues) {
       expect(Object.isFrozen(value)).toBe(true);
     }
     expect(() =>
       Object.assign(snapshot.room?.players[0] ?? {}, { name: "Mutated" }),
-    ).toThrow(TypeError);
-    expect(() =>
-      Object.assign(snapshot.terminalError?.details ?? {}, {
-        reason: "mutated",
-      }),
     ).toThrow(TypeError);
     expect(snapshot.room?.players[0]?.name).toBe("Ada");
   });

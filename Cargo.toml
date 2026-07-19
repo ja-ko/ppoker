@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/ppoker-core", "crates/ppoker-wasm"]
+members = ["crates/ppoker-core", "crates/ppoker-wasm"]
 default-members = ["."]
 resolver = "2"
 

@@ -1,10 +1,10 @@
 import { vi } from "vitest";
-import type { ClientSnapshot, SnapshotStatus } from "../src/wasm-client.js";
+import type { ClientSnapshot, ConnectionStatus } from "../src/wasm-client.js";
 import type { PokerClientPort } from "../src/client-store.js";
 
 export function makeSnapshot(
   revision = 0,
-  status: SnapshotStatus = "disconnected",
+  status: ConnectionStatus = "disconnected",
   localName = "Tester",
 ): ClientSnapshot {
   return {
@@ -14,15 +14,11 @@ export function makeSnapshot(
     room: null,
     localName,
     localVote: null,
-    activity: [],
-    currentRound: {
-      number: 0,
-      startedAtMs: null,
-    },
+    log: [],
+    roundNumber: 0,
+    roundStartedAtMs: null,
     history: [],
-    statistics: {
-      average: null,
-    },
+    average: null,
   };
 }
 
@@ -34,7 +30,7 @@ export function makeRichSnapshot(revision = 3): ClientSnapshot {
       value: { kind: "number" as const, value: 5 },
     },
     isYou: true,
-    role: "participant" as const,
+    userType: "player" as const,
   };
   return {
     revision,
@@ -42,10 +38,6 @@ export function makeRichSnapshot(revision = 3): ClientSnapshot {
     terminalError: {
       code: "Transport",
       message: "connection lost",
-      details: {
-        field: "socket",
-        reason: "closed",
-      },
     },
     room: {
       name: "planning",
@@ -55,7 +47,7 @@ export function makeRichSnapshot(revision = 3): ClientSnapshot {
     },
     localName: "Ada",
     localVote: { kind: "number", value: 5 },
-    activity: [
+    log: [
       {
         timestampMs: 12,
         level: "error",
@@ -64,23 +56,19 @@ export function makeRichSnapshot(revision = 3): ClientSnapshot {
         serverIndex: null,
       },
     ],
-    currentRound: {
-      number: 2,
-      startedAtMs: 4,
-    },
+    roundNumber: 2,
+    roundStartedAtMs: 4,
     history: [
       {
         roundNumber: 1,
         average: 5,
-        durationMs: 8,
+        lengthMs: 8,
         votes: [player],
         deck: ["3", "5"],
-        localVote: { kind: "number", value: 5 },
+        ownVote: { kind: "number", value: 5 },
       },
     ],
-    statistics: {
-      average: 5,
-    },
+    average: 5,
   };
 }
 

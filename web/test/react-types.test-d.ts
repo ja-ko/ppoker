@@ -23,8 +23,8 @@ const hookSnapshot: PokerClientSnapshot = usePokerClientSnapshot();
 
 void snapshot.room?.players[0]?.vote;
 void snapshot.history[0]?.votes[0]?.name;
-void snapshot.terminalError?.details?.reason;
-void snapshot.activity[0]?.message;
+void snapshot.terminalError?.message;
+void snapshot.log[0]?.message;
 void providerProperties;
 void options;
 void hookStore;

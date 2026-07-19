@@ -2764,17 +2764,19 @@ dependencies = [
 
 [[package]]
 name = "ppoker-core"
-version = "0.0.0"
+version = "0.5.6"
 dependencies = [
  "log",
  "serde",
  "serde_json",
+ "tsify",
  "url",
+ "wasm-bindgen",
 ]
 
 [[package]]
 name = "ppoker-wasm"
-version = "0.0.0"
+version = "0.5.6"
 dependencies = [
  "js-sys",
  "ppoker-core",

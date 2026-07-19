@@ -50,7 +50,7 @@ impl Drop for FakeWebSocketGuard {
     }
 }
 
-fn options(role: ClientRole) -> ClientOptions {
+fn options(role: ConnectionRole) -> ClientOptions {
     ClientOptions {
         endpoint: "wss://example.test/base/".to_string(),
         room: "typed room".to_string(),
@@ -125,7 +125,7 @@ fn assert_callbacks_cleared(socket: &JsValue) {
 fn construction_is_side_effect_free_and_structured_for_both_roles() {
     let _guard = FakeWebSocketGuard::install();
 
-    for role in [ClientRole::Participant, ClientRole::Spectator] {
+    for role in [ConnectionRole::Participant, ConnectionRole::Spectator] {
         let mut client = construct(options(role));
         assert_eq!(
             Array::from(&js_sys::eval("globalThis.__ppokerSockets").unwrap()).length(),
@@ -141,7 +141,7 @@ fn construction_is_side_effect_free_and_structured_for_both_roles() {
         assert!(property(&snapshot, "terminalError").is_null());
         assert!(property(&snapshot, "room").is_null());
         assert!(property(&snapshot, "localVote").is_null());
-        assert!(property(&property(&snapshot, "statistics"), "average").is_null());
+        assert!(property(&snapshot, "average").is_null());
 
         assert_js_error(client.vote("5").unwrap_err(), "NotReady");
         client.close();
@@ -164,7 +164,7 @@ fn construction_is_side_effect_free_and_structured_for_both_roles() {
 fn malformed_options_throw_actual_errors_with_structured_details() {
     let invalid = ClientOptions {
         endpoint: "https://example.test".to_string(),
-        ..options(ClientRole::Participant)
+        ..options(ConnectionRole::Participant)
     };
     let error = WasmPokerClient::new(serde_wasm_bindgen::to_value(&invalid).unwrap())
         .err()
@@ -200,8 +200,8 @@ fn dot_rooms_fail_synchronously_without_creating_sockets() {
     let _guard = FakeWebSocketGuard::install();
 
     for (room, role) in [
-        (".", ClientRole::Participant),
-        ("..", ClientRole::Spectator),
+        (".", ConnectionRole::Participant),
+        ("..", ConnectionRole::Spectator),
     ] {
         let invalid = ClientOptions {
             room: room.to_string(),
@@ -228,7 +228,7 @@ fn dot_rooms_fail_synchronously_without_creating_sockets() {
 #[wasm_bindgen_test]
 fn browser_transport_queues_without_blocking_and_cleans_callbacks_terminally() {
     let _guard = FakeWebSocketGuard::install();
-    let mut client = construct(options(ClientRole::Participant));
+    let mut client = construct(options(ConnectionRole::Participant));
 
     client.connect().unwrap();
     client.connect().unwrap();
@@ -280,9 +280,7 @@ fn browser_transport_queues_without_blocking_and_cleans_callbacks_terminally() {
         property(&room, "phase").as_string().as_deref(),
         Some("playing")
     );
-    let start = property(&property(&open, "currentRound"), "startedAtMs")
-        .as_f64()
-        .unwrap();
+    let start = property(&open, "roundStartedAtMs").as_f64().unwrap();
     assert!(start.is_finite());
     assert_eq!(start.fract(), 0.0);
     assert!(start >= before_start && start <= after_start);
@@ -383,7 +381,7 @@ fn browser_transport_bounds_event_flood_and_cleans_up_once() {
 #[wasm_bindgen_test]
 fn oversized_text_preserves_prior_snapshots_then_fails_terminally() {
     let _guard = FakeWebSocketGuard::install();
-    let mut client = construct(options(ClientRole::Participant));
+    let mut client = construct(options(ConnectionRole::Participant));
     client.connect().unwrap();
     let socket = socket(0);
 
@@ -455,8 +453,8 @@ fn participant_and_spectator_use_exact_transport_urls_without_a_server() {
     let _guard = FakeWebSocketGuard::install();
 
     for (index, role, user_type) in [
-        (0, ClientRole::Participant, "PARTICIPANT"),
-        (1, ClientRole::Spectator, "SPECTATOR"),
+        (0, ConnectionRole::Participant, "PARTICIPANT"),
+        (1, ConnectionRole::Spectator, "SPECTATOR"),
     ] {
         let mut client = construct(options(role));
         client.connect().unwrap();
@@ -475,8 +473,8 @@ fn valid_dot_containing_rooms_and_names_work_for_both_roles() {
     let _guard = FakeWebSocketGuard::install();
 
     for (index, role, user_type) in [
-        (0, ClientRole::Participant, "PARTICIPANT"),
-        (1, ClientRole::Spectator, "SPECTATOR"),
+        (0, ConnectionRole::Participant, "PARTICIPANT"),
+        (1, ConnectionRole::Spectator, "SPECTATOR"),
     ] {
         let mut client_options = options(role);
         client_options.room = "release..candidate".to_string();

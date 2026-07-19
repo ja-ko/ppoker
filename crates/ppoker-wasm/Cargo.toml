@@ -3,7 +3,7 @@ name = "ppoker-wasm"
 description = "Typed WebAssembly facade for ppoker"
 authors = ["Jannik Kolodziej <github@jkolodziej.de>"]
 license = "EUPL-1.2"
-version = "0.0.0"
+version = "0.5.6"
 publish = false
 edition = "2021"
 
@@ -12,7 +12,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 js-sys = "=0.3.103"
-ppoker-core = { path = "../ppoker-core" }
+ppoker-core = { path = "../ppoker-core", features = ["typescript"] }
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "=0.6.5"
 tsify = { version = "=0.5.6", default-features = false, features = ["js"] }

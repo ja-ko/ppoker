@@ -76,7 +76,7 @@ The finished branch provides:
 - The native application retains notification eligibility, focus tracking, notification timers and delivery, changelog state, content, and configuration, and all auto-reveal state and behavior.
 - Notification, focus, changelog, and auto-reveal concerns must not appear in core configuration, WASM options, snapshots, commands, events, or authored web APIs. The ordinary manual reveal command remains part of the shared command contract.
 - “Protocol/activity log” means the existing room activity associated with upstream messages and shared client behavior. It does not mean native diagnostic logging, file logging, or the `tui_logger` view implemented by `LogPage`; those remain native.
-- Native-only presentation messages may be layered over the shared protocol/activity log by the TUI when required to preserve existing behavior. Notification-, changelog-, and auto-reveal-specific records must not enter shared state or the WASM projection.
+- Native-only presentation messages may be layered over the shared protocol/activity log by the TUI when required to preserve existing behavior. Notification-, changelog-, and auto-reveal-specific records must not enter shared state or the WASM API.
 - The native `App` may retain familiar adapter methods and projections for the TUI, but it must not maintain a second authoritative copy of shared room, history, round, or protocol/activity-log state.
 
 ### Keep Changes In Scope
@@ -131,9 +131,9 @@ web/
 
 There must be one normalized Rust representation of rooms, players, votes, phases, and history. Wire DTOs remain private. TypeScript consumes generated declarations or authored wrappers around those declarations; it must not maintain a handwritten duplicate domain model.
 
-- Keep the root `ppoker` package as the sole versioned and released package and set workspace `default-members = ["."]` so existing unqualified native build and release commands continue to target it.
-- Set `ppoker-core` and `ppoker-wasm` to fixed version `0.0.0` with `publish = false`, use path dependencies for them, and do not add them to release-please configuration or its manifest.
-- Set the web package to version `0.0.0` with `"private": true`; npm publication is not part of this feature.
+- Keep `default-members = ["."]` so existing unqualified native build and release commands continue to target the root package.
+- Keep explicit synchronized versions on the root package, `ppoker-core`, and `ppoker-wasm`; release-please's Rust strategy updates the Cargo manifests and lockfile. The member crates remain unpublished and path dependencies remain unversioned.
+- Keep the private web package version synchronized with the Rust release by listing `web/package.json` as an extra release-please JSON file. npm publication is not part of this feature.
 
 ## Required Functional Contracts
 
@@ -141,7 +141,7 @@ There must be one normalized Rust representation of rooms, players, votes, phase
 
 - Preserve the semantics of the existing `Room`, `Player`, vote, phase, user-role, log, and history types.
 - Add serde and TypeScript-facing derives only where required.
-- Follow the shared-time contract below for history, round, and protocol/activity-log values. If an unrelated existing type contains a native-only value, keep it native and create a small WASM-facing projection instead of redesigning unrelated consumers.
+- Follow the shared-time contract below for history, round, and protocol/activity-log values. Shared core types serialize their time fields as JavaScript-safe milliseconds for WASM consumers.
 - Preserve player and vote ordering used by the TUI.
 - Represent a numeric average as `Option<f32>` in shared state. No numeric votes means `None`, serialized to JavaScript as `null`; the native presentation adapter may preserve legacy rendering where necessary to keep existing snapshots unchanged.
 - Rust integer fields exposed to JavaScript must remain within JavaScript's safe integer range and generate TypeScript `number`, not `BigInt`.
@@ -152,8 +152,8 @@ There must be one normalized Rust representation of rooms, players, votes, phase
 - The native clock uses an `Instant` baseline. The WASM clock uses the browser monotonic clock. Deterministic tests use a manually advanced fake clock.
 - Native notification and auto-reveal timers continue to use native `Instant` values and do not use the core clock.
 - Shared models store clock-relative ticks and durations rather than serializing `Instant`.
-- WASM projections expose finite integral milliseconds as JavaScript `number` values after checking the safe-integer range. They must not expose `Instant`, `Duration`, `u64`/`BigInt`, `NaN`, or infinity.
-- Current-round snapshots contain fixed state such as the round number and round-start tick. Do not include a continuously changing elapsed-duration value in the cached snapshot; consumers may derive elapsed time from the fixed start tick.
+- WASM serialization exposes finite integral milliseconds as JavaScript `number` values after checking the safe-integer range. It must not expose `Instant`, `Duration`, `u64`/`BigInt`, `NaN`, or infinity.
+- The aggregate snapshot contains fixed round fields such as the round number and round-start tick. Do not include a continuously changing elapsed-duration value; consumers may derive elapsed time from the fixed start tick.
 - Completed-round durations are fixed values and may be included in history.
 - Reading a snapshot or advancing time alone never changes its revision.
 
@@ -194,7 +194,7 @@ There must be one normalized Rust representation of rooms, players, votes, phase
 - Importing the authored package has no initialization, network, or socket side effects.
 - The web package exports an explicit asynchronous `initializePpokerWasm()` operation. Concurrent and repeated successful calls share one initialization result.
 - After initialization, constructing `WasmPokerClient` is synchronous: it validates options and creates shared client state, but it does not open a socket.
-- The initial snapshot has revision `0`, connection status `disconnected`, `room: null`, no terminal error, and empty activity and history collections.
+- The initial snapshot has revision `0`, connection status `disconnected`, `room: null`, no terminal error, and empty log and history collections.
 - `connect()` creates the transport exactly once and changes status to `connecting`. Repeated calls while connecting or open are idempotent. Calls after terminal close throw a structured `Closed` error.
 - No application message is sent before the transport reports `opened`. Commands require an open connection and any authoritative room state needed for their validation; otherwise they throw a structured `NotReady` error.
 - Public connection states are `disconnected`, `connecting`, `open`, and `closed`. A terminal asynchronous transport or protocol failure is retained as a structured optional error on the closed snapshot.
@@ -225,13 +225,13 @@ The facade must provide safe lifecycle and conversion behavior without importing
 - Add `crates/ppoker-wasm` as a workspace `cdylib`/`rlib` crate.
 - Keep the facade thin: convert typed values, delegate to the portable client, and convert errors.
 - Generate TypeScript declarations from Rust with maintained released tooling where possible.
-- Use a released `tsify` version only to generate TypeScript declarations for serde domain projections, and use a released `serde-wasm-bindgen` version for runtime structured-value conversion. Do not use Tsify's `into_wasm_abi` or `from_wasm_abi` conversion paths.
+- Enable optional Tsify support on `ppoker-core` from `ppoker-wasm` and generate declarations for the shared core models directly. Use `serde-wasm-bindgen` for runtime structured-value conversion; do not use Tsify's `into_wasm_abi` or `from_wasm_abi` conversion paths.
 - Do not use deprecated or known-leaking wasm-bindgen conversion paths.
 - Avoid unreleased Git dependencies. If no released dependency can safely implement a required conversion, stop for maintainer approval before adding an immutable Git revision and document its age, reviewed delta, license, risk, and replacement condition.
 - Export structured JS values rather than JSON strings.
 - Export a typed options object containing endpoint, room, name, role, and only other portable client preferences that are actually implemented.
 - Export typed commands for vote, retract, rename, chat, reveal, and start new round.
-- Export a typed snapshot containing connection status, current room state, local vote/name as needed, logs/activity as safely representable, round/history data that already exists, and a monotonically changing revision suitable for an external store.
+- Export a minimal aggregate snapshot containing the core connection error/status, room, local vote, logs, and history directly, plus local name, round fields, average, and a monotonically changing revision suitable for an external store. Do not add parallel WASM domain snapshot types or compatibility aliases.
 - Do not expose notification, focus, changelog, auto-reveal, or diagnostic-log configuration or state, nor speculative capabilities, pending commands, or reconnect state.
 - Validate malformed options synchronously and return a stable structured JavaScript `Error`.
 - Implement the concrete browser transport in `ppoker-wasm` with `web-sys::WebSocket`. Retain all open, message, error, and close callback closures for the connection lifetime; unregister them during terminal cleanup before releasing the closures and socket handle.
@@ -312,14 +312,14 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 ### Required Rust Tests
 
 - Existing native unit and snapshot tests continue to pass unchanged.
-- Model serialization tests cover JavaScript-safe generated shapes and absent averages.
+- Model serialization tests cover direct core model names, JavaScript-safe generated shapes, and absent averages.
 - Protocol tests cover every command and representative full room payloads.
 - Protocol tests cover participant/spectator URLs, hostile path/query characters, Unicode, and unknown wire enum values.
 - Transport tests use a deterministic fake and cover opened-before-send, text delivery, close, errors, and cleanup.
 - Shared-clock tests cover protocol/activity timestamps, round starts, completed-round durations, and the rule that time advancement alone does not change a snapshot revision.
 - Portable behavior tests cover shared commands, authoritative room updates, protocol/activity-log deduplication, round transitions, history, and statistics.
 - Auto-reveal, notification, focus, changelog, and native diagnostic-log tests remain native.
-- WASM facade unit tests cover conversion, delegation, structured errors, and close behavior.
+- WASM facade unit tests cover serialization, delegation, structured errors, and close behavior without mirrored domain conversions.
 - wasm-bindgen browser tests cover structured values and both connection roles without relying on a live server.
 - Keep the existing live upstream tests working. Any new live test must remain small and bounded by deadlines; do not reorganize existing tests solely for coverage.
 
@@ -337,7 +337,7 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 - Use existing action version tags rather than introducing SHA pins.
 - Add only the steps or one focused workflow needed for WASM and web validation.
 - Use Ubuntu 22.04 for any new Linux build job unless there is a concrete reason otherwise.
-- Run frozen pnpm install, formatting, ESLint, `tsc --noEmit`, Vitest, frontend coverage generation, Vite build, WASM target checks, wasm-pack browser tests, and package verification.
+- Run frozen pnpm install, formatting, ESLint, `tsc --noEmit`, Vitest through coverage once, wasm-pack browser tests once, and deep package verification once. Package verification owns the production WASM/declaration/Vite build.
 - Do not add a native OS matrix, cargo-audit gate, fixed repository-wide tool suite, or strict coverage gate.
 - Keep `codecov.yml` defaults: range `55..75`, round down, precision 2, project status off, patch status off, and comments off.
 - Add only frontend-specific Codecov reporting configuration: a distinct frontend flag/path rooted at tracked `web` sources and exclusions for generated WASM/build output.
@@ -364,7 +364,7 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 - [x] [IMPLEMENTER] Convert the root manifest into a Cargo workspace without changing root binary or release behavior.
 - [x] [IMPLEMENTER] Add `ppoker-core` with only dependencies required by the moved model.
 - [x] [IMPLEMENTER] Move existing portable model definitions with minimal edits and update imports.
-- [x] [IMPLEMENTER] Keep native-only model values native or add small projections rather than redesigning unrelated consumers.
+- [x] [IMPLEMENTER] Keep native-only model values native and expose shared core models directly where they are WASM-safe.
 - [x] [IMPLEMENTER] Preserve existing ordering and display implementations.
 - [x] [IMPLEMENTER] Keep existing tests recognizable and do not relocate unrelated test modules.
 
@@ -427,7 +427,7 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 - [x] [IMPLEMENTER] Add `ppoker-wasm` with a thin typed facade over the portable client.
 - [x] [IMPLEMENTER] Add the concrete `web-sys::WebSocket` transport with retained callbacks and deterministic terminal cleanup.
 - [x] [IMPLEMENTER] Generate structured TypeScript types without handwritten domain duplication.
-- [x] [IMPLEMENTER] Add structured JS errors and safe option conversion.
+- [x] [IMPLEMENTER] Add structured JS errors and safe option conversion; keep malformed-option details facade-owned and use core errors for operational/terminal failures.
 - [x] [IMPLEMENTER] Exclude notification, focus, changelog, auto-reveal, diagnostic-log, and speculative contracts from the generated API.
 - [x] [IMPLEMENTER] Ignore generated wasm-pack output.
 

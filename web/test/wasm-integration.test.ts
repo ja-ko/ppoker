@@ -71,15 +71,11 @@ describe("generated WASM integration", () => {
         room: null,
         localName: role,
         localVote: null,
-        activity: [],
-        currentRound: {
-          number: 0,
-          startedAtMs: null,
-        },
+        log: [],
+        roundNumber: 0,
+        roundStartedAtMs: null,
         history: [],
-        statistics: {
-          average: null,
-        },
+        average: null,
       });
 
       const notReady = captureError(() => {

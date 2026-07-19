@@ -10,7 +10,9 @@ use crate::models::{
     UserType as AppUserType, Vote, VoteData,
 };
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Copy, Clone)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
+#[serde(rename_all = "camelCase")]
 pub enum ConnectionRole {
     Participant,
     Spectator,
