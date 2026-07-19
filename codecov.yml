@@ -6,3 +6,10 @@ coverage:
     project: off
     patch: off
 comment: false
+flags:
+  frontend:
+    paths:
+      - web/src/
+ignore:
+  - web/src/generated/**
+  - web/dist/**

@@ -1,0 +1,96 @@
+name: Web
+
+on: [pull_request, push]
+
+jobs:
+  validate:
+    runs-on: ubuntu-22.04
+    env:
+      CARGO_TERM_COLOR: always
+      CHROME_BIN: google-chrome
+      PNPM_BIN: pnpm
+      RUSTUP_TOOLCHAIN: "1.97.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.0
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install pinned Rust toolchain and WASM target
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target wasm32-unknown-unknown
+      - name: Install pinned WASM tools
+        run: |
+          cargo install wasm-pack --version 0.15.0 --locked
+          cargo install wasm-bindgen-cli --version 0.2.126 --locked
+      - name: Verify WASM and browser tools
+        run: |
+          test "$(rustc --version | cut -d ' ' -f 2)" = "$RUSTUP_TOOLCHAIN"
+          test "$(cargo --version | cut -d ' ' -f 2)" = "$RUSTUP_TOOLCHAIN"
+          test "$(wasm-pack --version)" = "wasm-pack 0.15.0"
+          test "$(wasm-bindgen --version)" = "wasm-bindgen 0.2.126"
+          test "$(wasm-bindgen-test-runner --version)" = "wasm-bindgen-test-runner 0.2.126"
+          google-chrome --version
+          chromedriver --version
+      - name: Install frontend dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: Check Rust workspace
+        run: cargo check --workspace --all-targets
+      - name: Check WASM targets
+        run: |
+          cargo check -p ppoker-core --target wasm32-unknown-unknown
+          cargo check -p ppoker-wasm --target wasm32-unknown-unknown
+      - name: Test WASM in headless Chrome
+        run: wasm-pack test --mode no-install --headless --chrome crates/ppoker-wasm
+      - name: Generate WASM from clean output
+        working-directory: web
+        run: pnpm run wasm:generate
+      - name: Check frontend formatting
+        working-directory: web
+        run: pnpm run format:check
+      - name: Lint frontend
+        working-directory: web
+        run: pnpm run lint
+      - name: Check frontend types
+        working-directory: web
+        run: pnpm run typecheck
+      - name: Emit frontend declarations
+        working-directory: web
+        run: pnpm run declarations
+      - name: Test frontend
+        working-directory: web
+        run: pnpm run test
+      - name: Generate frontend coverage
+        working-directory: web
+        run: pnpm run coverage
+      - name: Verify frontend coverage paths
+        run: |
+          count=0
+          while IFS= read -r source; do
+            case "$source" in
+              web/src/generated/*) exit 1 ;;
+              web/src/*) ;;
+              *) exit 1 ;;
+            esac
+            git ls-files --error-unmatch "$source"
+            count=$((count + 1))
+          done < <(sed -n 's/^SF://p' web/coverage/lcov.info)
+          test "$count" -gt 0
+      - name: Build frontend entrypoints
+        working-directory: web
+        run: pnpm run build
+      - name: Verify isolated package and browsers
+        working-directory: web
+        run: pnpm run package:verify
+      - name: Upload frontend coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          disable_search: true
+          files: web/coverage/lcov.info
+          flags: frontend
+          name: frontend
+          token: ${{ secrets.CODECOV_TOKEN }}

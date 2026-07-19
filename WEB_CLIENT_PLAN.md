@@ -416,7 +416,7 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 - [x] [TEST] Existing native live WSS tests pass in their existing organization.
 - [x] [TEST] Core client checks for native and `wasm32-unknown-unknown`.
 - [x] [TEST] Rust coverage is measured and targets at least 80% in every Rust metric without enforcement.
-- [ ] [REVIEW] A reviewer can trace moved native behavior directly into the shared code.
+- [x] [REVIEW] A reviewer can trace moved native behavior directly into the shared code.
 
 ### Slice 4: Typed WASM Facade
 
@@ -438,7 +438,7 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 - [x] [TEST] Headless browser wasm-bindgen tests pass.
 - [x] [TEST] `wasm-pack build` emits the expected generated declaration file; strict TypeScript consumption is validated in Slice 5.
 - [x] [TEST] Rust coverage is measured and targets at least 80% in every Rust metric without enforcement.
-- [ ] [REVIEW] The facade contains conversion/lifecycle code only, not duplicated client behavior.
+- [x] [REVIEW] The facade contains conversion/lifecycle code only, not duplicated client behavior.
 
 ### Slice 5: pnpm TypeScript Client Package
 
@@ -460,7 +460,7 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 - [x] [TEST] Generated and public declaration fixtures compile strictly and contain no authored `any` escape hatch.
 - [x] [TEST] Frontend coverage is measured and targets at least 80% for lines, branches, functions, and statements without enforcement.
 - [x] [TEST] Vite build and package verification pass from clean generated and distribution output.
-- [ ] [REVIEW] No npm/yarn lockfile or duplicate TypeScript domain model exists.
+- [x] [REVIEW] No npm/yarn lockfile or duplicate TypeScript domain model exists.
 
 ### Slice 6: React External Store And Hooks
 
@@ -482,7 +482,7 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 - [x] [TEST] Provider/hook and Strict Mode tests pass.
 - [x] [TEST] Formatting, ESLint, `tsc --noEmit`, Vitest, coverage generation, and Vite build pass.
 - [x] [TEST] Frontend coverage is measured and targets at least 80% in every frontend metric without enforcement.
-- [ ] [REVIEW] React code wraps generated/shared contracts and does not recreate Rust behavior.
+- [x] [REVIEW] React code wraps generated/shared contracts and does not recreate Rust behavior.
 
 ### Slice 7: Focused Automation And Package Documentation
 
@@ -490,36 +490,36 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 
 #### Implementation
 
-- [ ] [IMPLEMENTER] Add only focused WASM/web CI validation while preserving existing native/release workflow structure.
-- [ ] [IMPLEMENTER] Add frontend Codecov reporting without statuses or threshold enforcement.
-- [ ] [IMPLEMENTER] Add Cargo and `/web` Dependabot cooldown configuration without GitHub Actions updates.
-- [ ] [IMPLEMENTER] Add concise `web/README.md` documentation.
-- [ ] [IMPLEMENTER] Verify action references remain version tags and Linux release builds remain on Ubuntu 22.04.
+- [x] [IMPLEMENTER] Add only focused WASM/web CI validation while preserving existing native/release workflow structure.
+- [x] [IMPLEMENTER] Add frontend Codecov reporting without statuses or threshold enforcement.
+- [x] [IMPLEMENTER] Add Cargo and `/web` Dependabot cooldown configuration without GitHub Actions updates.
+- [x] [IMPLEMENTER] Add concise `web/README.md` documentation.
+- [x] [IMPLEMENTER] Verify action references remain version tags and Linux release builds remain on Ubuntu 22.04.
 
 #### Acceptance
 
-- [ ] [TEST] Every locally applicable Rust, WASM, pnpm, browser, Vite, and package command passes.
-- [ ] [TEST] Rust and frontend coverage reports are valid, correctly attributed, and target at least 80% without enforcement.
-- [ ] [TEST] Workflow syntax is valid and workflow commands match documented local commands.
-- [ ] [REVIEW] The final diff contains no unrelated updater, release, dependency-policy, test-layout, README, or CI rework.
+- [x] [TEST] Every locally applicable Rust, WASM, pnpm, browser, Vite, and package command passes.
+- [x] [TEST] Rust and frontend coverage reports are valid, correctly attributed, and target at least 80% without enforcement.
+- [x] [TEST] Workflow syntax is valid and workflow commands match documented local commands.
+- [x] [REVIEW] The final diff contains no unrelated updater, release, dependency-policy, test-layout, README, or CI rework.
 
 ## Final Acceptance Checklist
 
-- [ ] The branch contains a recognizable mechanical extraction of existing native code with only focused portability adaptations.
-- [ ] Git history separates moves from behavioral adaptations.
-- [ ] Existing native behavior and TUI snapshots remain unchanged unless explicitly approved.
-- [ ] Native notifications, focus, changelog, auto reveal, diagnostic logging, and their configuration remain outside `ppoker-core` and the WASM/public web contract.
-- [ ] Shared room state, protocol/activity logging, round tracking, history, and statistics have one authoritative owner in `ppoker-core`.
-- [ ] One normalized Rust model serves native and WASM consumers; wire DTOs remain private.
-- [ ] Native and WASM use one intentionally selected WebSocket implementation or one narrow shared transport boundary.
-- [ ] Participant and spectator connections work with the commands supported by the server.
-- [ ] The WASM facade is typed, thin, structured, and safely disposable.
-- [ ] The React package provides stable external-store semantics, deterministic cleanup, and typed commands.
-- [ ] pnpm is used exclusively and enforces a five-day minimum release age for normal dependency resolution.
-- [ ] Dependabot normal Cargo/web updates use a five-day cooldown; security updates may bypass it.
-- [ ] Vite, Vitest, coverage, ESLint, TypeScript checks, WASM browser tests, and package verification are present and passing.
-- [ ] Every commit measured applicable coverage and targeted at least 80% in every metric without adding enforcement.
-- [ ] Codecov retains its existing non-gating policy and reports frontend coverage separately.
-- [ ] Existing native/release workflows, Ubuntu 22.04 release compatibility, and updater dependencies remain unchanged; any root README edits are strictly end-user-facing.
-- [ ] `web/README.md` contains the package-specific developer and browser requirements.
-- [ ] No unresolved review finding remains.
+- [x] The branch contains a recognizable mechanical extraction of existing native code with only focused portability adaptations.
+- [x] Git history separates moves from behavioral adaptations.
+- [x] Existing native behavior and TUI snapshots remain unchanged unless explicitly approved.
+- [x] Native notifications, focus, changelog, auto reveal, diagnostic logging, and their configuration remain outside `ppoker-core` and the WASM/public web contract.
+- [x] Shared room state, protocol/activity logging, round tracking, history, and statistics have one authoritative owner in `ppoker-core`.
+- [x] One normalized Rust model serves native and WASM consumers; wire DTOs remain private.
+- [x] Native and WASM use one intentionally selected WebSocket implementation or one narrow shared transport boundary.
+- [x] Participant and spectator connections work with the commands supported by the server.
+- [x] The WASM facade is typed, thin, structured, and safely disposable.
+- [x] The React package provides stable external-store semantics, deterministic cleanup, and typed commands.
+- [x] pnpm is used exclusively and enforces a five-day minimum release age for normal dependency resolution.
+- [x] Dependabot normal Cargo/web updates use a five-day cooldown; security updates may bypass it.
+- [x] Vite, Vitest, coverage, ESLint, TypeScript checks, WASM browser tests, and package verification are present and passing.
+- [x] Every commit measured applicable coverage and targeted at least 80% in every metric without adding enforcement.
+- [x] Codecov retains its existing non-gating policy and reports frontend coverage separately.
+- [x] Existing native/release workflows, Ubuntu 22.04 release compatibility, and updater dependencies remain unchanged; any root README edits are strictly end-user-facing.
+- [x] `web/README.md` contains the package-specific developer and browser requirements.
+- [x] No unresolved review finding remains.
