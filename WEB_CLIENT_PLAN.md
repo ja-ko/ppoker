@@ -446,20 +446,20 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 
 #### Implementation
 
-- [ ] [IMPLEMENTER] Create the web package with pnpm, Vite, TypeScript, ESLint, Prettier, Vitest, jsdom, Testing Library, and coverage tooling.
-- [ ] [IMPLEMENTER] Configure the five-day pnpm release-age policy before resolving dependencies.
-- [ ] [IMPLEMENTER] Add clean WASM generation, explicit asynchronous initialization, and the authored `WasmPokerClient` wrapper that hides raw generated lifecycle and ABI exports.
-- [ ] [IMPLEMENTER] Add declaration emission, Vite library build, and isolated installed-package verification.
-- [ ] [IMPLEMENTER] Add strict generated and public declaration fixtures.
+- [x] [IMPLEMENTER] Create the web package with pnpm, Vite, TypeScript, ESLint, Prettier, Vitest, jsdom, Testing Library, and coverage tooling.
+- [x] [IMPLEMENTER] Configure the five-day pnpm release-age policy before resolving dependencies.
+- [x] [IMPLEMENTER] Add clean WASM generation, explicit asynchronous initialization, and the authored `WasmPokerClient` wrapper that hides raw generated lifecycle and ABI exports.
+- [x] [IMPLEMENTER] Add declaration emission, Vite library build, and isolated installed-package verification.
+- [x] [IMPLEMENTER] Add strict generated and public declaration fixtures.
 
 #### Acceptance
 
-- [ ] [TEST] Frozen pnpm install succeeds.
-- [ ] [TEST] Formatting, ESLint, and `tsc --noEmit` checks pass.
-- [ ] [TEST] Vitest tests and frontend coverage generation pass.
-- [ ] [TEST] Generated and public declaration fixtures compile strictly and contain no authored `any` escape hatch.
-- [ ] [TEST] Frontend coverage is measured and targets at least 80% for lines, branches, functions, and statements without enforcement.
-- [ ] [TEST] Vite build and package verification pass from clean generated and distribution output.
+- [x] [TEST] Frozen pnpm install succeeds.
+- [x] [TEST] Formatting, ESLint, and `tsc --noEmit` checks pass.
+- [x] [TEST] Vitest tests and frontend coverage generation pass.
+- [x] [TEST] Generated and public declaration fixtures compile strictly and contain no authored `any` escape hatch.
+- [x] [TEST] Frontend coverage is measured and targets at least 80% for lines, branches, functions, and statements without enforcement.
+- [x] [TEST] Vite build and package verification pass from clean generated and distribution output.
 - [ ] [REVIEW] No npm/yarn lockfile or duplicate TypeScript domain model exists.
 
 ### Slice 6: React External Store And Hooks

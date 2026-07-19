@@ -1,2 +1,7 @@
 /target
 /crates/ppoker-wasm/pkg/
+/web/node_modules/
+/web/dist/
+/web/coverage/
+/web/src/generated/ppoker-wasm/
+/web/*.tgz
