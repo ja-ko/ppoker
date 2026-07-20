@@ -3,6 +3,7 @@ import {
   createPokerClientStore,
   type PokerClientStore,
 } from "../src/client-store.js";
+import { deepFreeze } from "../src/readonly.js";
 import {
   createFakeClient,
   makeRichSnapshot,
@@ -132,6 +133,30 @@ describe("createPokerClientStore snapshots", () => {
     expect(snapshot.room?.players[0]?.name).toBe("Ada");
   });
 
+  it("deeply freezes independently shallow-frozen port snapshots", () => {
+    const rawSnapshot = makeRichSnapshot();
+    Object.freeze(rawSnapshot);
+    expect(Object.isFrozen(rawSnapshot)).toBe(true);
+    expect(Object.isFrozen(rawSnapshot.room)).toBe(false);
+    expect(Object.isFrozen(rawSnapshot.log)).toBe(false);
+    expect(Object.isFrozen(rawSnapshot.history)).toBe(false);
+    const { client } = createFakeClient(rawSnapshot);
+
+    const snapshot = createPokerClientStore(client).getSnapshot();
+
+    expect(Object.isFrozen(snapshot.room)).toBe(true);
+    expect(Object.isFrozen(snapshot.room?.players)).toBe(true);
+    expect(Object.isFrozen(snapshot.room?.players[0])).toBe(true);
+    expect(Object.isFrozen(snapshot.log)).toBe(true);
+    expect(Object.isFrozen(snapshot.log[0])).toBe(true);
+    expect(Object.isFrozen(snapshot.history)).toBe(true);
+    expect(Object.isFrozen(snapshot.history[0])).toBe(true);
+    expect(() =>
+      Object.assign(snapshot.room?.players[0] ?? {}, { name: "Mutated" }),
+    ).toThrow(TypeError);
+    expect(snapshot.room?.players[0]?.name).toBe("Ada");
+  });
+
   it("freezes cyclic and multiply referenced runtime values once", () => {
     const rawSnapshot = makeRichSnapshot();
     Object.defineProperty(rawSnapshot, "cycle", {
@@ -147,7 +172,57 @@ describe("createPokerClientStore snapshots", () => {
     expect(Object.isFrozen(snapshot.room?.players[0])).toBe(true);
   });
 
-  it("updates identity and notifies once only when a poll changes revision", () => {
+  it("does not traverse an already deeply frozen snapshot again", () => {
+    const rawSnapshot = makeRichSnapshot();
+    const log = rawSnapshot.log;
+    let logReads = 0;
+    Object.defineProperty(rawSnapshot, "log", {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        logReads += 1;
+        return log;
+      },
+    });
+    const frozenSnapshot = deepFreeze(rawSnapshot);
+    expect(logReads).toBe(1);
+    expect(Object.isFrozen(log)).toBe(true);
+
+    const { client } = createFakeClient(frozenSnapshot);
+    const snapshot = createPokerClientStore(client).getSnapshot();
+
+    expect(snapshot).toBe(frozenSnapshot);
+    expect(logReads).toBe(1);
+  });
+
+  it("only remembers roots after recursive freezing succeeds", () => {
+    const rawSnapshot = makeSnapshot();
+    const log = rawSnapshot.log;
+    const traversalError = new Error("nested traversal failed");
+    let logReads = 0;
+    Object.defineProperty(rawSnapshot, "log", {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        logReads += 1;
+        if (logReads === 1) {
+          throw traversalError;
+        }
+        return log;
+      },
+    });
+
+    expect(captureError(() => deepFreeze(rawSnapshot))).toBe(traversalError);
+    expect(Object.isFrozen(rawSnapshot)).toBe(false);
+    expect(deepFreeze(rawSnapshot)).toBe(rawSnapshot);
+    expect(logReads).toBe(2);
+    expect(Object.isFrozen(rawSnapshot)).toBe(true);
+
+    deepFreeze(rawSnapshot);
+    expect(logReads).toBe(2);
+  });
+
+  it("skips snapshots for unchanged polls and publishes changed polls once", () => {
     const { client, state } = createFakeClient();
     const store = createPokerClientStore(client);
     const listener = vi.fn();
@@ -156,7 +231,7 @@ describe("createPokerClientStore snapshots", () => {
 
     expect(store.poll()).toBe(false);
     expect(store.getSnapshot()).toBe(initial);
-    expect(client.snapshot).toHaveBeenCalledTimes(2);
+    expect(client.snapshot).toHaveBeenCalledOnce();
     expect(listener).not.toHaveBeenCalled();
 
     state.value = makeSnapshot(1, "open");
@@ -166,52 +241,13 @@ describe("createPokerClientStore snapshots", () => {
     expect(changed).not.toBe(initial);
     expect(changed).toBe(store.getSnapshot());
     expect(listener).toHaveBeenCalledOnce();
-    expect(client.snapshot).toHaveBeenCalledTimes(3);
+    expect(client.snapshot).toHaveBeenCalledTimes(2);
 
     client.poll.mockReturnValueOnce(true);
     expect(store.poll()).toBe(false);
     expect(store.getSnapshot()).toBe(changed);
     expect(listener).toHaveBeenCalledOnce();
-    expect(client.snapshot).toHaveBeenCalledTimes(4);
-  });
-
-  it("reconciles direct external commands and close after false polls", () => {
-    vi.useFakeTimers();
-    const { client, state } = createFakeClient(makeSnapshot(0, "open"));
-    client.vote.mockImplementation(() => {
-      state.value = makeSnapshot(1, "open", "External command");
-    });
-    client.close.mockImplementation(() => {
-      state.value = makeSnapshot(2, "closed", "External command");
-    });
-    const store = createPokerClientStore(client);
-    const listener = vi.fn();
-    const unsubscribe = store.subscribe(listener);
-
-    client.vote("8");
-    expect(store.poll()).toBe(true);
-    expect(store.getSnapshot()).toMatchObject({
-      revision: 1,
-      localName: "External command",
-      status: "open",
-    });
-    expect(listener).toHaveBeenCalledOnce();
-
-    client.close();
-    expect(store.poll()).toBe(true);
-    expect(store.getSnapshot()).toMatchObject({
-      revision: 2,
-      status: "closed",
-    });
-    expect(listener).toHaveBeenCalledTimes(2);
-
-    const closed = store.getSnapshot();
-    expect(store.poll()).toBe(false);
-    expect(store.getSnapshot()).toBe(closed);
-    expect(listener).toHaveBeenCalledTimes(2);
-    expect(client.poll).toHaveBeenCalledTimes(3);
-    expect(client.snapshot).toHaveBeenCalledTimes(4);
-    unsubscribe();
+    expect(client.snapshot).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -255,19 +291,27 @@ describe("createPokerClientStore operations", () => {
     expect(secondListener).toHaveBeenCalledTimes(7);
   });
 
-  it("refreshes an unchanged command without allocating or notifying", () => {
+  it("keeps authoritative successful commands unchanged until polling", () => {
+    vi.useFakeTimers();
     const { client } = createFakeClient();
     const store = createPokerClientStore(client);
     const listener = vi.fn();
-    store.subscribe(listener);
+    const unsubscribe = store.subscribe(listener);
     const initial = store.getSnapshot();
 
-    store.chat("sent without a visible state change");
+    store.vote("5");
+    store.retractVote();
+    store.rename("Authoritative name");
+    store.startNewRound();
 
-    expect(client.chat).toHaveBeenCalledOnce();
-    expect(client.snapshot).toHaveBeenCalledTimes(2);
+    expect(client.vote).toHaveBeenCalledWith("5");
+    expect(client.retractVote).toHaveBeenCalledOnce();
+    expect(client.rename).toHaveBeenCalledWith("Authoritative name");
+    expect(client.startNewRound).toHaveBeenCalledOnce();
+    expect(client.snapshot).toHaveBeenCalledTimes(5);
     expect(store.getSnapshot()).toBe(initial);
     expect(listener).not.toHaveBeenCalled();
+    unsubscribe();
   });
 
   it("heals cache changes before rethrowing connect and command errors", () => {
@@ -299,9 +343,10 @@ describe("createPokerClientStore operations", () => {
       expect(Object.isFrozen(store.getSnapshot())).toBe(true);
       expect(listener).toHaveBeenCalledOnce();
       expect(client.snapshot).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(status === "closed" ? 0 : 1);
 
       expect(store.poll()).toBe(false);
-      expect(client.snapshot).toHaveBeenCalledTimes(3);
+      expect(client.snapshot).toHaveBeenCalledTimes(2);
       expect(listener).toHaveBeenCalledOnce();
       unsubscribe();
     };
@@ -364,28 +409,28 @@ describe("createPokerClientStore operations", () => {
     );
   });
 
-  it("heals a poll failure, rethrows it by identity, and stays quiet later", () => {
+  it("propagates a poll failure without reading a snapshot and stops polling", () => {
     vi.useFakeTimers();
-    const { client, state } = createFakeClient(makeSnapshot(2, "open"));
+    const { client } = createFakeClient(makeSnapshot(2, "open"));
     const store = createPokerClientStore(client);
     const listener = vi.fn();
     const unsubscribe = store.subscribe(listener);
+    const initial = store.getSnapshot();
     const pollError = new Error("transport closed while polling");
     client.poll.mockImplementationOnce(() => {
-      state.value = makeSnapshot(3, "closed");
       throw pollError;
     });
 
     expect(captureError(() => store.poll())).toBe(pollError);
-    const healed = store.getSnapshot();
-    expect(healed).toMatchObject({ revision: 3, status: "closed" });
-    expect(listener).toHaveBeenCalledOnce();
-    expect(client.snapshot).toHaveBeenCalledTimes(2);
+    expect(store.getSnapshot()).toBe(initial);
+    expect(listener).not.toHaveBeenCalled();
+    expect(client.snapshot).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
 
     expect(store.poll()).toBe(false);
-    expect(store.getSnapshot()).toBe(healed);
-    expect(client.snapshot).toHaveBeenCalledTimes(3);
-    expect(listener).toHaveBeenCalledOnce();
+    expect(store.getSnapshot()).toBe(initial);
+    expect(client.snapshot).toHaveBeenCalledOnce();
+    expect(listener).not.toHaveBeenCalled();
     unsubscribe();
   });
 
@@ -413,6 +458,7 @@ describe("createPokerClientStore operations", () => {
     ).toBe(operationError);
     expect(store.getSnapshot()).toBe(initial);
     expect(listener).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
 
     client.poll.mockReturnValueOnce(true);
     expect(store.poll()).toBe(true);
@@ -421,6 +467,26 @@ describe("createPokerClientStore operations", () => {
       status: "closed",
     });
     expect(listener).toHaveBeenCalledOnce();
+    unsubscribe();
+  });
+
+  it("propagates a required snapshot error and stops interval polling", () => {
+    vi.useFakeTimers();
+    const { client } = createFakeClient(makeSnapshot(2, "open"));
+    const store = createPokerClientStore(client);
+    const listener = vi.fn();
+    const unsubscribe = store.subscribe(listener);
+    const initial = store.getSnapshot();
+    const snapshotError = new Error("snapshot unavailable after changed poll");
+    client.poll.mockReturnValueOnce(true);
+    client.snapshot.mockImplementationOnce(() => {
+      throw snapshotError;
+    });
+
+    expect(captureError(() => store.poll())).toBe(snapshotError);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(store.getSnapshot()).toBe(initial);
+    expect(listener).not.toHaveBeenCalled();
     unsubscribe();
   });
 
@@ -485,6 +551,51 @@ describe("createPokerClientStore subscriptions", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("keeps initial closed snapshots stable without starting an interval", () => {
+    vi.useFakeTimers();
+    const { client } = createFakeClient(makeSnapshot(4, "closed"));
+    const store = createPokerClientStore(client);
+    const initial = store.getSnapshot();
+    const listener = vi.fn();
+    const unsubscribe = store.subscribe(listener);
+
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(100);
+    expect(client.poll).not.toHaveBeenCalled();
+    expect(store.getSnapshot()).toBe(initial);
+    expect(listener).not.toHaveBeenCalled();
+    unsubscribe();
+    unsubscribe();
+  });
+
+  it("stops before notifying a remotely closed snapshot and never restarts", () => {
+    vi.useFakeTimers();
+    const { client, state } = createFakeClient(makeSnapshot(1, "open"));
+    const store = createPokerClientStore(client, { pollIntervalMs: 10 });
+    const timerCounts: number[] = [];
+    const unsubscribe = store.subscribe(() => {
+      timerCounts.push(vi.getTimerCount());
+    });
+    client.poll.mockImplementationOnce(() => {
+      state.value = makeSnapshot(2, "closed");
+      return true;
+    });
+
+    vi.advanceTimersByTime(10);
+    const closed = store.getSnapshot();
+    expect(closed).toMatchObject({ revision: 2, status: "closed" });
+    expect(timerCounts).toEqual([0]);
+    expect(vi.getTimerCount()).toBe(0);
+
+    const lateUnsubscribe = store.subscribe(vi.fn());
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(30);
+    expect(client.poll).toHaveBeenCalledOnce();
+    expect(store.getSnapshot()).toBe(closed);
+    unsubscribe();
+    lateUnsubscribe();
+  });
+
   it("tracks duplicate callback subscriptions independently", () => {
     vi.useFakeTimers();
     const { client, state } = createFakeClient();
@@ -529,6 +640,7 @@ describe("createPokerClientStore subscriptions", () => {
     expect(vi.getTimerCount()).toBe(0);
 
     state.value = makeSnapshot(1, "open");
+    client.poll.mockReturnValueOnce(true);
     expect(store.poll()).toBe(true);
     expect(failedListener).not.toHaveBeenCalled();
 
@@ -537,6 +649,7 @@ describe("createPokerClientStore subscriptions", () => {
     expect(setIntervalSpy).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(1);
     state.value = makeSnapshot(2, "open");
+    client.poll.mockReturnValueOnce(true);
     expect(store.poll()).toBe(true);
     expect(failedListener).not.toHaveBeenCalled();
     expect(activeListener).toHaveBeenCalledOnce();
@@ -618,28 +731,53 @@ describe("createPokerClientStore subscriptions", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("heals interval poll failures without uncaught timer errors", () => {
+  it("stops further ticks after an interval poll failure", () => {
     vi.useFakeTimers();
-    const { client, state } = createFakeClient(makeSnapshot(1, "open"));
+    const { client } = createFakeClient(makeSnapshot(1, "open"));
     const store = createPokerClientStore(client, { pollIntervalMs: 10 });
     const listener = vi.fn();
     const unsubscribe = store.subscribe(listener);
+    const initial = store.getSnapshot();
     const pollError = new Error("asynchronous transport failure");
     client.poll.mockImplementationOnce(() => {
-      state.value = makeSnapshot(2, "closed");
       throw pollError;
     });
 
     expect(() => vi.advanceTimersByTime(10)).not.toThrow();
-    const healed = store.getSnapshot();
-    expect(healed).toMatchObject({ revision: 2, status: "closed" });
-    expect(listener).toHaveBeenCalledOnce();
+    expect(store.getSnapshot()).toBe(initial);
+    expect(listener).not.toHaveBeenCalled();
+    expect(client.snapshot).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
 
-    vi.advanceTimersByTime(10);
-    expect(store.getSnapshot()).toBe(healed);
-    expect(listener).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(30);
+    expect(client.poll).toHaveBeenCalledOnce();
+    expect(store.getSnapshot()).toBe(initial);
     unsubscribe();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("stops interval polling when a changed poll cannot read a snapshot", () => {
+    vi.useFakeTimers();
+    const { client } = createFakeClient(makeSnapshot(1, "open"));
+    const store = createPokerClientStore(client, { pollIntervalMs: 10 });
+    const listener = vi.fn();
+    const unsubscribe = store.subscribe(listener);
+    const initial = store.getSnapshot();
+    const snapshotError = new Error("asynchronous snapshot failure");
+    client.poll.mockReturnValueOnce(true);
+    client.snapshot.mockImplementationOnce(() => {
+      throw snapshotError;
+    });
+
+    expect(() => vi.advanceTimersByTime(10)).not.toThrow();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(store.getSnapshot()).toBe(initial);
+    expect(listener).not.toHaveBeenCalled();
+    expect(client.snapshot).toHaveBeenCalledTimes(2);
+
+    vi.advanceTimersByTime(30);
+    expect(client.poll).toHaveBeenCalledOnce();
+    unsubscribe();
   });
 
   it("polls on a bounded real interval", async () => {

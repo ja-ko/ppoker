@@ -157,6 +157,7 @@ try {
   type ClientOptions,
   type ClientSnapshot,
   type PpokerWasmInitInput,
+  type PokerClientStore,
   type Vote,
 } from "@ppoker/web-client";
 
@@ -172,12 +173,16 @@ function inspectVote(vote: Vote): number | string | null {
 
 declare const options: ClientOptions;
 declare const snapshot: ClientSnapshot;
+declare const client: WasmPokerClient;
+declare const store: PokerClientStore;
 const dataViewInput: PpokerWasmInitInput = new DataView(new ArrayBuffer(8));
 const responseInput: PpokerWasmInitInput = new Response();
 const hasNoRawFree: HasNoRawFree = true;
 void initializePpokerWasm;
 void options.role;
 void snapshot.room?.players.map((player) => inspectVote(player.vote));
+client[Symbol.dispose]();
+store[Symbol.dispose]();
 void dataViewInput;
 void responseInput;
 void hasNoRawFree;
@@ -196,7 +201,7 @@ void hasNoRawFree;
       "--moduleResolution",
       "NodeNext",
       "--lib",
-      "ES2023,DOM,DOM.Iterable,ESNext.Disposable",
+      "ES2023,DOM,DOM.Iterable",
       typeFixture,
     ],
     consumerRoot,
@@ -223,6 +228,7 @@ const provider: ComponentProps<typeof PokerClientProvider> = { store };
 const snapshot: PokerClientSnapshot = usePokerClientSnapshot();
 void usePokerClientStore;
 void snapshot.room?.players[0]?.vote;
+store[Symbol.dispose]();
 void provider;
 `,
   );
@@ -239,7 +245,7 @@ void provider;
       "--moduleResolution",
       "NodeNext",
       "--lib",
-      "ES2023,DOM,DOM.Iterable,ESNext.Disposable",
+      "ES2023,DOM,DOM.Iterable",
       reactTypeFixture,
     ],
     consumerRoot,

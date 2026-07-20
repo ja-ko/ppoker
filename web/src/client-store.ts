@@ -1,3 +1,5 @@
+/// <reference lib="esnext.disposable" preserve="true" />
+
 import { deepFreeze, type DeepReadonly } from "./readonly.js";
 import type { ClientSnapshot } from "./wasm-client.js";
 
@@ -89,6 +91,13 @@ export function createPokerClientStore(
   let notificationRequested = false;
   let clearSubscriptionsAfterNotification = false;
 
+  const stopPolling = (): void => {
+    if (interval !== undefined) {
+      clearInterval(interval);
+      interval = undefined;
+    }
+  };
+
   const clearSubscriptions = (): void => {
     for (const subscription of subscriptions) {
       subscription.active = false;
@@ -149,12 +158,21 @@ export function createPokerClientStore(
   };
 
   const refresh = (): boolean => {
-    const nextSnapshot = client.snapshot();
-    if (nextSnapshot.revision === snapshot.revision) {
-      return false;
+    let nextSnapshot: ClientSnapshot;
+    try {
+      nextSnapshot = client.snapshot();
+      if (nextSnapshot.revision === snapshot.revision) {
+        return false;
+      }
+      snapshot = deepFreeze(nextSnapshot);
+    } catch (error: unknown) {
+      stopPolling();
+      throw error;
     }
 
-    snapshot = deepFreeze(nextSnapshot);
+    if (snapshot.status === "closed") {
+      stopPolling();
+    }
     notifySubscribers();
     return true;
   };
@@ -168,23 +186,18 @@ export function createPokerClientStore(
     throw operationError;
   };
 
-  const stopPolling = (): void => {
-    if (interval !== undefined) {
-      clearInterval(interval);
-      interval = undefined;
-    }
-  };
-
   const poll = (): boolean => {
     if (disposed) {
       return false;
     }
+    let changed: boolean;
     try {
-      client.poll();
+      changed = client.poll();
     } catch (error: unknown) {
-      return refreshAfterFailure(error);
+      stopPolling();
+      throw error;
     }
-    return refresh();
+    return changed ? refresh() : false;
   };
 
   const pollFromInterval = (): void => {
@@ -192,6 +205,7 @@ export function createPokerClientStore(
       poll();
     } catch {
       // Explicit polls propagate; interval polls have no error recipient.
+      stopPolling();
     }
   };
 
@@ -224,7 +238,7 @@ export function createPokerClientStore(
       listener,
     };
     subscriptions.add(subscription);
-    if (subscriptions.size === 1) {
+    if (subscriptions.size === 1 && snapshot.status !== "closed") {
       try {
         interval = setInterval(pollFromInterval, pollIntervalMs);
       } catch (error: unknown) {

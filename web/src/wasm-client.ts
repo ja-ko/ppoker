@@ -1,3 +1,5 @@
+/// <reference lib="esnext.disposable" preserve="true" />
+
 import initializeGeneratedWasm, {
   WasmPokerClient as GeneratedWasmPokerClient,
 } from "./generated/ppoker-wasm/ppoker_wasm.js";

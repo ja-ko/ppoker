@@ -55,8 +55,11 @@ entrypoint must not initialize WASM or open a socket; callers explicitly run
 `initializePpokerWasm()`, construct the client, and connect it.
 
 The store owns its client lifecycle and polling. Code that creates a store must
-eventually call `dispose()`. `PokerClientProvider` is non-owning: mounting or
-unmounting it does not connect, close, or dispose the supplied store.
+eventually call `dispose()`. After handing a client to `createPokerClientStore`,
+call commands through the store; direct use of that client is unsupported and
+is not reconciled when its `poll()` reports no visible change.
+`PokerClientProvider` is non-owning: mounting or unmounting it does not connect,
+close, or dispose the supplied store.
 
 Generated files under `src/generated/`, production output under `dist/`,
 coverage output, package archives, and installed dependencies are disposable

@@ -8,8 +8,16 @@ export type DeepReadonly<Value> = Value extends (
       ? { readonly [Key in keyof Value]: DeepReadonly<Value[Key]> }
       : Value;
 
+const deeplyFrozenRoots = new WeakSet<object>();
+
 export function deepFreeze<Value>(value: Value): DeepReadonly<Value> {
-  freezeValue(value, new WeakSet<object>());
+  if (typeof value === "object" && value !== null) {
+    if (deeplyFrozenRoots.has(value)) {
+      return value as DeepReadonly<Value>;
+    }
+    freezeValue(value, new WeakSet<object>());
+    deeplyFrozenRoots.add(value);
+  }
   return value as DeepReadonly<Value>;
 }
 
