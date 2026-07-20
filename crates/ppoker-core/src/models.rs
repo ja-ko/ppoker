@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-const MAX_SAFE_INTEGER: u128 = 9_007_199_254_740_991;
+pub(crate) const MAX_SAFE_INTEGER: u128 = 9_007_199_254_740_991;
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 #[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
@@ -146,13 +146,15 @@ fn serialize_duration_ms<S>(duration: &Duration, serializer: S) -> Result<S::Ok,
 where
     S: serde::Serializer,
 {
+    serializer.serialize_f64(duration_ms(*duration).map_err(serde::ser::Error::custom)?)
+}
+
+pub(crate) fn duration_ms(duration: Duration) -> Result<f64, &'static str> {
     let milliseconds = duration.as_millis();
     if milliseconds > MAX_SAFE_INTEGER {
-        return Err(serde::ser::Error::custom(
-            "duration exceeds the JavaScript safe integer range",
-        ));
+        return Err("duration exceeds the JavaScript safe integer range");
     }
-    serializer.serialize_f64(milliseconds as f64)
+    Ok(milliseconds as f64)
 }
 
 fn vote_rank(vote: &Vote) -> i32 {

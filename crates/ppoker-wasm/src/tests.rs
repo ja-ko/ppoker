@@ -1,8 +1,10 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 
-use ppoker_core::client::TransportEvent;
-use ppoker_core::models::{GamePhase, LogLevel, LogSource, Player, UserType, Vote};
+use ppoker_core::client::{ClientSnapshot, TransportEvent};
+use ppoker_core::models::{
+    GamePhase, HistoryEntry, LogEntry, LogLevel, LogSource, Player, Room, UserType, Vote, VoteData,
+};
 use ppoker_core::protocol::decode_room_snapshot;
 use serde_json::Value;
 
@@ -542,7 +544,7 @@ fn send_failures_commit_revision_and_terminal_state_without_local_domain_mutatio
 }
 
 #[test]
-fn errors_and_numeric_boundaries_have_stable_safe_shapes() {
+fn errors_have_stable_safe_shapes() {
     for core in [
         ClientErrorCode::NotReady,
         ClientErrorCode::InvalidCard,
@@ -554,19 +556,6 @@ fn errors_and_numeric_boundaries_have_stable_safe_shapes() {
         let facade = FacadeErrorCode::Core(core);
         assert_eq!(facade.as_str(), format!("{core:?}"));
     }
-
-    assert_eq!(duration_ms(Duration::from_millis(42)).unwrap(), 42.0);
-    assert_eq!(finite_average(None).unwrap(), None);
-    assert_eq!(finite_average(Some(4.5)).unwrap(), Some(4.5));
-    assert_eq!(
-        finite_average(Some(f32::NAN)).unwrap_err().code,
-        FacadeErrorCode::Core(ClientErrorCode::Protocol)
-    );
-    let unsafe_duration = Duration::from_millis((MAX_SAFE_INTEGER + 1) as u64);
-    assert_eq!(
-        duration_ms(unsafe_duration).unwrap_err().code,
-        FacadeErrorCode::Core(ClientErrorCode::Protocol)
-    );
 
     let error = ClientError {
         code: ClientErrorCode::Protocol,

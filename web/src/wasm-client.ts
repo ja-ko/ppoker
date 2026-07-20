@@ -22,6 +22,7 @@ import type {
   Vote,
   VoteData,
 } from "./generated/ppoker-wasm/ppoker_wasm.js";
+import type { PokerClientPort } from "./client-port.js";
 import { deepFreeze, type DeepReadonly } from "./readonly.js";
 
 export type ClientSnapshot = DeepReadonly<GeneratedClientSnapshot>;
@@ -76,7 +77,7 @@ export function initializePpokerWasm(
   return initialization;
 }
 
-export class WasmPokerClient {
+export class WasmPokerClient implements PokerClientPort<ClientSnapshot> {
   #client: GeneratedWasmPokerClient | undefined;
   #lastSnapshot: ClientSnapshot;
 

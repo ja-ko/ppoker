@@ -1,3 +1,7 @@
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 export function pnpmInvocation(
   environment = process.env,
   platform = process.platform,
@@ -23,6 +27,31 @@ export function pnpmInvocation(
   }
   return {
     command: "pnpm",
+    arguments: [],
+  };
+}
+
+export function wasmPackInvocation(
+  environment = process.env,
+  platform = process.platform,
+) {
+  if (environment.WASM_PACK !== undefined) {
+    if (/\.(?:cmd|bat)$/iu.test(environment.WASM_PACK)) {
+      throw new Error(
+        "WASM_PACK must name a directly executable binary; Windows .cmd and .bat launchers are not supported.",
+      );
+    }
+    return { command: environment.WASM_PACK, arguments: [] };
+  }
+
+  const cargoHome = environment.CARGO_HOME ?? join(homedir(), ".cargo");
+  const installed = join(
+    cargoHome,
+    "bin",
+    platform === "win32" ? "wasm-pack.exe" : "wasm-pack",
+  );
+  return {
+    command: existsSync(installed) ? installed : "wasm-pack",
     arguments: [],
   };
 }

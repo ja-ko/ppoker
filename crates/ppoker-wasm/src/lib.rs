@@ -3,9 +3,9 @@ use std::time::Duration;
 
 use js_sys::{Error as JsError, Reflect};
 use ppoker_core::client::{
-    ClientError, ClientErrorCode, Clock, ConnectionStatus, Session, Transport, WebPokerClient,
+    ClientError, ClientErrorCode, ClientSnapshot, Clock, ConnectionStatus, Session, Transport,
+    WebPokerClient,
 };
-use ppoker_core::models::{HistoryEntry, LogEntry, Room, VoteData};
 use ppoker_core::protocol::{build_room_url, ConnectionRole};
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
@@ -15,8 +15,6 @@ use wasm_bindgen::prelude::*;
 mod transport;
 #[cfg(any(test, target_arch = "wasm32"))]
 mod transport_queue;
-
-const MAX_SAFE_INTEGER: u128 = 9_007_199_254_740_991;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize, Tsify)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -32,23 +30,6 @@ pub struct ClientOptions {
 pub struct InvalidOptionsDetails {
     pub field: String,
     pub reason: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Tsify)]
-#[serde(rename_all = "camelCase")]
-#[tsify(missing_as_null)]
-pub struct ClientSnapshot {
-    pub revision: u32,
-    pub status: ConnectionStatus,
-    pub terminal_error: Option<ClientError>,
-    pub room: Option<Room>,
-    pub local_name: String,
-    pub local_vote: Option<VoteData>,
-    pub log: Vec<LogEntry>,
-    pub round_number: u32,
-    pub round_started_at_ms: Option<f64>,
-    pub history: Vec<HistoryEntry>,
-    pub average: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -278,46 +259,8 @@ impl ClientFacade {
     }
 
     fn snapshot(&self) -> Result<ClientSnapshot, FacadeError> {
-        for entry in self.session.log() {
-            duration_ms(entry.timestamp)?;
-        }
-        for entry in self.session.history() {
-            duration_ms(entry.length)?;
-            finite_average(entry.average)?;
-        }
-        Ok(ClientSnapshot {
-            revision: self.session.revision(),
-            status: self.session.status(),
-            terminal_error: self.session.terminal_error().cloned(),
-            room: self.session.room().cloned(),
-            local_name: self.session.name().to_string(),
-            local_vote: self.session.own_vote().clone(),
-            log: self.session.log().to_vec(),
-            round_number: self.session.round_number(),
-            round_started_at_ms: self.session.round_start().map(duration_ms).transpose()?,
-            history: self.session.history().to_vec(),
-            average: finite_average(self.session.average_votes())?,
-        })
+        self.session.snapshot().map_err(FacadeError::from)
     }
-}
-
-fn finite_average(average: Option<f32>) -> Result<Option<f32>, FacadeError> {
-    match average {
-        Some(value) if !value.is_finite() => Err(FacadeError::protocol(
-            "Client snapshot contains an invalid average.",
-        )),
-        average => Ok(average),
-    }
-}
-
-fn duration_ms(duration: Duration) -> Result<f64, FacadeError> {
-    let milliseconds = duration.as_millis();
-    if milliseconds > MAX_SAFE_INTEGER {
-        return Err(FacadeError::protocol(
-            "Client snapshot contains a time outside the JavaScript safe integer range.",
-        ));
-    }
-    Ok(milliseconds as f64)
 }
 
 fn parse_options(value: JsValue) -> Result<ClientOptions, FacadeError> {

@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 import type { ClientSnapshot, ConnectionStatus } from "../src/wasm-client.js";
-import type { PokerClientPort } from "../src/client-store.js";
+import type { PokerClientPort } from "../src/index.js";
 
 export function makeSnapshot(
   revision = 0,

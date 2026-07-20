@@ -1,22 +1,11 @@
 /// <reference lib="esnext.disposable" preserve="true" />
 
+import type { PokerClientPort as ClientPort } from "./client-port.js";
 import { deepFreeze, type DeepReadonly } from "./readonly.js";
 import type { ClientSnapshot } from "./wasm-client.js";
 
 export type PokerClientSnapshot = DeepReadonly<ClientSnapshot>;
-
-export interface PokerClientPort {
-  connect(): void;
-  poll(): boolean;
-  snapshot(): ClientSnapshot;
-  vote(value: string): void;
-  retractVote(): void;
-  rename(name: string): void;
-  chat(message: string): void;
-  reveal(): void;
-  startNewRound(): void;
-  close(): void;
-}
+export type PokerClientPort = ClientPort<ClientSnapshot>;
 
 export interface PokerClientStoreOptions {
   readonly pollIntervalMs?: number;

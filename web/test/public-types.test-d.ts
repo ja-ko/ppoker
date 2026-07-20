@@ -108,7 +108,9 @@ inspectSnapshot(snapshot);
 inspectSnapshot(store.getSnapshot());
 inspectSnapshot(store.getServerSnapshot());
 const createdStore = createPokerClientStore(port, { pollIntervalMs: 25 });
+const wasmStore = createPokerClientStore(client);
 createdStore.dispose();
+wasmStore.dispose();
 
 declare const readonlySnapshot: PokerClientSnapshot;
 type DerivedReadonlySnapshot = DeepReadonly<ClientSnapshot>;

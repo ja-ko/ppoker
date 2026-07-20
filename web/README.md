@@ -8,12 +8,16 @@ Run pnpm commands from `web/` unless noted otherwise.
 
 ## Prerequisites
 
-WASM generation and browser tests require the Rust WASM target, `wasm-pack`,
-and Chrome/Chromium with a compatible WebDriver:
+Web validation uses exactly Node.js 20.19.0, Rust 1.97.1, and wasm-pack 0.15.0.
+WASM generation and browser tests also require the Rust WASM target and
+Chrome/Chromium with a compatible WebDriver. Activate the pinned Rust toolchain
+for the full `pnpm run check` process:
 
 ```sh
-rustup target add wasm32-unknown-unknown
-cargo install wasm-pack --locked
+rustup toolchain install 1.97.1
+rustup target add wasm32-unknown-unknown --toolchain 1.97.1
+cargo +1.97.1 install wasm-pack --version 0.15.0 --locked
+export RUSTUP_TOOLCHAIN=1.97.1
 ```
 
 The browser suite includes one bounded connection to the live upstream
@@ -37,7 +41,7 @@ The native Rust workspace suite is intentionally separate.
 Run `pnpm run wasm:generate` after changing shared Rust models, the WASM facade,
 or generated TypeScript contracts when you need fresh bindings without a full
 build. Generation deletes and recreates `src/generated/ppoker-wasm/` using
-`wasm-pack build --target web`.
+`wasm-pack build --target web --locked`.
 
 `pnpm run build` cleans `dist/`, regenerates WASM, emits declarations, and
 builds both package entrypoints. `pnpm run package:verify` owns that same

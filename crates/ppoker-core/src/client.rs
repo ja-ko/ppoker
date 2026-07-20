@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
@@ -6,7 +7,9 @@ use std::time::Duration;
 use log::warn;
 use serde::Serialize;
 
-use crate::models::{GamePhase, HistoryEntry, LogEntry, LogSource, Room, Vote, VoteData};
+use crate::models::{
+    duration_ms, GamePhase, HistoryEntry, LogEntry, LogSource, Room, Vote, VoteData,
+};
 use crate::protocol::{
     decode_room_snapshot, encode_change_name, encode_chat_message, encode_retract_vote,
     encode_reveal_cards, encode_start_new_round, encode_vote, RoomSnapshot,
@@ -97,6 +100,24 @@ pub enum ConnectionStatus {
     Connecting,
     Open,
     Closed,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
+#[cfg_attr(feature = "typescript", tsify(missing_as_null))]
+#[serde(rename_all = "camelCase")]
+pub struct ClientSnapshot {
+    pub revision: u32,
+    pub status: ConnectionStatus,
+    pub terminal_error: Option<ClientError>,
+    pub room: Option<Room>,
+    pub local_name: String,
+    pub local_vote: Option<VoteData>,
+    pub log: Vec<LogEntry>,
+    pub round_number: u32,
+    pub round_started_at_ms: Option<f64>,
+    pub history: Vec<HistoryEntry>,
+    pub average: Option<f32>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -414,6 +435,7 @@ pub struct Session<C: PokerClient> {
     name: String,
     room: Option<Room>,
     log: Vec<LogEntry>,
+    seen_server_log_indexes: HashSet<u32>,
     round_number: u32,
     round_start: Option<Duration>,
     history: Vec<HistoryEntry>,
@@ -430,6 +452,7 @@ impl<C: PokerClient> Session<C> {
             name,
             room: None,
             log: vec![],
+            seen_server_log_indexes: HashSet::new(),
             round_number: 0,
             round_start: None,
             history: vec![],
@@ -482,6 +505,30 @@ impl<C: PokerClient> Session<C> {
 
     pub fn revision(&self) -> u32 {
         self.revision
+    }
+
+    pub fn snapshot(&self) -> ClientResult<ClientSnapshot> {
+        for entry in &self.log {
+            snapshot_duration_ms(entry.timestamp)?;
+        }
+        for entry in &self.history {
+            snapshot_duration_ms(entry.length)?;
+            snapshot_average(entry.average)?;
+        }
+
+        Ok(ClientSnapshot {
+            revision: self.revision,
+            status: self.status(),
+            terminal_error: self.terminal_error().cloned(),
+            room: self.room.clone(),
+            local_name: self.name.clone(),
+            local_vote: self.vote.clone(),
+            log: self.log.clone(),
+            round_number: self.round_number,
+            round_started_at_ms: self.round_start.map(snapshot_duration_ms).transpose()?,
+            history: self.history.clone(),
+            average: snapshot_average(self.average_votes())?,
+        })
     }
 
     pub fn status(&self) -> ConnectionStatus {
@@ -586,11 +633,7 @@ impl<C: PokerClient> Session<C> {
             || previous_name != self.name
             || previous_vote != self.vote;
         for log in snapshot.log {
-            if !self
-                .log
-                .iter()
-                .any(|entry| entry.server_index == Some(log.server_index))
-            {
+            if self.seen_server_log_indexes.insert(log.server_index) {
                 self.log.push(LogEntry {
                     timestamp: now,
                     level: log.level,
@@ -771,6 +814,23 @@ impl<C: PokerClient> Session<C> {
             false
         }
     }
+}
+
+fn snapshot_average(average: Option<f32>) -> ClientResult<Option<f32>> {
+    match average {
+        Some(value) if !value.is_finite() => Err(ClientError::protocol(
+            "Client snapshot contains an invalid average.",
+        )),
+        average => Ok(average),
+    }
+}
+
+fn snapshot_duration_ms(duration: Duration) -> ClientResult<f64> {
+    duration_ms(duration).map_err(|_| {
+        ClientError::protocol(
+            "Client snapshot contains a time outside the JavaScript safe integer range.",
+        )
+    })
 }
 
 impl Session<WebPokerClient> {
@@ -1506,6 +1566,123 @@ mod tests {
         assert_eq!(session.log[1].timestamp, Duration::from_secs(4));
         assert_eq!(session.round_number, 1);
         assert!(session.history.is_empty());
+    }
+
+    #[test]
+    fn with_room_snapshot_indexes_sparse_logs_before_cumulative_updates() {
+        let clock = Rc::new(ManualClock::default());
+        let payload = |appended: bool| {
+            let mut logs = vec![
+                serde_json::json!({ "level": "INFO", "message": "first" }),
+                serde_json::json!({ "level": "FUTURE_LEVEL", "message": "unknown" }),
+                serde_json::json!({ "level": "CHAT", "message": "third" }),
+            ];
+            if appended {
+                logs.push(serde_json::json!({ "level": "ERROR", "message": "fourth" }));
+            }
+            serde_json::json!({
+                "roomId": "log-room",
+                "deck": [],
+                "gamePhase": "PLAYING",
+                "users": [],
+                "average": "0",
+                "log": logs,
+            })
+            .to_string()
+        };
+
+        let mut session = Session::with_room_snapshot(
+            WebPokerClient::new(),
+            "Alice".to_string(),
+            clock.clone(),
+            snapshot(payload(false)),
+        );
+        assert_eq!(session.revision(), 1);
+        assert_eq!(
+            session
+                .log()
+                .iter()
+                .map(|entry| (entry.server_index, entry.message.as_str(), entry.timestamp))
+                .collect::<Vec<_>>(),
+            [
+                (Some(0), "first", Duration::ZERO),
+                (Some(2), "third", Duration::ZERO),
+            ]
+        );
+
+        clock.advance(Duration::from_secs(5));
+        session.apply_room_snapshot(snapshot(payload(true)));
+        assert_eq!(session.revision(), 2);
+        session.apply_room_snapshot(snapshot(payload(true)));
+
+        assert_eq!(
+            session
+                .log()
+                .iter()
+                .map(|entry| (entry.server_index, entry.message.as_str(), entry.timestamp))
+                .collect::<Vec<_>>(),
+            [
+                (Some(0), "first", Duration::ZERO),
+                (Some(2), "third", Duration::ZERO),
+                (Some(3), "fourth", Duration::from_secs(5)),
+            ]
+        );
+        assert_eq!(session.revision(), 2);
+    }
+
+    #[test]
+    fn aggregate_snapshot_is_core_owned_and_uses_safe_milliseconds() {
+        let clock = Rc::new(ManualClock::default());
+        let mut session = new_session(clock.clone());
+        session.apply_room_snapshot(snapshot(room_payload(
+            "PLAYING",
+            &[("Alice", "5", true)],
+            &[("INFO", "joined")],
+        )));
+        clock.advance(Duration::from_millis(2500));
+        session.apply_room_snapshot(snapshot(room_payload(
+            "CARDS_REVEALED",
+            &[("Alice", "5", true)],
+            &[("INFO", "joined")],
+        )));
+
+        let value = serde_json::to_value(session.snapshot().unwrap()).unwrap();
+        assert_eq!(value["revision"], 2);
+        assert_eq!(value["status"], "disconnected");
+        assert_eq!(value["terminalError"], serde_json::Value::Null);
+        assert_eq!(value["room"]["name"], "test-room");
+        assert_eq!(value["localName"], "Alice");
+        assert_eq!(value["localVote"]["value"], 5);
+        assert_eq!(value["log"][0]["timestampMs"], 0.0);
+        assert_eq!(value["roundNumber"], 1);
+        assert_eq!(value["roundStartedAtMs"], 0.0);
+        assert_eq!(value["history"][0]["lengthMs"], 2500.0);
+        assert_eq!(value["average"], 5.0);
+    }
+
+    #[test]
+    fn aggregate_snapshot_rejects_unsafe_times_and_non_finite_averages_in_core() {
+        let unsafe_duration = Duration::from_millis((crate::models::MAX_SAFE_INTEGER + 1) as u64);
+        let mut session = new_session(Rc::new(ManualClock::default()));
+        session.round_start = Some(unsafe_duration);
+        assert_eq!(
+            session.snapshot().unwrap_err().code,
+            ClientErrorCode::Protocol
+        );
+
+        session.round_start = None;
+        session.history.push(HistoryEntry {
+            round_number: 1,
+            average: Some(f32::NAN),
+            length: Duration::ZERO,
+            votes: vec![],
+            deck: vec![],
+            own_vote: None,
+        });
+        assert_eq!(
+            session.snapshot().unwrap_err().code,
+            ClientErrorCode::Protocol
+        );
     }
 
     #[test]

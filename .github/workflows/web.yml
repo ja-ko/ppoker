@@ -19,14 +19,14 @@ jobs:
           package_json_file: web/package.json
       - uses: actions/setup-node@v4
         with:
-          node-version-file: web/package.json
+          node-version: 20.19.0
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: wasm32-unknown-unknown
       - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
+        run: cargo install wasm-pack --version 0.15.0 --locked
       - name: Install frontend dependencies
         working-directory: web
         run: pnpm install --frozen-lockfile

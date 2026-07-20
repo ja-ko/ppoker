@@ -4,8 +4,6 @@ use std::time::{Duration, Instant};
 use log::{debug, info};
 use ppoker_core::client::{Transport, TransportEvent};
 use ppoker_core::protocol::{build_room_url, ConnectionRole};
-#[cfg(test)]
-use ppoker_core::protocol::{decode_room_snapshot, RoomSnapshot};
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
@@ -17,13 +15,6 @@ pub struct PokerSocket {
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
     last_ping: Instant,
     opened_pending: bool,
-}
-
-#[cfg(test)]
-#[derive(Debug)]
-pub enum IncomingMessage {
-    Close,
-    RoomUpdate(RoomSnapshot),
 }
 
 impl PokerSocket {
@@ -57,61 +48,7 @@ impl PokerSocket {
         })
     }
 
-    pub fn send_request(&mut self, body: String) -> AppResult<()> {
-        debug!("Sending message: {:?}", body);
-        self.socket.send(Message::Text(body.into()))?;
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub fn read(&mut self) -> AppResult<Option<IncomingMessage>> {
-        if Instant::now() - self.last_ping > Duration::from_secs(30) {
-            self.ping()?;
-        }
-        let result = self.socket.read();
-        if let Err(tungstenite::Error::Io(e)) = &result {
-            if e.kind() == std::io::ErrorKind::WouldBlock {
-                return Ok(None);
-            }
-        }
-        let message = result?;
-        match message {
-            Message::Text(text) => {
-                debug!("Got message from server: {}", text);
-                return Ok(Some(IncomingMessage::RoomUpdate(decode_room_snapshot(
-                    &text,
-                )?)));
-            }
-            Message::Binary(_) => {}
-            Message::Ping(d) => {
-                debug!("Ping: {:?}", d);
-            }
-            Message::Pong(d) => {
-                debug!("Pong: {:?}", d)
-            }
-            Message::Close(_) => {
-                debug!("Server closed connection.");
-                return Ok(Some(IncomingMessage::Close));
-            }
-            Message::Frame(_) => {}
-        }
-        Ok(None)
-    }
-
-    #[cfg(test)]
-    pub fn read_all(&mut self) -> AppResult<Vec<IncomingMessage>> {
-        let mut result = vec![];
-        loop {
-            let message = self.read()?;
-            if let Some(message) = message {
-                result.push(message);
-            } else {
-                return Ok(result);
-            }
-        }
-    }
-
-    pub fn ping(&mut self) -> AppResult<()> {
+    fn ping(&mut self) -> tungstenite::Result<()> {
         self.socket.send(Message::Ping(vec![0x13, 0x37].into()))?;
         self.last_ping = Instant::now();
 
@@ -160,7 +97,9 @@ impl Transport for PokerSocket {
     }
 
     fn send_text(&mut self, message: String) -> Result<(), String> {
-        self.send_request(message)
+        debug!("Sending message: {:?}", message);
+        self.socket
+            .send(Message::Text(message.into()))
             .map_err(|error| error.to_string())
     }
 
@@ -171,155 +110,218 @@ impl Transport for PokerSocket {
 
 #[cfg(test)]
 mod tests {
+    use std::net::TcpListener;
+    use std::rc::Rc;
+    use std::sync::mpsc;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
-    use pretty_assertions::assert_matches;
-
-    use crate::app::AppResult;
-    use crate::config::Config;
-    use crate::models::{GamePhase, UserType, Vote, VoteData};
-    use crate::web::ws::{IncomingMessage, PokerSocket};
-    use ppoker_core::protocol::{
-        encode_change_name, encode_retract_vote, encode_reveal_cards, encode_vote,
+    use ppoker_core::client::{
+        ClientError, ClientErrorCode, Clock, ConnectionStatus, Session, WebPokerClient,
     };
+    use ppoker_core::models::{GamePhase, UserType, Vote, VoteData};
+    use tungstenite::{accept, Message};
 
-    fn get_config() -> Config {
+    use crate::config::Config;
+    use crate::web::ws::PokerSocket;
+
+    struct TestClock(Instant);
+
+    impl Clock for TestClock {
+        fn now(&self) -> Duration {
+            self.0.elapsed()
+        }
+    }
+
+    fn config_for(listener: &TcpListener) -> Config {
         let mut config = Config::default();
-        config.name = "Johnnie Waters".to_owned();
-        return config;
+        config.server = format!("ws://{}", listener.local_addr().unwrap());
+        config.room = "native-production-path".to_string();
+        config.name = "Johnnie Waters".to_string();
+        config
+    }
+
+    fn room_payload(name: &str, phase: &str, vote: &str) -> String {
+        let average = if vote.is_empty() { "0" } else { vote };
+        format!(
+            r#"{{"roomId":"native-production-path","deck":["3","5","8","13","?"],"gamePhase":"{phase}","users":[{{"username":"{name}","userType":"PARTICIPANT","yourUser":true,"cardValue":"{vote}"}}],"average":"{average}","log":[{{"level":"INFO","message":"joined"}}]}}"#
+        )
+    }
+
+    fn session(config: &Config, socket: PokerSocket) -> Session<WebPokerClient> {
+        let mut session = Session::new(
+            WebPokerClient::new(),
+            config.name.clone(),
+            Rc::new(TestClock(Instant::now())),
+        );
+        session.connect(Box::new(socket)).unwrap();
+        session
+    }
+
+    fn update_until(
+        session: &mut Session<WebPokerClient>,
+        condition: impl Fn(&Session<WebPokerClient>) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            session.update().unwrap();
+            if condition(session) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        panic!("timed out waiting for a production client update");
+    }
+
+    fn update_until_error(session: &mut Session<WebPokerClient>) -> ClientError {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            match session.update() {
+                Ok(_) => thread::sleep(Duration::from_millis(5)),
+                Err(error) => return error,
+            }
+        }
+        panic!("timed out waiting for a production client error");
     }
 
     #[test]
-    fn connect() {
-        let mut client = PokerSocket::connect(&get_config()).unwrap();
-        thread::sleep(Duration::from_millis(250));
-        let message = client.read().unwrap();
-        if let Some(message) = message {
-            assert_matches!(message, IncomingMessage::RoomUpdate(_));
-        } else {
-            panic!("Didn't get an update from server.");
+    fn production_path_connects_decodes_snapshots_and_sends_all_commands() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let config = config_for(&listener);
+        let (requests_tx, requests_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut socket = accept(stream).unwrap();
+            socket
+                .send(Message::Text(
+                    room_payload("Johnnie Waters", "PLAYING", "").into(),
+                ))
+                .unwrap();
+
+            let mut requests = vec![];
+            while requests.len() < 6 {
+                if let Message::Text(request) = socket.read().unwrap() {
+                    if request.contains("RevealCards") {
+                        socket
+                            .send(Message::Text(
+                                room_payload("Ralph Muller", "CARDS_REVEALED", "13").into(),
+                            ))
+                            .unwrap();
+                    }
+                    requests.push(request.to_string());
+                }
+            }
+            requests_tx.send(requests).unwrap();
+        });
+
+        let socket = PokerSocket::connect(&config).unwrap();
+        let mut client = session(&config, socket);
+        update_until(&mut client, |session| session.room().is_some());
+        let room = client.room().unwrap();
+        assert_eq!(client.status(), ConnectionStatus::Open);
+        assert_eq!(room.name, config.room);
+        assert_eq!(room.players[0].name, "Johnnie Waters");
+        assert!(room.players[0].is_you);
+        assert_eq!(room.players[0].user_type, UserType::Player);
+        assert_eq!(client.log()[0].message, "joined");
+
+        client.rename("Ralph Muller".to_string()).unwrap();
+        client.vote("13").unwrap();
+        client.retract_vote().unwrap();
+        client.chat("hello".to_string()).unwrap();
+        client.reveal().unwrap();
+        update_until(&mut client, |session| {
+            session.room().map(|room| room.phase) == Some(GamePhase::Revealed)
+        });
+        assert_eq!(
+            client.room().unwrap().players[0].vote,
+            Vote::Revealed(VoteData::Number(13))
+        );
+        client.restart().unwrap();
+
+        assert_eq!(
+            requests_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            [
+                r#"{"requestType":"ChangeName","name":"Ralph Muller"}"#,
+                r#"{"requestType":"PlayCard","cardValue":"13"}"#,
+                r#"{"requestType":"PlayCard","cardValue":null}"#,
+                r#"{"requestType":"ChatMessage","message":"hello"}"#,
+                r#"{"requestType":"RevealCards"}"#,
+                r#"{"requestType":"StartNewRound"}"#,
+            ]
+        );
+        assert!(client.close());
+        assert!(!client.close());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn production_path_maps_protocol_failures_and_remote_close_terminally() {
+        for (payload, expected_code, terminal_error) in [
+            (Some("not json"), ClientErrorCode::Protocol, true),
+            (None, ClientErrorCode::Closed, false),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let config = config_for(&listener);
+            let server = thread::spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                let mut socket = accept(stream).unwrap();
+                if let Some(payload) = payload {
+                    socket.send(Message::Text(payload.into())).unwrap();
+                    let _ = socket.read();
+                } else {
+                    socket.close(None).unwrap();
+                }
+            });
+
+            let socket = PokerSocket::connect(&config).unwrap();
+            let mut client = session(&config, socket);
+            let error = update_until_error(&mut client);
+            assert_eq!(error.code, expected_code);
+            assert_eq!(client.status(), ConnectionStatus::Closed);
+            assert_eq!(client.terminal_error().is_some(), terminal_error);
+            assert!(!client.close());
+            server.join().unwrap();
         }
     }
 
     #[test]
-    fn send_commands() -> AppResult<()> {
-        let config = get_config();
-        let mut client = PokerSocket::connect(&config).unwrap();
-        thread::sleep(Duration::from_millis(250));
-        let messages = client.read_all().unwrap();
-        assert_eq!(messages.len(), 1);
+    fn production_transport_sends_the_native_keepalive_ping() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let config = config_for(&listener);
+        let (ping_tx, ping_rx) = mpsc::channel();
+        let (finish_tx, finish_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut socket = accept(stream).unwrap();
+            loop {
+                if let Message::Ping(payload) = socket.read().unwrap() {
+                    ping_tx.send(payload.to_vec()).unwrap();
+                    finish_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+                    return;
+                }
+            }
+        });
 
-        assert_matches!(&messages[0], IncomingMessage::RoomUpdate(snapshot) if snapshot.room.name.eq(&config.room));
-        let room = if let IncomingMessage::RoomUpdate(snapshot) = &messages[0] {
-            &snapshot.room
-        } else {
-            panic!("Shouldn't happen.")
-        };
-        assert_eq!(room.players[0].is_you, true);
-        assert_eq!(room.players[0].name, "Johnnie Waters");
-        assert_eq!(room.players[0].user_type, UserType::Player);
+        let mut socket = PokerSocket::connect(&config).unwrap();
+        socket.last_ping = Instant::now() - Duration::from_secs(31);
+        let mut client = Session::new(
+            WebPokerClient::new(),
+            config.name,
+            Rc::new(TestClock(Instant::now())),
+        );
+        client.connect(Box::new(socket)).unwrap();
+        client.update().unwrap();
 
-        client
-            .send_request(encode_change_name("Ralph Muller")?)
-            .unwrap();
-        thread::sleep(Duration::from_millis(250));
-        let messages = client.read_all().unwrap();
-        assert_eq!(messages.len(), 1);
-
-        assert_matches!(&messages[0], IncomingMessage::RoomUpdate(snapshot) if snapshot.room.name.eq(&config.room));
-        let room = if let IncomingMessage::RoomUpdate(snapshot) = &messages[0] {
-            &snapshot.room
-        } else {
-            panic!("Shouldn't happen.")
-        };
-        assert_eq!(room.players[0].is_you, true);
-        assert_eq!(room.players[0].name, "Ralph Muller");
-
-        client.send_request(encode_vote("13")?).unwrap();
-        client.send_request(encode_reveal_cards()?).unwrap();
-
-        thread::sleep(Duration::from_millis(250));
-        let messages = client.read_all().unwrap();
-        assert_eq!(messages.len(), 2);
-        assert_matches!(&messages[0], IncomingMessage::RoomUpdate(snapshot) if snapshot.room.name.eq(&config.room));
-        let room = if let IncomingMessage::RoomUpdate(snapshot) = &messages[0] {
-            &snapshot.room
-        } else {
-            panic!("Shouldn't happen.")
-        };
-        assert_eq!(room.players[0].is_you, true);
-        assert_eq!(room.players[0].vote, Vote::Revealed(VoteData::Number(13)));
-
-        assert_matches!(&messages[1], IncomingMessage::RoomUpdate(snapshot) if snapshot.room.name.eq(&config.room));
-        let room = if let IncomingMessage::RoomUpdate(snapshot) = &messages[1] {
-            &snapshot.room
-        } else {
-            panic!("Shouldn't happen.")
-        };
-        assert_eq!(room.phase, GamePhase::Revealed);
-
-        Ok(())
-    }
-
-    #[test]
-    fn change_vote() -> AppResult<()> {
-        let config1 = get_config();
-        let mut config2 = config1.clone();
-        config2.name = "Ralph Muller".to_string();
-
-        let mut client1 = PokerSocket::connect(&config1).unwrap();
-        let mut client2 = PokerSocket::connect(&config2).unwrap();
-        client1.send_request(encode_vote("5")?)?;
-        client2.send_request(encode_vote("8")?)?;
-
-        thread::sleep(Duration::from_millis(200));
-
-        client1.read_all()?;
-        client2.read_all()?;
-
-        client1.send_request(encode_retract_vote()?)?;
-
-        thread::sleep(Duration::from_millis(200));
-
-        let client1_messages = client1.read_all()?;
-        let client2_messages = client2.read_all()?;
-
-        println!("Client 1: {:?}", client1_messages);
-        println!("Client 2: {:?}", client2_messages);
-
-        let message = &client2_messages[client2_messages.len() - 1];
-        if let IncomingMessage::RoomUpdate(snapshot) = message {
-            assert_eq!(
-                snapshot
-                    .room
-                    .players
-                    .iter()
-                    .find(|p| p.name == "Johnnie Waters")
-                    .unwrap()
-                    .vote,
-                Vote::Missing
-            );
-        } else {
-            panic!("Wrong packet type.");
-        };
-
-        let message = &client1_messages[client1_messages.len() - 1];
-        if let IncomingMessage::RoomUpdate(snapshot) = message {
-            assert_eq!(
-                snapshot
-                    .room
-                    .players
-                    .iter()
-                    .find(|p| p.name == "Johnnie Waters")
-                    .unwrap()
-                    .vote,
-                Vote::Missing
-            );
-        } else {
-            panic!("Wrong packet type.");
-        };
-
-        Ok(())
+        assert_eq!(
+            ping_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            [0x13, 0x37]
+        );
+        client.close();
+        finish_tx.send(()).unwrap();
+        server.join().unwrap();
     }
 }

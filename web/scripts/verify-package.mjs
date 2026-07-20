@@ -84,7 +84,8 @@ async function runChromium(url) {
     status !== 0 ||
     !output.includes('data-result="passed"') ||
     !output.includes('data-default-init="passed"') ||
-    !output.includes('data-data-view-init="passed"')
+    !output.includes('data-data-view-init="passed"') ||
+    !output.includes('data-connected-entry="passed"')
   ) {
     throw new Error(
       `packaged Chromium verification failed (status ${String(status)})\n${output}\n${diagnostics}`,
@@ -139,12 +140,24 @@ try {
   );
   run(
     pnpm.command,
-    [...pnpm.arguments, "install", "--lockfile-only", "--ignore-scripts"],
+    [
+      ...pnpm.arguments,
+      "install",
+      "--lockfile-only",
+      "--ignore-scripts",
+      "--offline",
+    ],
     consumerRoot,
   );
   run(
     pnpm.command,
-    [...pnpm.arguments, "install", "--frozen-lockfile", "--ignore-scripts"],
+    [
+      ...pnpm.arguments,
+      "install",
+      "--frozen-lockfile",
+      "--ignore-scripts",
+      "--offline",
+    ],
     consumerRoot,
   );
 
@@ -153,6 +166,7 @@ try {
     typeFixture,
     `import {
   WasmPokerClient,
+  createPokerClientStore,
   initializePpokerWasm,
   type ClientOptions,
   type ClientSnapshot,
@@ -178,6 +192,7 @@ declare const store: PokerClientStore;
 const dataViewInput: PpokerWasmInitInput = new DataView(new ArrayBuffer(8));
 const responseInput: PpokerWasmInitInput = new Response();
 const hasNoRawFree: HasNoRawFree = true;
+const clientStore = createPokerClientStore(client);
 void initializePpokerWasm;
 void options.role;
 void snapshot.room?.players.map((player) => inspectVote(player.vote));
@@ -186,6 +201,7 @@ store[Symbol.dispose]();
 void dataViewInput;
 void responseInput;
 void hasNoRawFree;
+clientStore.dispose();
 `,
   );
   run(
@@ -405,6 +421,7 @@ if (closeCount !== 1 || store.getSnapshot().status !== "closed") {
   );
   await stat(join(installedDistribution, "index.js"));
   await stat(join(installedDistribution, "index.d.ts"));
+  await stat(join(installedDistribution, "client-port.d.ts"));
   await stat(join(installedDistribution, "react.js"));
   await stat(join(installedDistribution, "react.d.ts"));
   await stat(join(installedDistribution, "ppoker_wasm_bg.wasm"));
@@ -454,13 +471,69 @@ if (closeCount !== 1 || store.getSnapshot().status !== "closed") {
   await writeFile(
     browserFixture,
     `<!doctype html>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; connect-src 'self'; base-uri 'none'; form-action 'none'">
 <body data-result="running">
+<script type="importmap">
+{
+  "imports": {
+    "@ppoker/web-client": "/package/index.js?default-init",
+    "@ppoker/web-client/data-view-verification": "/package/index.js?data-view-init"
+  }
+}
+</script>
 <script type="module">
 let socketCount = 0;
-globalThis.WebSocket = class {
-  constructor() {
+const sockets = [];
+const sameOriginFetch = globalThis.fetch.bind(globalThis);
+globalThis.fetch = (input, init) => {
+  const target = new URL(
+    input instanceof Request ? input.url : String(input),
+    globalThis.location.href,
+  );
+  if (target.origin !== globalThis.location.origin) {
+    throw new Error("browser package verification blocked external fetch: " + target.href);
+  }
+  return sameOriginFetch(input, init);
+};
+globalThis.WebSocket = class FakeWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+
+  constructor(url) {
     socketCount += 1;
-    throw new Error("browser package verification forbids WebSocket construction");
+    this.url = new URL(url).href;
+    this.binaryType = "blob";
+    this.readyState = FakeWebSocket.CONNECTING;
+    this.sent = [];
+    this.closeCount = 0;
+    this.onopen = null;
+    this.onmessage = null;
+    this.onerror = null;
+    this.onclose = null;
+    sockets.push(this);
+  }
+
+  send(message) {
+    if (this.readyState !== FakeWebSocket.OPEN) {
+      throw new DOMException("Socket is not open", "InvalidStateError");
+    }
+    this.sent.push(message);
+  }
+
+  close() {
+    this.closeCount += 1;
+    this.readyState = FakeWebSocket.CLOSED;
+  }
+
+  open() {
+    this.readyState = FakeWebSocket.OPEN;
+    this.onopen?.(new Event("open"));
+  }
+
+  receive(data) {
+    this.onmessage?.(new MessageEvent("message", { data }));
   }
 };
 
@@ -490,10 +563,106 @@ function verifyClient(api, name) {
   }
 }
 
+function verifyConnectedClient(api) {
+  const client = new api.WasmPokerClient({
+    endpoint: "wss://example.test/base",
+    room: "browser package verification",
+    name: "Package Browser",
+    role: "participant",
+  });
+  client.connect();
+  const socket = sockets[0];
+  if (
+    socket === undefined ||
+    socket.url !== "wss://example.test/base/rooms/browser%20package%20verification?user=Package+Browser&userType=PARTICIPANT" ||
+    socket.binaryType !== "arraybuffer"
+  ) {
+    throw new Error("authored connect did not construct the expected browser WebSocket");
+  }
+
+  socket.open();
+  socket.receive(JSON.stringify({
+    roomId: "browser package verification",
+    deck: ["3", "5", "8", "?"],
+    gamePhase: "PLAYING",
+    users: [{
+      username: "Package Browser",
+      userType: "PARTICIPANT",
+      yourUser: true,
+      cardValue: "5",
+    }],
+    average: "5",
+    log: [{ level: "INFO", message: "joined through packed entrypoint" }],
+  }));
+  if (!client.poll()) {
+    throw new Error("packed client did not publish the opened room payload");
+  }
+  const snapshot = client.snapshot();
+  const player = snapshot.room?.players[0];
+  const log = snapshot.log[0];
+  if (
+    snapshot.revision !== 2 ||
+    snapshot.status !== "open" ||
+    snapshot.localName !== "Package Browser" ||
+    snapshot.localVote?.kind !== "number" ||
+    snapshot.localVote.value !== 5 ||
+    snapshot.room?.name !== "browser package verification" ||
+    snapshot.room.phase !== "playing" ||
+    player?.name !== "Package Browser" ||
+    player.userType !== "player" ||
+    player.isYou !== true ||
+    player.vote.state !== "revealed" ||
+    player.vote.value.kind !== "number" ||
+    player.vote.value.value !== 5 ||
+    log?.level !== "info" ||
+    log.source !== "server" ||
+    log.serverIndex !== 0 ||
+    log.message !== "joined through packed entrypoint" ||
+    typeof log.timestampMs !== "number"
+  ) {
+    throw new Error("packed client returned an invalid populated snapshot");
+  }
+
+  client.vote("5");
+  if (socket.sent[0] !== '{"requestType":"PlayCard","cardValue":"5"}') {
+    throw new Error("packed client did not send the canonical command");
+  }
+  client.close();
+  const closed = client.snapshot();
+  const pollAfterClose = client.poll();
+  const callbacks = [
+    socket.onopen,
+    socket.onmessage,
+    socket.onerror,
+    socket.onclose,
+  ];
+  if (
+    closed.revision !== 3 ||
+    closed.status !== "closed" ||
+    pollAfterClose ||
+    socket.closeCount !== 1 ||
+    callbacks.some(
+      (callback) => callback !== null && callback !== undefined,
+    )
+  ) {
+    throw new Error(
+      "packed connected client did not close deterministically: " +
+      JSON.stringify({
+        revision: closed.revision,
+        status: closed.status,
+        pollAfterClose,
+        closeCount: socket.closeCount,
+        callbacks: callbacks.map((callback) => typeof callback),
+      }),
+    );
+  }
+}
+
 try {
-  const defaultApi = await import("/package/index.js?default-init");
+  const defaultApi = await import("@ppoker/web-client");
   await defaultApi.initializePpokerWasm();
-  verifyClient(defaultApi, "default initialization");
+  verifyConnectedClient(defaultApi);
+  document.body.dataset.connectedEntry = "passed";
   document.body.dataset.defaultInit = "passed";
 
   const response = await fetch("/package/ppoker_wasm_bg.wasm");
@@ -502,15 +671,15 @@ try {
   const offset = 17;
   const padded = new Uint8Array(bytes.byteLength + offset + 9);
   padded.set(bytes, offset);
-  const dataViewApi = await import("/package/index.js?data-view-init");
+  const dataViewApi = await import("@ppoker/web-client/data-view-verification");
   await dataViewApi.initializePpokerWasm(
     new DataView(padded.buffer, offset, bytes.byteLength),
   );
   verifyClient(dataViewApi, "DataView initialization");
   document.body.dataset.dataViewInit = "passed";
 
-  if (socketCount !== 0) {
-    throw new Error("browser package verification created a WebSocket");
+  if (socketCount !== 1) {
+    throw new Error("browser package verification created an unexpected WebSocket count");
   }
   document.body.dataset.result = "passed";
 } catch (error) {
@@ -586,7 +755,7 @@ try {
   }
 
   console.log(
-    `verified pnpm 10 isolated install, base and React declarations, React-blocked base import, one-instance React SSR, peer/external React, no-map package, no-network DataView initialization, default Chromium WASM loading, browser DataView initialization, zero WebSockets, and ${wasmRequests.toString()} packaged WASM requests`,
+    `verified pnpm 10 offline isolated install, base and React declarations, WasmPokerClient store compatibility, React-blocked base import, one-instance React SSR, peer/external React, no-map package, same-origin-only default Chromium WASM loading, browser DataView initialization, packed-entrypoint fake-WebSocket connect/payload/command/close, and ${wasmRequests.toString()} packaged WASM requests`,
   );
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
