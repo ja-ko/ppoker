@@ -2785,6 +2785,7 @@ dependencies = [
  "serde_json",
  "tsify",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
 ]

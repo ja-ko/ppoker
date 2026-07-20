@@ -1,136 +1,63 @@
-# ppoker Web Client
+# Web/WASM Maintainer Guide
 
-`@ppoker/web-client` is the typed browser client foundation for ppoker. It wraps
-the generated Rust/WASM client and provides an optional React external store,
-provider, and hooks. Importing the package does not initialize WASM or open a
-WebSocket. The root Rust package, core/WASM crates, and this private package use
-one synchronized release version.
+This directory contains the private TypeScript and React package built on the
+shared Rust client. This guide is for repository maintainers operating and
+changing the web/WASM implementation.
 
-## Setup
+Run pnpm commands from `web/` unless noted otherwise.
 
-Use Node.js 20.19 or newer and pnpm 10.34.5, as pinned by `package.json`.
-Corepack can activate the pinned package manager:
+## Prerequisites
 
-```sh
-corepack enable
-corepack prepare pnpm@10.34.5 --activate
-pnpm install --frozen-lockfile
-```
-
-WASM generation also requires the Rust target and `wasm-pack`. `wasm-pack`
-selects the `wasm-bindgen` CLI compatible with `Cargo.lock`:
+WASM generation and browser tests require the Rust WASM target, `wasm-pack`,
+and Chrome/Chromium with a compatible WebDriver:
 
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo install wasm-pack --locked
-pnpm run wasm:generate
 ```
 
-`wasm:generate` removes the previous generated directory before running
-`wasm-pack build --target web`. Run pnpm commands in this `web` directory unless
-a command below says otherwise.
+The browser suite includes one bounded connection to the live upstream
+Planning Poker server. Network access and upstream availability are therefore
+required for the full validation gate. Package browser verification launches
+the executable named by `CHROME_BIN`, which defaults to `chromium`; set it to
+the installed browser path when that command is unavailable.
 
-## Package API
+## Daily Workflow
 
-The authored base entrypoint is `@ppoker/web-client`. Initialize WASM before
-constructing a client, then create and connect a store:
-
-```ts
-import {
-  WasmPokerClient,
-  createPokerClientStore,
-  initializePpokerWasm,
-} from "@ppoker/web-client";
-
-await initializePpokerWasm();
-
-const client = new WasmPokerClient({
-  endpoint: "wss://planning.example/ws",
-  room: "frontend",
-  name: "Ada",
-  role: "participant",
-});
-const store = createPokerClientStore(client);
-store.connect();
-
-const unsubscribe = store.subscribe(() => {
-  console.log(store.getSnapshot());
-});
-
-unsubscribe();
-store.dispose();
-```
-
-The authored React entrypoint is `@ppoker/web-client/react`:
-
-```tsx
-import type { PokerClientStore } from "@ppoker/web-client";
-import {
-  PokerClientProvider,
-  usePokerClientSnapshot,
-  usePokerClientStore,
-} from "@ppoker/web-client/react";
-
-function Status() {
-  const store = usePokerClientStore();
-  const snapshot = usePokerClientSnapshot();
-  return <button onClick={() => store.reveal()}>{snapshot.status}</button>;
-}
-
-function ClientView({ store }: { store: PokerClientStore }) {
-  return (
-    <PokerClientProvider store={store}>
-      <Status />
-    </PokerClientProvider>
-  );
-}
-```
-
-The provider does not connect, close, or dispose the store. The caller that
-creates the store owns it and must call `dispose()` after its final use.
-Provider unmount only removes hook subscriptions; it does not close the client.
-
-Snapshot domain values use the `ppoker-core` model names directly: `Room`,
-`Player`, `Vote`, `VoteData`, `GamePhase`, `UserType`, `LogEntry`,
-`HistoryEntry`, `ConnectionStatus`, `ClientError`, and their related enums.
-Log timestamps, history lengths, and the aggregate round start are finite,
-JavaScript-safe millisecond `number` values. Optional snapshot values are
-serialized as `null`.
-
-## Validation
-
-The package scripts are:
-
-| Command                   | Purpose                                                                                |
-| ------------------------- | -------------------------------------------------------------------------------------- |
-| `pnpm run wasm:generate`  | Regenerate ignored WASM output from a clean directory                                  |
-| `pnpm run format:check`   | Check Prettier formatting                                                              |
-| `pnpm run lint`           | Run ESLint with no warnings                                                            |
-| `pnpm run typecheck`      | Run strict TypeScript checks without emitting                                          |
-| `pnpm run declarations`   | Emit public declarations                                                               |
-| `pnpm run test`           | Run Vitest                                                                             |
-| `pnpm run coverage`       | Run Vitest and write frontend coverage                                                 |
-| `pnpm run build`          | Clean output, regenerate WASM, emit declarations, and build both Vite entrypoints      |
-| `pnpm run package:verify` | Pack and install an isolated consumer, then verify base/React and browser WASM loading |
-
-Run the Rust and browser checks from the repository root. Headless browser
-tests require Chrome/Chromium and a matching `chromedriver` on `PATH`; no live
-server is used.
+Use the aggregate check before pushing and when reproducing the web CI job:
 
 ```sh
-cargo check --workspace --all-targets
-wasm-pack test --headless --chrome crates/ppoker-wasm
+pnpm run check
 ```
 
-Generated files under `src/generated/`, build files under `dist/`, coverage,
-package archives, and installed dependencies are disposable and ignored. Do
-not edit or commit them.
+It runs formatting, linting, the production package verification build,
+TypeScript checks, Vitest with coverage, and Rust/WASM tests in headless Chrome.
+The native Rust workspace suite is intentionally separate.
 
-## Browser WebSockets
+Run `pnpm run wasm:generate` after changing shared Rust models, the WASM facade,
+or generated TypeScript contracts when you need fresh bindings without a full
+build. Generation deletes and recreates `src/generated/ppoker-wasm/` using
+`wasm-pack build --target web`.
 
-The endpoint must be an absolute `ws://` or `wss://` URL. Pages served over
-HTTPS require `wss://`, and the page's Content Security Policy must permit the
-endpoint in `connect-src`. The browser controls the WebSocket `Origin`; callers
-cannot override it or add arbitrary handshake headers. Browser WebSocket APIs
-also cannot send protocol Ping frames, so servers must not require clients to
-originate them.
+`pnpm run build` cleans `dist/`, regenerates WASM, emits declarations, and
+builds both package entrypoints. `pnpm run package:verify` owns that same
+production build and then packs and installs an isolated consumer, checks the
+base and React declarations, and loads the packaged WASM in Chromium. Run it
+directly when diagnosing packaging or browser-loading failures; the aggregate
+check already runs it once.
+
+## Package Contracts
+
+The base entrypoint, `@ppoker/web-client`, exposes explicit WASM initialization,
+the authored client wrapper, and the external store. The React entrypoint,
+`@ppoker/web-client/react`, exposes the provider and hooks. Importing either
+entrypoint must not initialize WASM or open a socket; callers explicitly run
+`initializePpokerWasm()`, construct the client, and connect it.
+
+The store owns its client lifecycle and polling. Code that creates a store must
+eventually call `dispose()`. `PokerClientProvider` is non-owning: mounting or
+unmounting it does not connect, close, or dispose the supplied store.
+
+Generated files under `src/generated/`, production output under `dist/`,
+coverage output, package archives, and installed dependencies are disposable
+and ignored. Do not edit or commit them.

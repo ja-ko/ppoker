@@ -28,7 +28,8 @@
     "test": "vitest run",
     "coverage": "vitest run --coverage",
     "build": "node ./scripts/build.mjs",
-    "package:verify": "node ./scripts/verify-package.mjs"
+    "package:verify": "node ./scripts/verify-package.mjs",
+    "check": "node ./scripts/check.mjs"
   },
   "engines": {
     "node": ">=20.19.0"

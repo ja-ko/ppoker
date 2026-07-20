@@ -1,6 +1,7 @@
-use js_sys::{Array, Function, Object, Reflect};
+use js_sys::{Array, Function, Object, Promise, Reflect};
 use ppoker_core::client::{Transport, TransportEvent};
 use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::JsFuture;
 use wasm_bindgen_test::*;
 
 use super::*;
@@ -119,6 +120,135 @@ fn assert_callbacks_cleared(socket: &JsValue) {
         let callback = property(socket, callback);
         assert!(callback.is_null() || callback.is_undefined());
     }
+}
+
+async fn wait(milliseconds: i32) {
+    let promise = Promise::new(&mut |resolve, _| {
+        web_sys::window()
+            .expect("browser test requires a window")
+            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, milliseconds)
+            .expect("setTimeout should be available");
+    });
+    JsFuture::from(promise)
+        .await
+        .expect("setTimeout promise should resolve");
+}
+
+#[derive(Debug)]
+enum LiveAttemptFailure {
+    Retryable(String),
+    Fatal(String),
+}
+
+fn error_diagnostic(error: &JsValue) -> String {
+    let code = property(error, "code")
+        .as_string()
+        .unwrap_or_else(|| "Unknown".to_string());
+    let message = property(error, "message")
+        .as_string()
+        .unwrap_or_else(|| format!("{error:?}"));
+    format!("{code}: {message}")
+}
+
+fn operational_failure(context: &str, error: JsValue) -> LiveAttemptFailure {
+    let code = property(&error, "code")
+        .as_string()
+        .unwrap_or_else(|| "Unknown".to_string());
+    let diagnostic = format!("{context} failed: {}", error_diagnostic(&error));
+    match code.as_str() {
+        "Transport" | "Closed" => LiveAttemptFailure::Retryable(diagnostic),
+        _ => LiveAttemptFailure::Fatal(diagnostic),
+    }
+}
+
+fn fatal_failure(context: &str, error: JsValue) -> LiveAttemptFailure {
+    LiveAttemptFailure::Fatal(format!("{context} failed: {}", error_diagnostic(&error)))
+}
+
+async fn connect_live(
+    room_name: &str,
+    participant_name: &str,
+) -> Result<JsValue, LiveAttemptFailure> {
+    let options = ClientOptions {
+        endpoint: "wss://pp.discordia.network/".to_string(),
+        room: room_name.to_string(),
+        name: participant_name.to_string(),
+        role: ConnectionRole::Participant,
+    };
+    let options = serde_wasm_bindgen::to_value(&options).map_err(|error| {
+        LiveAttemptFailure::Fatal(format!(
+            "live client options could not be serialized: {error}"
+        ))
+    })?;
+    let mut client =
+        WasmPokerClient::new(options).map_err(|error| fatal_failure("live client setup", error))?;
+    let result = async {
+        client
+            .connect()
+            .map_err(|error| operational_failure("connect", error))?;
+        let performance = web_sys::window()
+            .and_then(|window| window.performance())
+            .ok_or_else(|| {
+                LiveAttemptFailure::Fatal("browser performance clock is unavailable".to_string())
+            })?;
+        let deadline = performance.now() + 4_000.0;
+
+        loop {
+            client.poll();
+            let snapshot = client
+                .snapshot()
+                .map_err(|error| fatal_failure("snapshot serialization", error))?;
+            if !property(&snapshot, "room").is_null() {
+                return Ok(snapshot);
+            }
+            if property(&snapshot, "status").as_string().as_deref() == Some("closed") {
+                let error = property(&snapshot, "terminalError");
+                return Err(if error.is_null() {
+                    LiveAttemptFailure::Retryable(
+                        "connection closed without a terminal error".to_string(),
+                    )
+                } else {
+                    operational_failure("asynchronous connection", error)
+                });
+            }
+            if performance.now() >= deadline {
+                return Err(LiveAttemptFailure::Retryable(
+                    "timed out waiting for the initial room snapshot".to_string(),
+                ));
+            }
+            wait(100).await;
+        }
+    }
+    .await;
+    client.close();
+    result
+}
+
+#[wasm_bindgen_test]
+fn live_attempt_retries_only_transport_failures() {
+    let transport = JsError::new("network failed");
+    Reflect::set(
+        &transport,
+        &JsValue::from_str("code"),
+        &JsValue::from_str("Transport"),
+    )
+    .unwrap();
+    assert!(matches!(
+        operational_failure("connect", transport.into()),
+        LiveAttemptFailure::Retryable(_)
+    ));
+
+    let protocol = JsError::new("invalid snapshot");
+    Reflect::set(
+        &protocol,
+        &JsValue::from_str("code"),
+        &JsValue::from_str("Protocol"),
+    )
+    .unwrap();
+    assert!(matches!(
+        operational_failure("snapshot", protocol.into()),
+        LiveAttemptFailure::Fatal(_)
+    ));
 }
 
 #[wasm_bindgen_test]
@@ -490,4 +620,59 @@ fn valid_dot_containing_rooms_and_names_work_for_both_roles() {
         );
         client.close();
     }
+}
+
+#[wasm_bindgen_test]
+async fn real_upstream_accepts_a_browser_participant() {
+    assert!(
+        js_sys::eval("globalThis.__ppokerSockets")
+            .expect("global lookup should succeed")
+            .is_undefined(),
+        "live upstream proof must use the real browser WebSocket"
+    );
+    let unique = format!(
+        "{}-{}",
+        js_sys::Date::now() as u64,
+        (js_sys::Math::random() * 1_000_000_000.0) as u64
+    );
+    let mut failures = vec![];
+
+    for attempt in 0..2 {
+        let room_name = format!("wasm-live-{unique}-{attempt}");
+        let participant_name = format!("browser-live-{unique}-{attempt}");
+        match connect_live(&room_name, &participant_name).await {
+            Ok(snapshot) => {
+                let room = property(&snapshot, "room");
+                assert_eq!(
+                    property(&room, "name").as_string().as_deref(),
+                    Some(room_name.as_str())
+                );
+                let players = Array::from(&property(&room, "players"));
+                let local_player = (0..players.length())
+                    .map(|index| players.get(index))
+                    .find(|player| property(player, "isYou").as_bool() == Some(true))
+                    .expect("authoritative room should contain the local participant");
+                assert_eq!(
+                    property(&local_player, "name").as_string().as_deref(),
+                    Some(participant_name.as_str())
+                );
+                assert_eq!(
+                    property(&local_player, "userType").as_string().as_deref(),
+                    Some("player")
+                );
+                return;
+            }
+            Err(LiveAttemptFailure::Retryable(error)) => {
+                failures.push(format!("attempt {}: {error}", attempt + 1));
+            }
+            Err(LiveAttemptFailure::Fatal(error)) => {
+                panic!("real upstream browser setup or protocol failure: {error}");
+            }
+        }
+    }
+
+    panic!(
+        "real upstream browser connection failed: {}",
+        failures.join("; ")
+    );
 }

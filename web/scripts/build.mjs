@@ -2,10 +2,11 @@ import { spawnSync } from "node:child_process";
 import { copyFile, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { pnpmInvocation } from "./subprocess.mjs";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const distribution = join(packageRoot, "dist");
-const pnpm = process.env.PNPM_BIN ?? "pnpm";
+const pnpm = pnpmInvocation();
 
 function run(command, arguments_) {
   const result = spawnSync(command, arguments_, {
@@ -21,8 +22,9 @@ function run(command, arguments_) {
 }
 
 await rm(distribution, { force: true, recursive: true });
-run(pnpm, ["run", "wasm:generate"]);
-run(pnpm, [
+run(pnpm.command, [...pnpm.arguments, "run", "wasm:generate"]);
+run(pnpm.command, [
+  ...pnpm.arguments,
   "exec",
   "tsc",
   "-p",
@@ -39,7 +41,7 @@ await copyFile(
   join(packageRoot, "src/generated/ppoker-wasm/ppoker_wasm.d.ts"),
   generatedDeclarations,
 );
-run(pnpm, ["exec", "vite", "build"]);
+run(pnpm.command, [...pnpm.arguments, "exec", "vite", "build"]);
 
 await stat(join(distribution, "ppoker_wasm_bg.wasm"));
 const builtJavaScript = await readFile(join(distribution, "index.js"), "utf8");

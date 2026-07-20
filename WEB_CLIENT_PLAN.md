@@ -325,7 +325,8 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 - Portable behavior tests cover shared commands, authoritative room updates, protocol/activity-log deduplication, round transitions, history, and statistics.
 - Auto-reveal, notification, focus, changelog, and native diagnostic-log tests remain native.
 - WASM facade unit tests cover serialization, delegation, structured errors, and close behavior without mirrored domain conversions.
-- wasm-bindgen browser tests cover structured values and both connection roles without relying on a live server.
+- Deterministic wasm-bindgen browser tests cover structured values and both connection roles with fake WebSockets.
+- One small bounded headless-Chrome test uses the real browser `WebSocket` to join a unique room on `wss://pp.discordia.network/` as a participant.
 - Keep the existing live upstream tests working. Any new live test must remain small and bounded by deadlines; do not reorganize existing tests solely for coverage.
 
 ### Required Frontend Tests
@@ -342,7 +343,7 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 - Use existing action version tags rather than introducing SHA pins.
 - Add only the steps or one focused workflow needed for WASM and web validation.
 - Use Ubuntu 22.04 for any new Linux build job unless there is a concrete reason otherwise.
-- Run frozen pnpm install, formatting, ESLint, `tsc --noEmit`, Vitest through coverage once, wasm-pack browser tests once, and deep package verification once. Package verification owns the production WASM/declaration/Vite build.
+- Treat `pnpm run check` as the local and CI source of truth for web/WASM validation. It runs formatting, ESLint, deep package verification, `tsc --noEmit`, Vitest through coverage once, and wasm-pack Chrome tests once; package verification owns the production WASM/declaration/Vite build.
 - Do not add a native OS matrix, cargo-audit gate, fixed repository-wide tool suite, or strict coverage gate.
 - Keep `codecov.yml` defaults: range `55..75`, round down, precision 2, project status off, patch status off, and comments off.
 - Add only frontend-specific Codecov reporting configuration: a distinct frontend flag/path rooted at tracked `web` sources and exclusions for generated WASM/build output.
@@ -352,9 +353,8 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 
 ## Documentation Policy
 
-- Keep the root `README.md` focused on end-user installation, configuration, and usage. Put package setup, build commands, architecture notes, and contributor instructions in `web/README.md` or other developer documentation.
-- Add a concise `web/README.md` with package purpose, setup, WASM generation, pnpm commands, API usage, generated-file policy, tests, and browser WebSocket requirements.
-- Document that HTTPS pages require `wss://`, CSP must permit the endpoint, browsers control the WebSocket `Origin`, and browser clients cannot add arbitrary handshake headers or send Ping frames.
+- Keep the root `README.md` focused on end-user installation, configuration, and usage. Put the web/WASM maintainer workflow in `web/README.md`.
+- Keep `web/README.md` concise and maintainer-oriented: non-standard prerequisites, daily generation/build/check operations, package lifecycle contracts, and disposable generated files.
 - Keep architecture rationale short and local to the code/package it supports.
 - Do not copy this handoff, review evidence, CI details, release policy, or agent instructions into user-facing documentation.
 
@@ -501,6 +501,8 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 - [x] [IMPLEMENTER] Add frontend Codecov reporting without statuses or threshold enforcement.
 - [x] [IMPLEMENTER] Add Cargo and `/web` Dependabot cooldown configuration without GitHub Actions updates.
 - [x] [IMPLEMENTER] Add concise `web/README.md` documentation.
+- [x] [IMPLEMENTER] Provide `pnpm run check` as the single web/WASM validation command used by maintainers and CI.
+- [x] [IMPLEMENTER] Add a bounded live upstream participant proof while keeping deterministic fake-WebSocket tests distinct.
 - [x] [IMPLEMENTER] Verify action references remain version tags and Linux release builds remain on Ubuntu 22.04.
 
 #### Acceptance
@@ -529,5 +531,5 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 - [x] Every commit measured applicable coverage and targeted at least 80% in every metric without adding enforcement.
 - [x] Codecov retains its existing non-gating policy and reports frontend coverage separately.
 - [x] Existing native/release workflows, Ubuntu 22.04 release compatibility, and updater dependencies remain unchanged; any root README edits are strictly end-user-facing.
-- [x] `web/README.md` contains the package-specific developer and browser requirements.
+- [x] `web/README.md` is the concise maintainer workflow guide for the web/WASM package.
 - [x] No unresolved review finding remains.

@@ -30,23 +30,9 @@ jobs:
       - name: Install frontend dependencies
         working-directory: web
         run: pnpm install --frozen-lockfile
-      - name: Verify isolated package and browsers
+      - name: Check web and WASM
         working-directory: web
-        run: pnpm run package:verify
-      - name: Check frontend formatting
-        working-directory: web
-        run: pnpm run format:check
-      - name: Lint frontend
-        working-directory: web
-        run: pnpm run lint
-      - name: Check frontend types
-        working-directory: web
-        run: pnpm run typecheck
-      - name: Generate frontend coverage
-        working-directory: web
-        run: pnpm run coverage
-      - name: Test WASM in headless Chrome
-        run: wasm-pack test --headless --chrome crates/ppoker-wasm
+        run: pnpm run check
       - name: Upload frontend coverage to Codecov
         uses: codecov/codecov-action@v5
         with:

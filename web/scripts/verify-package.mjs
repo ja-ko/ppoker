@@ -12,9 +12,10 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { pnpmInvocation } from "./subprocess.mjs";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const pnpm = process.env.PNPM_BIN ?? "pnpm";
+const pnpm = pnpmInvocation();
 
 function run(command, arguments_, cwd = packageRoot) {
   const result = spawnSync(command, arguments_, {
@@ -91,13 +92,18 @@ async function runChromium(url) {
   }
 }
 
-run(pnpm, ["run", "build"]);
+run(pnpm.command, [...pnpm.arguments, "run", "build"]);
 
 const temporaryRoot = await mkdtemp(
   join(tmpdir(), "ppoker-web-package-verification-"),
 );
 try {
-  run(pnpm, ["pack", "--pack-destination", temporaryRoot]);
+  run(pnpm.command, [
+    ...pnpm.arguments,
+    "pack",
+    "--pack-destination",
+    temporaryRoot,
+  ]);
   const archives = (await readdir(temporaryRoot)).filter((name) =>
     name.endsWith(".tgz"),
   );
@@ -131,8 +137,16 @@ try {
     join(consumerRoot, "pnpm-workspace.yaml"),
     'packages:\n  - "."\n\nminimumReleaseAge: 7200\n',
   );
-  run(pnpm, ["install", "--lockfile-only", "--ignore-scripts"], consumerRoot);
-  run(pnpm, ["install", "--frozen-lockfile", "--ignore-scripts"], consumerRoot);
+  run(
+    pnpm.command,
+    [...pnpm.arguments, "install", "--lockfile-only", "--ignore-scripts"],
+    consumerRoot,
+  );
+  run(
+    pnpm.command,
+    [...pnpm.arguments, "install", "--frozen-lockfile", "--ignore-scripts"],
+    consumerRoot,
+  );
 
   const typeFixture = join(consumerRoot, "consumer.ts");
   await writeFile(
