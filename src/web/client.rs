@@ -2,8 +2,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use log::{error, info};
-use ppoker_core::client::{Clock, WebPokerClient};
-use ppoker_core::protocol::RoomSnapshot;
+use ppoker_core::client::{Clock, Session, WebPokerClient};
 use snafu::Snafu;
 
 use crate::app::AppResult;
@@ -37,13 +36,18 @@ impl Clock for NativeClock {
     }
 }
 
-pub fn connect(config: &Config) -> AppResult<(WebPokerClient, RoomSnapshot)> {
+pub fn connect(config: &Config) -> AppResult<Session<Box<dyn PokerClient>>> {
     let mut result = WebPokerClient::new();
     result.connect(Box::new(PokerSocket::connect(config)?))?;
     for i in 0..20 {
         if let Some(snapshot) = result.get_update()? {
             info!("Got initial room state with delay {}ms.", i * 20);
-            return Ok((result, snapshot));
+            return Ok(Session::with_room_snapshot(
+                Box::new(result),
+                config.name.clone(),
+                std::rc::Rc::new(NativeClock::new()),
+                snapshot,
+            ));
         } else {
             thread::sleep(Duration::from_millis(20));
         }
@@ -350,6 +354,40 @@ pub mod tests {
         fn close(&mut self) {}
     }
 
+    struct SnapshotPokerClient(Vec<RoomSnapshot>);
+
+    impl PokerClient for SnapshotPokerClient {
+        fn ensure_ready(&self) -> ClientResult<()> {
+            Ok(())
+        }
+
+        fn get_updates(&mut self) -> ClientResult<Vec<RoomSnapshot>> {
+            Ok(std::mem::take(&mut self.0))
+        }
+
+        fn vote(&mut self, _card_value: Option<&str>) -> ClientResult<()> {
+            unreachable!()
+        }
+
+        fn change_name(&mut self, _name: &str) -> ClientResult<()> {
+            unreachable!()
+        }
+
+        fn chat(&mut self, _message: &str) -> ClientResult<()> {
+            unreachable!()
+        }
+
+        fn reveal(&mut self) -> ClientResult<()> {
+            unreachable!()
+        }
+
+        fn reset(&mut self) -> ClientResult<()> {
+            unreachable!()
+        }
+
+        fn close(&mut self) {}
+    }
+
     #[test]
     fn unknown_log_level_does_not_collide_with_an_appended_log() {
         let initial = decode_room_snapshot(
@@ -383,9 +421,12 @@ pub mod tests {
             }"#,
         )
         .unwrap();
-        let mut session = Session::new("Alice".to_string(), Rc::new(NativeClock::new()));
-        session.apply_room_snapshot(initial);
-        session.apply_room_snapshot(appended);
+        let mut session = Session::new(
+            SnapshotPokerClient(vec![initial, appended]),
+            "Alice".to_string(),
+            Rc::new(NativeClock::new()),
+        );
+        session.update().unwrap();
 
         assert_eq!(
             session
@@ -532,36 +573,33 @@ pub mod tests {
     #[test]
     fn test_voting_and_chat() {
         let config = Config::default();
-        let (mut client1, _) = connect(&config).expect("Failed to create client 1");
-        let (mut client2, _) = connect(&config).expect("Failed to create client 2");
+        let mut client1 = connect(&config).expect("Failed to create client 1");
+        let mut client2 = connect(&config).expect("Failed to create client 2");
 
         // Let's have client1 vote and send a chat message
-        client1.vote(Some("5")).expect("Failed to vote");
+        client1.vote("5").expect("Failed to vote");
         client1
-            .chat("Hello from client 1!")
+            .chat("Hello from client 1!".to_string())
             .expect("Failed to send chat");
         // Work around a race condition in the server.
         thread::sleep(Duration::from_millis(10));
         // Client2 votes as well
-        client2.vote(Some("3")).expect("Failed to vote");
+        client2.vote("3").expect("Failed to vote");
 
         // Small delay to ensure messages are processed
         thread::sleep(Duration::from_millis(250));
 
         // Get updates for both clients
-        let rooms1 = client1
-            .get_updates()
+        client1
+            .update()
             .expect("Failed to get updates for client 1");
-        let rooms2 = client2
-            .get_updates()
+        client2
+            .update()
             .expect("Failed to get updates for client 2");
 
         // Check room state - use the last update as it represents the final state
-        assert!(!rooms1.is_empty(), "Expected at least one room1 update");
-        // Check room state - use the last update as it represents the final state
-        assert!(!rooms2.is_empty(), "Expected at least one room2 update");
-        let room = &rooms1[rooms1.len() - 1].room;
-        let room2 = &rooms2[rooms2.len() - 1].room;
+        let room = client1.room().expect("Expected a room1 update");
+        let room2 = client2.room().expect("Expected a room2 update");
         assert_eq!(room.players.len(), 2, "Expected 2 users in the room");
 
         // Find client1's vote
@@ -590,7 +628,7 @@ pub mod tests {
         );
 
         // Check chat messages - use the last log as it should contain our message
-        let logs1 = &rooms1[rooms1.len() - 1].log;
+        let logs1 = client1.log();
         assert!(!logs1.is_empty(), "Expected at least one chat message");
         assert!(
             logs1[logs1.len() - 1]
@@ -601,8 +639,8 @@ pub mod tests {
 
         // Both clients should see the same final room state
         assert_eq!(
-            rooms1[rooms1.len() - 1].room.players.len(),
-            rooms2[rooms2.len() - 1].room.players.len(),
+            room.players.len(),
+            room2.players.len(),
             "Room state inconsistent between clients"
         );
     }

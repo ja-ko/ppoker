@@ -584,8 +584,12 @@ fn every_core_model_variant_is_structured() {
         .to_string(),
     )
     .unwrap();
-    let mut session = Session::new("missing".to_string(), Rc::new(ManualClock::default()));
-    session.apply_room_snapshot(snapshot);
+    let session = Session::with_room_snapshot(
+        WebPokerClient::new(),
+        "missing".to_string(),
+        Rc::new(ManualClock::default()),
+        snapshot,
+    );
     let room = session.room().unwrap();
 
     assert_eq!(room.phase, GamePhase::Unknown);

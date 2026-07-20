@@ -3,8 +3,7 @@ use std::time::Duration;
 
 use js_sys::{Error as JsError, Reflect};
 use ppoker_core::client::{
-    ClientError, ClientErrorCode, Clock, ConnectionStatus, PokerClient, Session, Transport,
-    WebPokerClient,
+    ClientError, ClientErrorCode, Clock, ConnectionStatus, Session, Transport, WebPokerClient,
 };
 use ppoker_core::models::{HistoryEntry, LogEntry, Room, VoteData};
 use ppoker_core::protocol::{build_room_url, ConnectionRole};
@@ -187,18 +186,9 @@ fn production_clock() -> Result<Rc<dyn Clock>, FacadeError> {
     }
 }
 
-#[derive(PartialEq)]
-struct VisibleState {
-    status: ConnectionStatus,
-    terminal_error: Option<ClientError>,
-    session_revision: u32,
-}
-
 struct ClientFacade {
     room_url: String,
-    client: WebPokerClient,
-    session: Session,
-    revision: u32,
+    session: Session<WebPokerClient>,
     transport_factory: Box<dyn TransportFactory>,
 }
 
@@ -221,89 +211,70 @@ impl ClientFacade {
 
         Ok(Self {
             room_url,
-            client: WebPokerClient::new(),
-            session: Session::new(options.name, clock),
-            revision: 0,
+            session: Session::new(WebPokerClient::new(), options.name, clock),
             transport_factory,
         })
     }
 
     fn connect(&mut self) -> Result<(), FacadeError> {
-        match self.client.status() {
+        match self.session.status() {
             ConnectionStatus::Connecting | ConnectionStatus::Open => return Ok(()),
             ConnectionStatus::Closed => return Err(FacadeError::closed()),
             ConnectionStatus::Disconnected => {}
         }
 
-        let before = self.visible_state();
         let transport = match self.transport_factory.create(&self.room_url) {
             Ok(transport) => transport,
             Err(_reason) => {
-                self.client
+                self.session
                     .fail_transport("WebSocket connection could not be created.");
-                self.commit_if_changed(before);
                 return Err(FacadeError::transport(
                     "WebSocket connection could not be created.",
                 ));
             }
         };
-        self.client.connect(transport).map_err(FacadeError::from)?;
-        self.commit_if_changed(before);
+        self.session.connect(transport).map_err(FacadeError::from)?;
         Ok(())
     }
 
     fn poll(&mut self) -> bool {
-        if self.client.status() == ConnectionStatus::Closed {
+        if self.session.status() == ConnectionStatus::Closed {
             return false;
         }
 
-        let before = self.visible_state();
-        let snapshots = self.client.get_updates().unwrap_or_default();
-        self.session.apply_poll_batch(snapshots, |_, _| {});
-        self.commit_if_changed(before)
+        let revision = self.session.revision();
+        match self.session.update() {
+            Ok(changed) => changed,
+            Err(_) => self.session.revision() != revision,
+        }
     }
 
     fn vote(&mut self, value: &str) -> Result<(), FacadeError> {
-        self.dispatch(|session, client| session.vote(value, client))
+        self.session.vote(value).map_err(FacadeError::from)
     }
 
     fn retract_vote(&mut self) -> Result<(), FacadeError> {
-        self.dispatch(|session, client| session.vote("-", client))
+        self.session.vote("-").map_err(FacadeError::from)
     }
 
     fn rename(&mut self, name: String) -> Result<(), FacadeError> {
-        self.dispatch(|session, client| session.rename(name, client))
+        self.session.rename(name).map_err(FacadeError::from)
     }
 
     fn chat(&mut self, message: String) -> Result<(), FacadeError> {
-        self.dispatch(|session, client| session.chat(message, client))
+        self.session.chat(message).map_err(FacadeError::from)
     }
 
     fn reveal(&mut self) -> Result<(), FacadeError> {
-        self.dispatch(|session, client| session.reveal(client))
+        self.session.reveal().map_err(FacadeError::from)
     }
 
     fn start_new_round(&mut self) -> Result<(), FacadeError> {
-        self.dispatch(|session, client| session.restart(client))
-    }
-
-    fn dispatch(
-        &mut self,
-        operation: impl FnOnce(&mut Session, &mut WebPokerClient) -> Result<(), ClientError>,
-    ) -> Result<(), FacadeError> {
-        let before = self.visible_state();
-        let result = operation(&mut self.session, &mut self.client);
-        self.commit_if_changed(before);
-        result.map_err(FacadeError::from)
+        self.session.restart().map_err(FacadeError::from)
     }
 
     fn close(&mut self) {
-        if self.client.status() == ConnectionStatus::Closed {
-            return;
-        }
-        let before = self.visible_state();
-        self.client.close();
-        self.commit_if_changed(before);
+        self.session.close();
     }
 
     fn snapshot(&self) -> Result<ClientSnapshot, FacadeError> {
@@ -315,9 +286,9 @@ impl ClientFacade {
             finite_average(entry.average)?;
         }
         Ok(ClientSnapshot {
-            revision: self.revision,
-            status: self.client.status(),
-            terminal_error: self.client.terminal_error().cloned(),
+            revision: self.session.revision(),
+            status: self.session.status(),
+            terminal_error: self.session.terminal_error().cloned(),
             room: self.session.room().cloned(),
             local_name: self.session.name().to_string(),
             local_vote: self.session.own_vote().clone(),
@@ -327,23 +298,6 @@ impl ClientFacade {
             history: self.session.history().to_vec(),
             average: finite_average(self.session.average_votes())?,
         })
-    }
-
-    fn visible_state(&self) -> VisibleState {
-        VisibleState {
-            status: self.client.status(),
-            terminal_error: self.client.terminal_error().cloned(),
-            session_revision: self.session.revision(),
-        }
-    }
-
-    fn commit_if_changed(&mut self, before: VisibleState) -> bool {
-        if before == self.visible_state() {
-            false
-        } else {
-            self.revision = self.revision.saturating_add(1);
-            true
-        }
     }
 }
 

@@ -72,6 +72,7 @@ The finished branch provides:
 
 ### Authoritative Ownership Boundary
 
+- `Session<C: PokerClient>` owns its backend. Native `App`, the WASM facade, and future consumers must not retain and coordinate a separate client beside shared session state.
 - `ppoker-core` is the sole authoritative owner of normalized room state, local identity and vote state required by shared commands, protocol/activity log collection and server-log deduplication, current round tracking, completed-round history, and statistics.
 - The native application retains notification eligibility, focus tracking, notification timers and delivery, changelog state, content, and configuration, and all auto-reveal state and behavior.
 - Notification, focus, changelog, and auto-reveal concerns must not appear in core configuration, WASM options, snapshots, commands, events, or authored web APIs. The ordinary manual reveal command remains part of the shared command contract.
@@ -178,6 +179,10 @@ There must be one normalized Rust representation of rooms, players, votes, phase
 ### Portable Client Behavior
 
 - Begin from the existing `PokerClient` and `App` behavior and extract the smallest reusable boundary.
+- Route commands through the backend owned by `Session`; command APIs do not accept a separately owned client.
+- Use `Session::update()` to poll and apply backend updates, or `Session::update_with(...)` to observe each already-applied room transition for consumer policy such as TUI notifications and auto-reveal handling.
+- Allow an initial snapshot only through `Session::with_room_snapshot` for bounded native startup; subsequent authoritative state enters exclusively through the owned backend update path.
+- Keep update observation generic. Core owns lifecycle, terminal errors, shared state, and one visible revision increment at most per connect, update batch, command, or close operation.
 - Keep native-only fields and behavior in native `App`; do not force all application state into the portable crate.
 - Share command validation and room-update behavior only when doing so avoids a real native/WASM duplication.
 - Move existing history, round tracking, protocol/activity logging, and statistics into `ppoker-core` while preserving their native semantics. Keep all auto-reveal behavior in the native application.
@@ -220,7 +225,7 @@ There must be one normalized Rust representation of rooms, players, votes, phase
 
 ### WASM Facade
 
-The facade must provide safe lifecycle and conversion behavior without importing a new core architecture.
+The facade must provide safe lifecycle and conversion behavior over the owning shared `Session`.
 
 - Add `crates/ppoker-wasm` as a workspace `cdylib`/`rlib` crate.
 - Keep the facade thin: convert typed values, delegate to the portable client, and convert errors.
@@ -405,6 +410,7 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 - [x] [IMPLEMENTER] Move authoritative room state, protocol/activity logging, round tracking, completed-round history, and statistics into `ppoker-core`.
 - [x] [IMPLEMENTER] Keep native notifications, focus, changelog, auto reveal, diagnostic logging, and their state and delivery outside `ppoker-core`.
 - [x] [IMPLEMENTER] Keep native `App` methods and TUI reads as close to their original form as practical.
+- [x] [IMPLEMENTER] Make `Session` own its backend and expose generic update observation while keeping TUI reactions in `App`.
 - [x] [IMPLEMENTER] Add explicit participant/spectator connection input without global spectator read-only policy.
 - [x] [IMPLEMENTER] Preserve native Ping behavior without requiring browser Ping support.
 - [x] [IMPLEMENTER] Do not add reconnect, pending-command, effect/reducer, or notification-event systems.
@@ -426,6 +432,7 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 
 - [x] [IMPLEMENTER] Add `ppoker-wasm` with a thin typed facade over the portable client.
 - [x] [IMPLEMENTER] Add the concrete `web-sys::WebSocket` transport with retained callbacks and deterministic terminal cleanup.
+- [x] [IMPLEMENTER] Keep one owning `Session<WebPokerClient>` in the facade; do not duplicate status/session revision merge state.
 - [x] [IMPLEMENTER] Generate structured TypeScript types without handwritten domain duplication.
 - [x] [IMPLEMENTER] Add structured JS errors and safe option conversion; keep malformed-option details facade-owned and use core errors for operational/terminal failures.
 - [x] [IMPLEMENTER] Exclude notification, focus, changelog, auto-reveal, diagnostic-log, and speculative contracts from the generated API.
@@ -510,6 +517,7 @@ Every commit must leave the branch buildable and tested. Commits that change beh
 - [x] Existing native behavior and TUI snapshots remain unchanged unless explicitly approved.
 - [x] Native notifications, focus, changelog, auto reveal, diagnostic logging, and their configuration remain outside `ppoker-core` and the WASM/public web contract.
 - [x] Shared room state, protocol/activity logging, round tracking, history, and statistics have one authoritative owner in `ppoker-core`.
+- [x] Each application owns one assembled `Session` with its backend and uses the generic core update operation instead of coordinating a client/session pair.
 - [x] One normalized Rust model serves native and WASM consumers; wire DTOs remain private.
 - [x] Native and WASM use one intentionally selected WebSocket implementation or one narrow shared transport boundary.
 - [x] Participant and spectator connections work with the commands supported by the server.

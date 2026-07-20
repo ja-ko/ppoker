@@ -1,8 +1,11 @@
 use log::{debug, info};
-use ppoker_core::client::Session;
+use ppoker_core::client::{PokerClient, Session, SessionUpdate};
 #[cfg(test)]
 use ppoker_core::protocol::RoomSnapshot;
+#[cfg(test)]
+use std::cell::RefCell;
 use std::error;
+#[cfg(test)]
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -11,21 +14,22 @@ use crate::models::{
     GamePhase, HistoryEntry, LogEntry, LogLevel, LogSource, Player, Room, UserType, Vote, VoteData,
 };
 use crate::notification::NotificationHandler;
-use crate::web::client::{connect, NativeClock, PokerClient};
+use crate::web::client::connect;
 
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
 
-struct NativeLogEntry {
+struct LocalLogEntry {
     position: usize,
     entry: LogEntry,
 }
 
 pub struct App {
     pub running: bool,
-    session: Session,
-    pub client: Box<dyn PokerClient>,
-    native_log: Vec<NativeLogEntry>,
-    native_log_position: usize,
+    session: Session<Box<dyn PokerClient>>,
+    #[cfg(test)]
+    session_updates: Option<Rc<RefCell<Vec<RoomSnapshot>>>>,
+    local_log: Vec<LocalLogEntry>,
+    local_log_position: usize,
 
     pub config: Config,
 
@@ -42,17 +46,15 @@ pub struct App {
 
 impl App {
     pub fn new(config: Config) -> AppResult<Self> {
-        let (client, snapshot) = connect(&config)?;
-        let client = Box::new(client);
-        let mut session = Session::new(config.name.clone(), Rc::new(NativeClock::new()));
-        session.apply_room_snapshot(snapshot);
+        let session = connect(&config)?;
 
         Ok(Self {
             running: true,
             session,
-            client,
-            native_log: vec![],
-            native_log_position: 0,
+            #[cfg(test)]
+            session_updates: None,
+            local_log: vec![],
+            local_log_position: 0,
             config,
             has_focus: true,
             notify_vote_at: None,
@@ -122,11 +124,11 @@ impl App {
             && room.phase == GamePhase::Playing
     }
 
-    fn apply_native_room_effects(
-        session: &Session,
-        old: Option<Room>,
-        native_log: &mut Vec<NativeLogEntry>,
-        native_log_position: usize,
+    fn handle_session_update(
+        session: &Session<Box<dyn PokerClient>>,
+        update: SessionUpdate,
+        local_log: &mut Vec<LocalLogEntry>,
+        local_log_position: usize,
         is_notified: &mut bool,
         notify_vote_at: &mut Option<Instant>,
         has_updates: &mut bool,
@@ -135,7 +137,7 @@ impl App {
         let room = session
             .room()
             .expect("room effects follow an authoritative room snapshot");
-        if let Some(old) = old {
+        if let Some(old) = update.previous_room {
             if old.phase != room.phase {
                 if room.phase == GamePhase::Playing {
                     *is_notified = false;
@@ -148,8 +150,8 @@ impl App {
         if Self::is_vote_last_missing(room) {
             if !*is_notified && notify_vote_at.is_none() {
                 Self::push_log_message(
-                    native_log,
-                    native_log_position,
+                    local_log,
+                    local_log_position,
                     session.now(),
                     LogLevel::Info,
                     "Your vote is the last one missing.".to_string(),
@@ -183,23 +185,17 @@ impl App {
 
     #[cfg(test)]
     fn merge_snapshot(&mut self, update: RoomSnapshot) {
-        debug!("room update: {:?}", update.room);
-        let old = self.session.apply_room_snapshot(update);
-        Self::apply_native_room_effects(
-            &self.session,
-            old,
-            &mut self.native_log,
-            self.native_log_position,
-            &mut self.is_notified,
-            &mut self.notify_vote_at,
-            &mut self.has_updates,
-            &mut self.auto_reveal_at,
-        );
+        self.session_updates
+            .as_ref()
+            .expect("test Apps have an injectable session backend")
+            .borrow_mut()
+            .push(update);
+        self.update().expect("test session update should succeed");
     }
 
     pub fn vote(&mut self, data: &str) -> AppResult<()> {
         let was_last_missing = self.is_my_vote_last_missing();
-        self.session.vote(data, self.client.as_mut())?;
+        self.session.vote(data)?;
 
         if !self.config.disable_auto_reveal && was_last_missing && self.own_vote().is_some() {
             debug!("Starting auto-reveal timer.");
@@ -209,56 +205,51 @@ impl App {
     }
 
     pub fn rename(&mut self, data: String) -> AppResult<()> {
-        self.session.rename(data, self.client.as_mut())?;
+        self.session.rename(data)?;
         Ok(())
     }
 
     pub fn reveal(&mut self) -> AppResult<()> {
-        self.client.ensure_ready()?;
+        self.session.ensure_ready()?;
         self.cancel_auto_reveal();
-        self.session.reveal(self.client.as_mut())?;
+        self.session.reveal()?;
         Ok(())
     }
 
     pub fn chat(&mut self, message: String) -> AppResult<()> {
-        self.session.chat(message, self.client.as_mut())?;
+        self.session.chat(message)?;
         Ok(())
     }
 
     pub fn restart(&mut self) -> AppResult<()> {
-        self.session.restart(self.client.as_mut())?;
+        self.session.restart()?;
         Ok(())
     }
 
     pub fn update(&mut self) -> AppResult<()> {
-        let room_updates = self.client.get_updates()?;
-        // TODO: reconnect?
-
-        self.native_log_position = self.session.log().len();
+        self.local_log_position = self.session.log().len();
         {
-            let native_log_position = self.native_log_position;
-            let native_log = &mut self.native_log;
+            let local_log_position = self.local_log_position;
+            let local_log = &mut self.local_log;
             let is_notified = &mut self.is_notified;
             let notify_vote_at = &mut self.notify_vote_at;
             let has_updates = &mut self.has_updates;
             let auto_reveal_at = &mut self.auto_reveal_at;
-            let room_updates = room_updates.into_iter().inspect(|update| {
-                debug!("room update: {:?}", update.room);
-            });
-            self.session.apply_poll_batch(room_updates, |session, old| {
-                Self::apply_native_room_effects(
+            self.session.update_with(|session, update| {
+                debug!("room update: {:?}", session.room());
+                Self::handle_session_update(
                     session,
-                    old,
-                    native_log,
-                    native_log_position,
+                    update,
+                    local_log,
+                    local_log_position,
                     is_notified,
                     notify_vote_at,
                     has_updates,
                     auto_reveal_at,
                 );
-            });
+            })?;
         }
-        self.native_log_position = self.session.log().len();
+        self.local_log_position = self.session.log().len();
 
         Ok(())
     }
@@ -271,8 +262,14 @@ impl App {
 
     #[cfg(test)]
     pub fn set_room_for_test(&mut self, room: Room) {
+        self.session_updates
+            .as_ref()
+            .expect("test Apps have an injectable session backend")
+            .borrow_mut()
+            .push(RoomSnapshot { room, log: vec![] });
         self.session
-            .apply_room_snapshot(RoomSnapshot { room, log: vec![] });
+            .update()
+            .expect("test session update should succeed");
     }
 
     pub fn own_vote(&self) -> &Option<VoteData> {
@@ -297,10 +294,10 @@ impl App {
 
     pub fn activity_log(&self) -> Vec<&LogEntry> {
         let log = self.session.log();
-        let mut result = Vec::with_capacity(log.len() + self.native_log.len());
+        let mut result = Vec::with_capacity(log.len() + self.local_log.len());
         for position in 0..=log.len() {
             result.extend(
-                self.native_log
+                self.local_log
                     .iter()
                     .filter(|entry| entry.position == position)
                     .map(|entry| &entry.entry),
@@ -313,13 +310,13 @@ impl App {
     }
 
     fn push_log_message(
-        native_log: &mut Vec<NativeLogEntry>,
+        local_log: &mut Vec<LocalLogEntry>,
         position: usize,
         timestamp: Duration,
         level: LogLevel,
         message: String,
     ) {
-        native_log.push(NativeLogEntry {
+        local_log.push(LocalLogEntry {
             position,
             entry: LogEntry {
                 timestamp,
@@ -342,8 +339,10 @@ pub mod tests {
     use crate::models::VoteData;
     use crate::notification::create_notification_handler;
     use crate::notification::MockNotificationHandler;
+    use crate::web::client::NativeClock;
     use mockall::predicate::*;
     use ppoker_core::client::{ClientError, ClientErrorCode, ClientResult, PokerClient};
+    use std::rc::Rc;
     use std::time::Duration;
 
     mockall::mock! {
@@ -361,9 +360,62 @@ pub mod tests {
         }
     }
 
+    struct TestPokerClient {
+        inner: Box<dyn PokerClient>,
+        updates: Rc<RefCell<Vec<RoomSnapshot>>>,
+    }
+
+    impl PokerClient for TestPokerClient {
+        fn status(&self) -> ppoker_core::client::ConnectionStatus {
+            self.inner.status()
+        }
+
+        fn terminal_error(&self) -> Option<&ClientError> {
+            self.inner.terminal_error()
+        }
+
+        fn ensure_ready(&self) -> ClientResult<()> {
+            self.inner.ensure_ready()
+        }
+
+        fn get_updates(&mut self) -> ClientResult<Vec<RoomSnapshot>> {
+            let updates = std::mem::take(&mut *self.updates.borrow_mut());
+            if updates.is_empty() {
+                self.inner.get_updates()
+            } else {
+                Ok(updates)
+            }
+        }
+
+        fn vote(&mut self, card_value: Option<&str>) -> ClientResult<()> {
+            self.inner.vote(card_value)
+        }
+
+        fn change_name(&mut self, name: &str) -> ClientResult<()> {
+            self.inner.change_name(name)
+        }
+
+        fn chat(&mut self, message: &str) -> ClientResult<()> {
+            self.inner.chat(message)
+        }
+
+        fn reveal(&mut self) -> ClientResult<()> {
+            self.inner.reveal()
+        }
+
+        fn reset(&mut self) -> ClientResult<()> {
+            self.inner.reset()
+        }
+
+        fn close(&mut self) {
+            self.inner.close();
+        }
+    }
+
     fn create_mock_client() -> MockPokerClient {
         let mut client = MockPokerClient::new();
         client.expect_ensure_ready().returning(|| Ok(()));
+        client.expect_close().times(1).return_const(());
         client
     }
 
@@ -397,17 +449,26 @@ pub mod tests {
         config.server = "wss://mocked".to_owned();
         config.name = "test".to_owned();
         config.room = "test-room".to_owned();
-        let mut session = Session::new("Test User".to_string(), Rc::new(NativeClock::new()));
-        session.apply_room_snapshot(RoomSnapshot {
-            room: create_test_room(),
-            log: vec![],
-        });
+        let session_updates = Rc::new(RefCell::new(vec![]));
+        let client = TestPokerClient {
+            inner: mock_client,
+            updates: session_updates.clone(),
+        };
+        let session = Session::with_room_snapshot(
+            Box::new(client) as Box<dyn PokerClient>,
+            "Test User".to_string(),
+            Rc::new(NativeClock::new()),
+            RoomSnapshot {
+                room: create_test_room(),
+                log: vec![],
+            },
+        );
         App {
             running: true,
             session,
-            client: mock_client,
-            native_log: vec![],
-            native_log_position: 0,
+            session_updates: Some(session_updates),
+            local_log: vec![],
+            local_log_position: 0,
             config,
             has_focus: true,
             notify_vote_at: None,
@@ -545,6 +606,7 @@ pub mod tests {
     #[test]
     fn test_reveal_not_ready_preserves_auto_reveal_timer() {
         let mut mock_client = MockPokerClient::new();
+        mock_client.expect_close().times(1).return_const(());
         mock_client
             .expect_ensure_ready()
             .times(1)
@@ -560,6 +622,7 @@ pub mod tests {
     #[test]
     fn test_reveal_closed_preserves_auto_reveal_timer() {
         let mut mock_client = MockPokerClient::new();
+        mock_client.expect_close().times(1).return_const(());
         mock_client
             .expect_ensure_ready()
             .times(1)
@@ -934,7 +997,8 @@ pub mod tests {
 
     #[test]
     fn test_notification_triggers_when_last_to_vote() -> AppResult<()> {
-        let mock_client = MockPokerClient::new();
+        let mut mock_client = MockPokerClient::new();
+        mock_client.expect_close().times(1).return_const(());
         let mut mock_notification = MockNotificationHandler::new();
 
         // Set up notification expectation before boxing the mock
