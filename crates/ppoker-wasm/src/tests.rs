@@ -113,7 +113,7 @@ fn facade(role: ConnectionRole) -> FacadeFixture {
 fn room_payload(phase: &str, alice_vote: &str, bob_vote: &str, numeric: bool) -> String {
     serde_json::json!({
         "roomId": "planning / 東京",
-        "deck": ["1", "3", "5", "?"],
+        "deck": ["1", "3", "5", "?", "-"],
         "gamePhase": phase,
         "users": [
             {
@@ -340,9 +340,10 @@ fn all_commands_delegate_to_core_policy_and_update_only_visible_state() {
 
     let revision = client.snapshot().unwrap().revision;
     client.vote("5").unwrap();
-    assert_eq!(client.snapshot().unwrap().revision, revision + 1);
+    assert_eq!(client.snapshot().unwrap().revision, revision);
     client.vote("5").unwrap();
-    assert_eq!(client.snapshot().unwrap().revision, revision + 1);
+    assert_eq!(client.snapshot().unwrap().revision, revision);
+    client.vote("-").unwrap();
     client.retract_vote().unwrap();
     client.vote("?").unwrap();
     client.chat("hello".to_string()).unwrap();
@@ -366,6 +367,7 @@ fn all_commands_delegate_to_core_policy_and_update_only_visible_state() {
             r#"{"requestType":"ChatMessage","message":"before room"}"#,
             r#"{"requestType":"PlayCard","cardValue":"5"}"#,
             r#"{"requestType":"PlayCard","cardValue":"5"}"#,
+            r#"{"requestType":"PlayCard","cardValue":"-"}"#,
             r#"{"requestType":"PlayCard","cardValue":null}"#,
             r#"{"requestType":"PlayCard","cardValue":"?"}"#,
             r#"{"requestType":"ChatMessage","message":"hello"}"#,
@@ -373,11 +375,14 @@ fn all_commands_delegate_to_core_policy_and_update_only_visible_state() {
             r#"{"requestType":"StartNewRound"}"#,
         ]
     );
-    assert_eq!(client.snapshot().unwrap().local_vote, None);
+    assert_eq!(
+        client.snapshot().unwrap().local_vote,
+        Some(VoteData::Special("?".to_string()))
+    );
 }
 
 #[test]
-fn invalid_votes_are_core_activity_and_absent_averages_are_null() {
+fn invalid_cards_and_states_are_typed_without_mutation_or_handoff() {
     let (mut client, _, _, transport) = facade(ConnectionRole::Participant);
     client.connect().unwrap();
     push(&transport, TransportEvent::Opened);
@@ -388,11 +393,17 @@ fn invalid_votes_are_core_activity_and_absent_averages_are_null() {
     assert!(client.poll());
 
     let revision = client.snapshot().unwrap().revision;
-    client.vote("not-in-deck").unwrap();
+    assert_code(
+        client.vote("not-in-deck"),
+        FacadeErrorCode::Core(ClientErrorCode::InvalidCard),
+    );
+    assert_code(
+        client.start_new_round(),
+        FacadeErrorCode::Core(ClientErrorCode::InvalidState),
+    );
     let snapshot = client.snapshot().unwrap();
-    assert_eq!(snapshot.revision, revision + 1);
-    assert_eq!(snapshot.log.last().unwrap().source, LogSource::Client);
-    assert_eq!(snapshot.log.last().unwrap().level, LogLevel::Error);
+    assert_eq!(snapshot.revision, revision);
+    assert_eq!(snapshot.log.len(), 3);
     assert!(transport.borrow().sent.is_empty());
 
     let value = serde_json::to_value(snapshot).unwrap();
@@ -506,7 +517,7 @@ fn protocol_and_remote_close_events_are_terminal_and_commit_once() {
 }
 
 #[test]
-fn send_failures_commit_terminal_state_and_local_mutation_once() {
+fn send_failures_commit_revision_and_terminal_state_without_local_domain_mutation() {
     let (mut client, _, _, transport) = facade(ConnectionRole::Participant);
     client.connect().unwrap();
     push(&transport, TransportEvent::Opened);
@@ -522,16 +533,20 @@ fn send_failures_commit_terminal_state_and_local_mutation_once() {
     );
     let snapshot = client.snapshot().unwrap();
     assert_eq!(snapshot.status, ConnectionStatus::Closed);
-    assert_eq!(snapshot.local_name, "Alicia");
+    assert_eq!(snapshot.local_name, "Alice & Bob");
     assert_eq!(snapshot.revision, revision + 1);
     assert_eq!(snapshot.terminal_error.unwrap().message, "send failed");
     assert_eq!(transport.borrow().closes, 1);
+    assert!(!client.poll());
+    assert_eq!(client.snapshot().unwrap().revision, revision + 1);
 }
 
 #[test]
 fn errors_and_numeric_boundaries_have_stable_safe_shapes() {
     for core in [
         ClientErrorCode::NotReady,
+        ClientErrorCode::InvalidCard,
+        ClientErrorCode::InvalidState,
         ClientErrorCode::Closed,
         ClientErrorCode::Transport,
         ClientErrorCode::Protocol,
@@ -633,6 +648,8 @@ fn generated_declarations_are_strongly_typed_and_match_null_runtime_values() {
         "export interface Room",
         "export interface ClientSnapshot",
         "revision: number",
+        "InvalidCard",
+        "InvalidState",
         "terminalError: ClientError | null",
         "room: Room | null",
         "average: number | null",

@@ -142,7 +142,7 @@ impl Page for VotingPage {
                 match event.code {
                     KeyCode::Char('q') => {
                         return Ok(UIAction::Quit);
-                    }
+                    },
                     KeyCode::Esc => {
                         self.input_mode = InputMode::QuitConfirm;
                     }
@@ -160,7 +160,7 @@ impl Page for VotingPage {
                     KeyCode::Char('u') => {
                         app.has_seen_changelog = true;
                         return Ok(UIAction::ChangeView(UiPage::Changelog));
-                    },
+                    }
                     KeyCode::Char('l') => {
                         return Ok(UIAction::ChangeView(UiPage::Log));
                     }
@@ -695,7 +695,7 @@ pub fn format_vote(vote: &Vote, own_vote: &Option<VoteData>) -> Span<'static> {
 #[cfg(test)]
 mod tests {
     use crate::app::tests::create_test_app;
-    use crate::models::{GamePhase, Vote, VoteData};
+    use crate::models::{GamePhase, LogLevel, LogSource, Vote, VoteData};
     use crate::ui::tests::{send_input, send_input_with_modifiers, tick};
     use crate::ui::{Page, UIAction, VotingPage};
     use crate::web::client::tests::LocalMockPokerClient;
@@ -713,7 +713,7 @@ mod tests {
 
         assert_snapshot!(terminal.backend(), @r#"
         "╭Overview──────────────────────────────────────────────────────────────────────╮"
-        "│Name: Test User | Room: Planning Room | Server: wss://mocked | State: Playing │"
+        "│Name: test | Room: Planning Room | Server: wss://mocked | State: Playing |    │"
         "╰──────────────────────────────────────────────────────────────────────────────╯"
         "╭Players───────╮╭Your vote───────────────╮                                      "
         "│Name   Vote   ││                        │                                      "
@@ -776,6 +776,79 @@ mod tests {
         assert_eq!(app.room().phase, GamePhase::Playing);
         assert!(matches!(app.room().players[0].vote, Vote::Missing));
         assert_snapshot!("After restart", terminal.backend());
+    }
+
+    #[test]
+    fn tui_dash_retracts_instead_of_playing_a_card() {
+        let mut page = VotingPage::new();
+        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        tick(&mut terminal, &mut page, &mut app);
+
+        send_input(KeyCode::Char('5'), &mut terminal, &mut page, &mut app);
+        send_input(KeyCode::Enter, &mut terminal, &mut page, &mut app);
+        assert_eq!(app.own_vote(), &Some(VoteData::Number(5)));
+
+        send_input(KeyCode::Char('-'), &mut terminal, &mut page, &mut app);
+        send_input(KeyCode::Enter, &mut terminal, &mut page, &mut app);
+
+        assert_eq!(app.own_vote(), &None);
+        assert!(app
+            .activity_log()
+            .iter()
+            .any(|entry| entry.message.contains("removed their card")));
+    }
+
+    #[test]
+    fn invalid_card_is_logged_without_terminating_input_path() {
+        let mut page = VotingPage::new();
+        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        tick(&mut terminal, &mut page, &mut app);
+
+        send_input(KeyCode::Char('v'), &mut terminal, &mut page, &mut app);
+        for character in "not-a-card".chars() {
+            send_input(KeyCode::Char(character), &mut terminal, &mut page, &mut app);
+        }
+        send_input(KeyCode::Enter, &mut terminal, &mut page, &mut app);
+
+        assert_eq!(page.input_mode, InputMode::Menu);
+        assert!(app.activity_log().iter().any(|entry| {
+            entry.level == LogLevel::Error
+                && entry.source == LogSource::Client
+                && entry.message == "Card is not in the deck: not-a-card"
+        }));
+    }
+
+    #[test]
+    fn stale_reset_confirmation_logs_invalid_state() {
+        let mut page = VotingPage::new();
+        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
+
+        let mut revealed = app.room().clone();
+        revealed.phase = GamePhase::Revealed;
+        app.merge_update(revealed);
+        page.input(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::empty()),
+        )
+        .unwrap();
+        assert_eq!(page.input_mode, InputMode::ResetConfirm);
+
+        let mut playing = app.room().clone();
+        playing.phase = GamePhase::Playing;
+        app.merge_update(playing);
+        page.input(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
+        )
+        .unwrap();
+
+        assert_eq!(page.input_mode, InputMode::Menu);
+        assert!(app.activity_log().iter().any(|entry| {
+            entry.level == LogLevel::Error
+                && entry.message == "A new round can only be started after cards are revealed."
+        }));
     }
 
     #[test]

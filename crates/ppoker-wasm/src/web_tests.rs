@@ -21,6 +21,7 @@ impl FakeWebSocketGuard {
                 constructor(url) {
                     this.url = new URL(url).href;
                     this.binaryType = "blob";
+                    this.readyState = 0;
                     this.sent = [];
                     this.closeCount = 0;
                     this.onopen = null;
@@ -29,8 +30,14 @@ impl FakeWebSocketGuard {
                     this.onclose = null;
                     globalThis.__ppokerSockets.push(this);
                 }
-                send(message) { this.sent.push(message); }
-                close() { this.closeCount += 1; }
+                send(message) {
+                    if (this.readyState !== 1) throw new DOMException("Socket is not open", "InvalidStateError");
+                    this.sent.push(message);
+                }
+                close() {
+                    this.closeCount += 1;
+                    this.readyState = 3;
+                }
             };
             "#,
         )
@@ -75,6 +82,25 @@ fn socket(index: u32) -> JsValue {
 }
 
 fn invoke(socket: &JsValue, callback: &str, event: &JsValue) {
+    match callback {
+        "onopen" => {
+            Reflect::set(
+                socket,
+                &JsValue::from_str("readyState"),
+                &JsValue::from_f64(1.0),
+            )
+            .unwrap();
+        }
+        "onclose" => {
+            Reflect::set(
+                socket,
+                &JsValue::from_str("readyState"),
+                &JsValue::from_f64(3.0),
+            )
+            .unwrap();
+        }
+        _ => {}
+    }
     property(socket, callback)
         .dyn_into::<Function>()
         .expect("callback should be retained")
@@ -95,7 +121,7 @@ fn room_payload() -> String {
 fn room_payload_with(room: &str, phase: &str, vote: &str) -> String {
     serde_json::json!({
         "roomId": room,
-        "deck": ["1", "3", "5", "?"],
+        "deck": ["1", "3", "5", "?", "-"],
         "gamePhase": phase,
         "users": [{
             "username": "Browser user",
@@ -424,8 +450,20 @@ fn browser_transport_queues_without_blocking_and_cleans_callbacks_terminally() {
         Some(r#"{"requestType":"PlayCard","cardValue":"5"}"#)
     );
     let voted = client.snapshot().unwrap();
+    assert!(property(&voted, "localVote").is_null());
+    invoke(
+        &socket,
+        "onmessage",
+        &message(JsValue::from_str(&room_payload_with(
+            "typed room",
+            "PLAYING",
+            "5",
+        ))),
+    );
+    assert!(client.poll());
+    let confirmed = client.snapshot().unwrap();
     assert_eq!(
-        property(&property(&voted, "localVote"), "kind")
+        property(&property(&confirmed, "localVote"), "kind")
             .as_string()
             .as_deref(),
         Some("number")
@@ -457,6 +495,72 @@ fn browser_transport_queues_without_blocking_and_cleans_callbacks_terminally() {
     client.close();
     assert_eq!(property(&socket, "closeCount").as_f64(), Some(1.0));
     assert!(!client.poll());
+}
+
+#[wasm_bindgen_test]
+fn browser_transport_rejects_commands_after_queued_terminal_events() {
+    let _guard = FakeWebSocketGuard::install();
+
+    for (index, callback) in ["onclose", "onerror"].into_iter().enumerate() {
+        let mut client = construct(options(ConnectionRole::Participant));
+        client.connect().unwrap();
+        let socket = socket(index as u32);
+        invoke(
+            &socket,
+            "onopen",
+            &web_sys::Event::new("open").unwrap().into(),
+        );
+        invoke(
+            &socket,
+            "onmessage",
+            &message(JsValue::from_str(&room_payload())),
+        );
+        assert!(client.poll());
+
+        invoke(
+            &socket,
+            callback,
+            &web_sys::Event::new(callback).unwrap().into(),
+        );
+        assert_eq!(
+            property(&socket, "readyState").as_f64(),
+            Some(if callback == "onerror" { 1.0 } else { 3.0 })
+        );
+        assert_js_error(client.vote("5").unwrap_err(), "Transport");
+        assert_eq!(Array::from(&property(&socket, "sent")).length(), 0);
+        assert_callbacks_cleared(&socket);
+    }
+}
+
+#[wasm_bindgen_test]
+fn browser_transport_rejects_non_open_and_cleaned_up_sockets() {
+    let _guard = FakeWebSocketGuard::install();
+    let mut transport = super::transport::BrowserTransport::connect(
+        "wss://example.test/rooms/state?user=test&userType=PARTICIPANT",
+    )
+    .unwrap();
+    let socket = socket(0);
+
+    assert!(transport.send_text("connecting".to_string()).is_err());
+    invoke(
+        &socket,
+        "onopen",
+        &web_sys::Event::new("open").unwrap().into(),
+    );
+    assert_eq!(transport.poll_event(), Some(TransportEvent::Opened));
+    transport.send_text("open".to_string()).unwrap();
+
+    Reflect::set(
+        &socket,
+        &JsValue::from_str("readyState"),
+        &JsValue::from_f64(2.0),
+    )
+    .unwrap();
+    assert!(transport.send_text("closing".to_string()).is_err());
+
+    transport.close();
+    assert!(transport.send_text("cleaned up".to_string()).is_err());
+    assert_callbacks_cleared(&socket);
 }
 
 #[wasm_bindgen_test]

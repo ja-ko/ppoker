@@ -1,5 +1,7 @@
 use log::{debug, info};
-use ppoker_core::client::{PokerClient, Session, SessionUpdate};
+#[cfg(test)]
+use ppoker_core::client::ClientError;
+use ppoker_core::client::{ClientErrorCode, ClientResult, PokerClient, Session, SessionUpdate};
 #[cfg(test)]
 use ppoker_core::protocol::RoomSnapshot;
 #[cfg(test)]
@@ -107,11 +109,6 @@ impl App {
         self.auto_reveal_at = None;
     }
 
-    #[inline]
-    fn is_my_vote_last_missing(&self) -> bool {
-        Self::is_vote_last_missing(self.room())
-    }
-
     fn is_vote_last_missing(room: &Room) -> bool {
         let missing_players = room
             .players
@@ -124,6 +121,19 @@ impl App {
             && room.phase == GamePhase::Playing
     }
 
+    fn confirms_last_missing_vote(previous: &Room, room: &Room) -> bool {
+        Self::is_vote_last_missing(previous)
+            && room.phase == GamePhase::Playing
+            && room.players.iter().any(|player| {
+                player.is_you
+                    && player.user_type != UserType::Spectator
+                    && matches!(player.vote, Vote::Revealed(_))
+            })
+            && !room.players.iter().any(|player| {
+                player.user_type != UserType::Spectator && player.vote == Vote::Missing
+            })
+    }
+
     fn handle_session_update(
         session: &Session<Box<dyn PokerClient>>,
         update: SessionUpdate,
@@ -133,6 +143,7 @@ impl App {
         notify_vote_at: &mut Option<Instant>,
         has_updates: &mut bool,
         auto_reveal_at: &mut Option<Instant>,
+        disable_auto_reveal: bool,
     ) {
         let room = session
             .room()
@@ -144,6 +155,10 @@ impl App {
                     *notify_vote_at = None;
                 }
                 *has_updates = true;
+            }
+            if !disable_auto_reveal && Self::confirms_last_missing_vote(&old, room) {
+                debug!("Starting auto-reveal timer.");
+                *auto_reveal_at = Some(Instant::now() + Duration::from_secs(3));
             }
         }
 
@@ -194,14 +209,26 @@ impl App {
     }
 
     pub fn vote(&mut self, data: &str) -> AppResult<()> {
-        let was_last_missing = self.is_my_vote_last_missing();
-        self.session.vote(data)?;
-
-        if !self.config.disable_auto_reveal && was_last_missing && self.own_vote().is_some() {
-            debug!("Starting auto-reveal timer.");
-            self.auto_reveal_at = Some(Instant::now() + Duration::from_secs(3));
-        }
-        Ok(())
+        let data = data.trim();
+        let result = if data == "-" {
+            self.session.retract_vote()
+        } else {
+            let card = self
+                .room()
+                .deck
+                .iter()
+                .find(|card| card.as_str() == data)
+                .or_else(|| {
+                    self.room()
+                        .deck
+                        .iter()
+                        .find(|card| card.eq_ignore_ascii_case(data))
+                })
+                .cloned()
+                .unwrap_or_else(|| data.to_string());
+            self.session.vote(&card)
+        };
+        self.handle_command_result(result)
     }
 
     pub fn rename(&mut self, data: String) -> AppResult<()> {
@@ -222,8 +249,8 @@ impl App {
     }
 
     pub fn restart(&mut self) -> AppResult<()> {
-        self.session.restart()?;
-        Ok(())
+        let result = self.session.restart();
+        self.handle_command_result(result)
     }
 
     pub fn update(&mut self) -> AppResult<()> {
@@ -235,6 +262,7 @@ impl App {
             let notify_vote_at = &mut self.notify_vote_at;
             let has_updates = &mut self.has_updates;
             let auto_reveal_at = &mut self.auto_reveal_at;
+            let disable_auto_reveal = self.config.disable_auto_reveal;
             self.session.update_with(|session, update| {
                 debug!("room update: {:?}", session.room());
                 Self::handle_session_update(
@@ -246,6 +274,7 @@ impl App {
                     notify_vote_at,
                     has_updates,
                     auto_reveal_at,
+                    disable_auto_reveal,
                 );
             })?;
         }
@@ -328,6 +357,28 @@ impl App {
         })
     }
 
+    fn handle_command_result(&mut self, result: ClientResult<()>) -> AppResult<()> {
+        match result {
+            Ok(()) => Ok(()),
+            Err(error)
+                if matches!(
+                    error.code,
+                    ClientErrorCode::InvalidCard | ClientErrorCode::InvalidState
+                ) =>
+            {
+                Self::push_log_message(
+                    &mut self.local_log,
+                    self.session.log().len(),
+                    self.session.now(),
+                    LogLevel::Error,
+                    error.message,
+                );
+                Ok(())
+            }
+            Err(error) => Err(Box::new(error)),
+        }
+    }
+
     pub fn average_votes(&self) -> f32 {
         self.session.average_votes().unwrap_or(f32::NAN)
     }
@@ -341,7 +392,7 @@ pub mod tests {
     use crate::notification::MockNotificationHandler;
     use crate::web::client::NativeClock;
     use mockall::predicate::*;
-    use ppoker_core::client::{ClientError, ClientErrorCode, ClientResult, PokerClient};
+    use ppoker_core::client::{ClientErrorCode, PokerClient};
     use std::rc::Rc;
     use std::time::Duration;
 
@@ -351,7 +402,8 @@ pub mod tests {
         impl PokerClient for PokerClient {
             fn ensure_ready(&self) -> ClientResult<()>;
             fn get_updates(&mut self) -> ClientResult<Vec<RoomSnapshot>>;
-            fn vote<'a>(&mut self, card_value: Option<&'a str>) -> ClientResult<()>;
+            fn vote<'a>(&mut self, card_value: &'a str) -> ClientResult<()>;
+            fn retract_vote(&mut self) -> ClientResult<()>;
             fn change_name(&mut self, name: &str) -> ClientResult<()>;
             fn chat(&mut self, message: &str) -> ClientResult<()>;
             fn reveal(&mut self) -> ClientResult<()>;
@@ -387,8 +439,12 @@ pub mod tests {
             }
         }
 
-        fn vote(&mut self, card_value: Option<&str>) -> ClientResult<()> {
+        fn vote(&mut self, card_value: &str) -> ClientResult<()> {
             self.inner.vote(card_value)
+        }
+
+        fn retract_vote(&mut self) -> ClientResult<()> {
+            self.inner.retract_vote()
         }
 
         fn change_name(&mut self, name: &str) -> ClientResult<()> {
@@ -486,18 +542,30 @@ pub mod tests {
         app.set_room_for_test(room);
     }
 
+    fn confirm_local_vote(app: &mut App, vote: VoteData) {
+        let mut room = app.room().clone();
+        room.players
+            .iter_mut()
+            .find(|player| player.is_you)
+            .expect("test room has a local player")
+            .vote = Vote::Revealed(vote);
+        app.merge_update(room);
+    }
+
     #[test]
     fn test_vote_success() -> AppResult<()> {
         let mut mock_client = create_mock_client();
         mock_client
             .expect_vote()
-            .withf(|x: &Option<&str>| x.unwrap() == "5")
+            .withf(|x: &str| x == "5")
             .times(1)
             .returning(|_| Ok(()));
 
         let mut app = create_test_app(Box::new(mock_client));
 
         app.vote("5")?;
+        assert!(app.own_vote().is_none());
+        confirm_local_vote(&mut app, VoteData::Number(5));
         assert!(app.own_vote().is_some());
         if let Some(VoteData::Number(n)) = app.own_vote() {
             assert_eq!(*n, 5);
@@ -657,7 +725,7 @@ pub mod tests {
         // Expect vote to be called first
         mock_client
             .expect_vote()
-            .withf(|x: &Option<&str>| x.unwrap() == "5")
+            .withf(|x: &str| x == "5")
             .times(1)
             .returning(|_| Ok(()));
 
@@ -680,7 +748,11 @@ pub mod tests {
         // Cast our vote as the last person
         app.vote("5")?;
 
-        // Verify auto-reveal timer is set
+        // A transport handoff is not enough to start the timer.
+        assert!(app.auto_reveal_at.is_none());
+        confirm_local_vote(&mut app, VoteData::Number(5));
+
+        // The authoritative confirmation starts the timer.
         assert!(app.auto_reveal_at.is_some());
 
         // Fast forward time and trigger the auto-reveal
@@ -695,7 +767,7 @@ pub mod tests {
         let mut mock_client = create_mock_client();
         mock_client
             .expect_vote()
-            .withf(|x: &Option<&str>| x.unwrap() == "5")
+            .withf(|x: &str| x == "5")
             .times(1)
             .returning(|_| Ok(()));
 
@@ -714,6 +786,7 @@ pub mod tests {
 
         // Cast our vote
         app.vote("5")?;
+        confirm_local_vote(&mut app, VoteData::Number(5));
 
         // Verify auto-reveal timer is not set since we're not last
         assert!(app.auto_reveal_at.is_none());
@@ -726,7 +799,7 @@ pub mod tests {
         let mut mock_client = create_mock_client();
         mock_client
             .expect_vote()
-            .withf(|x: &Option<&str>| x.unwrap() == "5")
+            .withf(|x: &str| x == "5")
             .times(1)
             .returning(|_| Ok(()));
 
@@ -758,6 +831,7 @@ pub mod tests {
 
         // Cast our vote as the last player (spectator doesn't count)
         app.vote("5")?;
+        confirm_local_vote(&mut app, VoteData::Number(5));
 
         // Verify auto-reveal timer is set
         assert!(app.auto_reveal_at.is_some());
@@ -774,7 +848,7 @@ pub mod tests {
         let mut mock_client = create_mock_client();
         mock_client
             .expect_vote()
-            .withf(|x: &Option<&str>| x.unwrap() == "5")
+            .withf(|x: &str| x == "5")
             .times(1)
             .returning(|_| Ok(()));
 
@@ -796,6 +870,7 @@ pub mod tests {
 
         // Cast our vote as the last person
         app.vote("5")?;
+        confirm_local_vote(&mut app, VoteData::Number(5));
 
         // Verify auto-reveal timer is not set due to config
         assert!(app.auto_reveal_at.is_none());
@@ -808,7 +883,7 @@ pub mod tests {
         let mut mock_client = create_mock_client();
         mock_client
             .expect_vote()
-            .withf(|x: &Option<&str>| x.unwrap() == "5")
+            .withf(|x: &str| x == "5")
             .times(1)
             .returning(|_| Ok(()));
 
@@ -827,6 +902,7 @@ pub mod tests {
 
         // Cast our vote as the last person
         app.vote("5")?;
+        confirm_local_vote(&mut app, VoteData::Number(5));
 
         // Verify auto-reveal timer is set
         assert!(app.auto_reveal_at.is_some());
@@ -854,7 +930,7 @@ pub mod tests {
         let mut mock_client = create_mock_client();
         mock_client
             .expect_vote()
-            .withf(|x: &Option<&str>| x.unwrap() == "5")
+            .withf(|x: &str| x == "5")
             .times(1)
             .returning(|_| Ok(()));
 
@@ -873,6 +949,7 @@ pub mod tests {
 
         // Cast our vote as the last person
         app.vote("5")?;
+        confirm_local_vote(&mut app, VoteData::Number(5));
 
         // Verify auto-reveal timer is set
         assert!(app.auto_reveal_at.is_some());
@@ -895,13 +972,15 @@ pub mod tests {
         let mut mock_client = create_mock_client();
         mock_client
             .expect_vote()
-            .withf(|x: &Option<&str>| x.unwrap() == "coffee")
+            .withf(|x: &str| x == "coffee")
             .times(1)
             .returning(|_| Ok(()));
 
         let mut app = create_test_app_with_special_deck(mock_client);
 
-        app.vote("coffee")?;
+        app.vote(" COFFEE ")?;
+        assert!(app.own_vote().is_none());
+        confirm_local_vote(&mut app, VoteData::Special("coffee".to_string()));
         assert!(app.own_vote().is_some());
         if let Some(VoteData::Special(value)) = app.own_vote() {
             assert_eq!(value, "coffee");
@@ -917,7 +996,7 @@ pub mod tests {
         let mut mock_client = create_mock_client();
         mock_client
             .expect_vote()
-            .withf(|x: &Option<&str>| x.unwrap() == "☕")
+            .withf(|x: &str| x == "☕")
             .times(1)
             .returning(|_| Ok(()));
 
@@ -926,6 +1005,8 @@ pub mod tests {
         app.set_room_for_test(create_test_room_with_deck(deck));
 
         app.vote("☕")?;
+        assert!(app.own_vote().is_none());
+        confirm_local_vote(&mut app, VoteData::Special("☕".to_string()));
         assert!(app.own_vote().is_some());
         if let Some(VoteData::Special(value)) = app.own_vote() {
             assert_eq!(value, "☕");
@@ -941,14 +1022,13 @@ pub mod tests {
         let mut mock_client = create_mock_client();
         mock_client
             .expect_vote()
-            .withf(|x: &Option<&str>| *x == Some("5"))
+            .withf(|x: &str| x == "5")
             .times(1)
             .returning(|_| Ok(()));
         mock_client
-            .expect_vote()
-            .withf(|x: &Option<&str>| x.is_none())
+            .expect_retract_vote()
             .times(1)
-            .returning(|_| Ok(()));
+            .returning(|| Ok(()));
 
         let mut app = create_test_app(Box::new(mock_client));
 
@@ -976,6 +1056,10 @@ pub mod tests {
 
         app.rename("New Name".to_string())?;
 
+        assert_eq!(app.name(), "Test User");
+        let mut room = app.room().clone();
+        room.players[0].name = "New Name".to_string();
+        app.merge_update(room);
         assert_eq!(app.name(), "New Name");
 
         Ok(())
@@ -986,6 +1070,27 @@ pub mod tests {
         let mut app = create_test_app(Box::new(mock_client));
         app.set_room_for_test(create_test_room_with_deck(deck));
         app
+    }
+
+    #[test]
+    fn expected_command_errors_are_logged_without_propagating() {
+        let mock_client = create_mock_client();
+        let mut app = create_test_app(Box::new(mock_client));
+
+        app.vote("not-a-card").unwrap();
+        app.restart().unwrap();
+
+        let errors = app
+            .activity_log()
+            .into_iter()
+            .filter(|entry| entry.level == LogLevel::Error)
+            .collect::<Vec<_>>();
+        assert_eq!(errors.len(), 2);
+        assert_eq!(errors[0].message, "Card is not in the deck: not-a-card");
+        assert_eq!(
+            errors[1].message,
+            "A new round can only be started after cards are revealed."
+        );
     }
 
     pub fn expect_notification(mock: &mut MockNotificationHandler, summary: String, body: String) {

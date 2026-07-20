@@ -254,7 +254,7 @@ impl ClientFacade {
     }
 
     fn retract_vote(&mut self) -> Result<(), FacadeError> {
-        self.session.vote("-").map_err(FacadeError::from)
+        self.session.retract_vote().map_err(FacadeError::from)
     }
 
     fn rename(&mut self, name: String) -> Result<(), FacadeError> {
@@ -354,6 +354,8 @@ impl FacadeErrorCode {
         match self {
             Self::InvalidOptions => "InvalidOptions",
             Self::Core(ClientErrorCode::NotReady) => "NotReady",
+            Self::Core(ClientErrorCode::InvalidCard) => "InvalidCard",
+            Self::Core(ClientErrorCode::InvalidState) => "InvalidState",
             Self::Core(ClientErrorCode::Closed) => "Closed",
             Self::Core(ClientErrorCode::Transport) => "Transport",
             Self::Core(ClientErrorCode::Protocol) => "Protocol",

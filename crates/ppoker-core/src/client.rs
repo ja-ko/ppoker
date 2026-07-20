@@ -6,7 +6,7 @@ use std::time::Duration;
 use log::warn;
 use serde::Serialize;
 
-use crate::models::{GamePhase, HistoryEntry, LogEntry, LogLevel, LogSource, Room, Vote, VoteData};
+use crate::models::{GamePhase, HistoryEntry, LogEntry, LogSource, Room, Vote, VoteData};
 use crate::protocol::{
     decode_room_snapshot, encode_change_name, encode_chat_message, encode_retract_vote,
     encode_reveal_cards, encode_start_new_round, encode_vote, RoomSnapshot,
@@ -20,6 +20,8 @@ pub trait Clock {
 #[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
 pub enum ClientErrorCode {
     NotReady,
+    InvalidCard,
+    InvalidState,
     Closed,
     Transport,
     Protocol,
@@ -44,6 +46,20 @@ impl ClientError {
     pub fn closed(message: impl Into<String>) -> Self {
         Self {
             code: ClientErrorCode::Closed,
+            message: message.into(),
+        }
+    }
+
+    fn invalid_card(message: impl Into<String>) -> Self {
+        Self {
+            code: ClientErrorCode::InvalidCard,
+            message: message.into(),
+        }
+    }
+
+    fn invalid_state(message: impl Into<String>) -> Self {
+        Self {
+            code: ClientErrorCode::InvalidState,
             message: message.into(),
         }
     }
@@ -107,7 +123,8 @@ pub trait PokerClient {
     }
     fn ensure_ready(&self) -> ClientResult<()>;
     fn get_updates(&mut self) -> ClientResult<Vec<RoomSnapshot>>;
-    fn vote(&mut self, card_value: Option<&str>) -> ClientResult<()>;
+    fn vote(&mut self, card_value: &str) -> ClientResult<()>;
+    fn retract_vote(&mut self) -> ClientResult<()>;
     fn change_name(&mut self, name: &str) -> ClientResult<()>;
     fn chat(&mut self, message: &str) -> ClientResult<()>;
     fn reveal(&mut self) -> ClientResult<()>;
@@ -132,8 +149,12 @@ impl<T: PokerClient + ?Sized> PokerClient for Box<T> {
         (**self).get_updates()
     }
 
-    fn vote(&mut self, card_value: Option<&str>) -> ClientResult<()> {
+    fn vote(&mut self, card_value: &str) -> ClientResult<()> {
         (**self).vote(card_value)
+    }
+
+    fn retract_vote(&mut self) -> ClientResult<()> {
+        (**self).retract_vote()
     }
 
     fn change_name(&mut self, name: &str) -> ClientResult<()> {
@@ -328,12 +349,15 @@ impl PokerClient for WebPokerClient {
         }
     }
 
-    fn vote(&mut self, card_value: Option<&str>) -> ClientResult<()> {
-        let request = match card_value {
-            Some(card_value) => encode_vote(card_value),
-            None => encode_retract_vote(),
-        }
-        .map_err(|error| ClientError::protocol(error.to_string()))?;
+    fn vote(&mut self, card_value: &str) -> ClientResult<()> {
+        let request =
+            encode_vote(card_value).map_err(|error| ClientError::protocol(error.to_string()))?;
+        self.send_request(request)
+    }
+
+    fn retract_vote(&mut self) -> ClientResult<()> {
+        let request =
+            encode_retract_vote().map_err(|error| ClientError::protocol(error.to_string()))?;
         self.send_request(request)
     }
 
@@ -532,6 +556,23 @@ impl<C: PokerClient> Session<C> {
     fn merge_room_snapshot(&mut self, snapshot: RoomSnapshot) -> (Option<Room>, bool) {
         let now = self.now();
         let old = self.room.replace(snapshot.room);
+        let previous_name = self.name.clone();
+        let previous_vote = self.vote.clone();
+        let local_player = self
+            .room
+            .as_ref()
+            .and_then(|room| room.players.iter().find(|player| player.is_you))
+            .map(|player| {
+                let vote = match &player.vote {
+                    Vote::Revealed(value) => Some(value.clone()),
+                    Vote::Missing | Vote::Hidden => None,
+                };
+                (player.name.clone(), vote)
+            });
+        if let Some((name, _)) = &local_player {
+            self.name.clone_from(name);
+        }
+        self.vote = local_player.and_then(|(_, vote)| vote);
         let first_room = old.is_none();
         if first_room {
             self.round_number = 1;
@@ -540,7 +581,10 @@ impl<C: PokerClient> Session<C> {
             self.new_phase(now);
         }
 
-        let mut changed = first_room || old.as_ref() != self.room.as_ref();
+        let mut changed = first_room
+            || old.as_ref() != self.room.as_ref()
+            || previous_name != self.name
+            || previous_vote != self.vote;
         for log in snapshot.log {
             if !self
                 .log
@@ -563,7 +607,6 @@ impl<C: PokerClient> Session<C> {
     fn new_phase(&mut self, now: Duration) {
         let room = self.room.as_ref().expect("phase changes require a room");
         if room.phase == GamePhase::Playing {
-            self.vote = None;
             self.round_number += 1;
             self.round_start = Some(now);
         }
@@ -583,70 +626,56 @@ impl<C: PokerClient> Session<C> {
 
     pub fn vote(&mut self, data: &str) -> ClientResult<()> {
         let before = self.backend_state();
-        if let Err(error) = self.ensure_ready() {
-            self.commit_operation(before, false);
-            return Err(error);
-        }
-        let room = self
-            .room
-            .as_ref()
-            .ok_or_else(|| ClientError::not_ready("Authoritative room state is not available."));
-        let room = match room {
-            Ok(room) => room,
-            Err(error) => {
-                self.commit_operation(before, false);
-                return Err(error);
+        let result = (|| {
+            self.ensure_ready()?;
+            let room = self.room.as_ref().ok_or_else(|| {
+                ClientError::not_ready("Authoritative room state is not available.")
+            })?;
+            if room.phase != GamePhase::Playing {
+                return Err(ClientError::invalid_state(
+                    "Cards can only be played during voting.",
+                ));
             }
-        };
-        let data = data.trim();
-        if data == "-" {
-            let changed = self.vote.take().is_some();
-            let result = self.backend.vote(None);
-            self.commit_operation(before, changed);
-            return result;
-        }
+            let card = room
+                .deck
+                .iter()
+                .find(|item| item.as_str() == data)
+                .cloned()
+                .ok_or_else(|| {
+                    ClientError::invalid_card(format!("Card is not in the deck: {data}"))
+                })?;
 
-        if room.deck.iter().any(|item| item.eq_ignore_ascii_case(data)) {
-            let vote = match data.parse::<u8>() {
-                Ok(number) => VoteData::Number(number),
-                Err(_) => VoteData::Special(data.to_string()),
-            };
-            let result = self.backend.vote(Some(format!("{}", &vote).as_str()));
-            if let Err(error) = result {
-                self.commit_operation(before, false);
-                return Err(error);
+            self.backend.vote(&card)
+        })();
+        self.commit_operation(before, false);
+        result
+    }
+
+    pub fn retract_vote(&mut self) -> ClientResult<()> {
+        let before = self.backend_state();
+        let result = (|| {
+            self.ensure_ready()?;
+            let room = self.room.as_ref().ok_or_else(|| {
+                ClientError::not_ready("Authoritative room state is not available.")
+            })?;
+            if room.phase == GamePhase::Playing {
+                self.backend.retract_vote()
+            } else {
+                Err(ClientError::invalid_state(
+                    "Votes can only be retracted during voting.",
+                ))
             }
-            let mut changed = false;
-            if self.vote.as_ref() != Some(&vote) {
-                self.vote = Some(vote);
-                changed = true;
-            }
-            self.commit_operation(before, changed);
-        } else {
-            self.log.push(LogEntry {
-                timestamp: self.now(),
-                level: LogLevel::Error,
-                message: format!("Card is not in the deck: {}", data),
-                source: LogSource::Client,
-                server_index: None,
-            });
-            self.commit_operation(before, true);
-        }
-        Ok(())
+        })();
+        self.commit_operation(before, false);
+        result
     }
 
     pub fn rename(&mut self, data: String) -> ClientResult<()> {
         let before = self.backend_state();
-        if let Err(error) = self.ensure_ready() {
-            self.commit_operation(before, false);
-            return Err(error);
-        }
-        let changed = self.name != data;
-        if changed {
-            self.name = data;
-        }
-        let result = self.backend.change_name(self.name.as_str());
-        self.commit_operation(before, changed);
+        let result = self
+            .ensure_ready()
+            .and_then(|_| self.backend.change_name(data.as_str()));
+        self.commit_operation(before, false);
         result
     }
 
@@ -680,29 +709,28 @@ impl<C: PokerClient> Session<C> {
 
     pub fn restart(&mut self) -> ClientResult<()> {
         let before = self.backend_state();
-        let result = if let Err(error) = self.ensure_ready() {
-            Err(error)
-        } else if let Some(room) = self.room.as_ref() {
-            let phase = room.phase;
-            let changed = self.vote.take().is_some();
-            let result = if phase != GamePhase::Playing {
+        let result = (|| {
+            self.ensure_ready()?;
+            let room = self.room.as_ref().ok_or_else(|| {
+                ClientError::not_ready("Authoritative room state is not available.")
+            })?;
+            if room.phase == GamePhase::Revealed {
                 self.backend.reset()
             } else {
-                Ok(())
-            };
-            self.commit_operation(before, changed);
-            return result;
-        } else {
-            Err(ClientError::not_ready(
-                "Authoritative room state is not available.",
-            ))
-        };
+                Err(ClientError::invalid_state(
+                    "A new round can only be started after cards are revealed.",
+                ))
+            }
+        })();
         self.commit_operation(before, false);
         result
     }
 
     pub fn average_votes(&self) -> Option<f32> {
         let room = self.room.as_ref()?;
+        if room.phase != GamePhase::Revealed {
+            return None;
+        }
         let mut sum = 0f32;
         let mut count = 0u32;
         for player in &room.players {
@@ -774,7 +802,7 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
 
-    use crate::models::{LogLevel, Player, UserType};
+    use crate::models::{Player, UserType};
 
     use super::*;
 
@@ -922,13 +950,13 @@ mod tests {
     #[test]
     fn transport_must_open_before_commands_are_handed_off() {
         let (mut client, state) = fake_client(vec![]);
-        let error = client.vote(Some("5")).unwrap_err();
+        let error = client.vote("5").unwrap_err();
         assert_eq!(error.code, ClientErrorCode::NotReady);
         assert!(state.borrow().sent.is_empty());
 
         state.borrow_mut().events.push_back(TransportEvent::Opened);
         assert!(client.get_updates().unwrap().is_empty());
-        client.vote(Some("5")).unwrap();
+        client.vote("5").unwrap();
         assert_eq!(
             state.borrow().sent,
             [r#"{"requestType":"PlayCard","cardValue":"5"}"#]
@@ -1154,6 +1182,7 @@ mod tests {
         assert_error_code(playing.vote("5"), ClientErrorCode::NotReady);
         assert_error_code(playing.vote("not-a-card"), ClientErrorCode::NotReady);
         assert_error_code(playing.vote("-"), ClientErrorCode::NotReady);
+        assert_error_code(playing.retract_vote(), ClientErrorCode::NotReady);
         assert_error_code(
             playing.rename("Alicia".to_string()),
             ClientErrorCode::NotReady,
@@ -1174,6 +1203,7 @@ mod tests {
         assert_error_code(playing.vote("5"), ClientErrorCode::Closed);
         assert_error_code(playing.vote("not-a-card"), ClientErrorCode::Closed);
         assert_error_code(playing.vote("-"), ClientErrorCode::Closed);
+        assert_error_code(playing.retract_vote(), ClientErrorCode::Closed);
         assert_error_code(
             playing.rename("Alicia".to_string()),
             ClientErrorCode::Closed,
@@ -1188,14 +1218,19 @@ mod tests {
     }
 
     #[test]
-    fn command_failure_preserves_native_local_mutation_ordering() {
+    fn command_failures_do_not_mutate_authoritative_local_fields() {
         let (mut retraction, retraction_state) =
             open_session_with_phase("PLAYING", Rc::new(ManualClock::default()));
         retraction.vote = Some(VoteData::Number(5));
         retraction_state.borrow_mut().send_error = Some("send failed".to_string());
         let revision = retraction.revision();
-        assert_error_code(retraction.vote("-"), ClientErrorCode::Transport);
-        assert_eq!(retraction.own_vote(), &None);
+        let error = retraction.retract_vote().unwrap_err();
+        assert_eq!(error.code, ClientErrorCode::Transport);
+        assert_eq!(retraction.own_vote(), &Some(VoteData::Number(5)));
+        assert_eq!(retraction.status(), ConnectionStatus::Closed);
+        assert_eq!(retraction.terminal_error(), Some(&error));
+        assert_eq!(retraction.revision(), revision + 1);
+        assert_error_code(retraction.retract_vote(), ClientErrorCode::Closed);
         assert_eq!(retraction.revision(), revision + 1);
 
         let (mut rename, rename_state) =
@@ -1206,7 +1241,7 @@ mod tests {
             rename.rename("Alicia".to_string()),
             ClientErrorCode::Transport,
         );
-        assert_eq!(rename.name(), "Alicia");
+        assert_eq!(rename.name(), "Alice");
         assert_eq!(rename.revision(), revision + 1);
 
         for card in ["5", "?"] {
@@ -1218,6 +1253,16 @@ mod tests {
             assert_eq!(vote.own_vote(), &None);
             assert_eq!(vote.revision(), revision + 1);
         }
+
+        let (mut restart, restart_state) =
+            open_session_with_phase("CARDS_REVEALED", Rc::new(ManualClock::default()));
+        restart_state.borrow_mut().send_error = Some("send failed".to_string());
+        let revision = restart.revision();
+        let room = restart.room().cloned();
+        assert_error_code(restart.restart(), ClientErrorCode::Transport);
+        assert_eq!(restart.room(), room.as_ref());
+        assert_eq!(restart.own_vote(), &None);
+        assert_eq!(restart.revision(), revision + 1);
     }
 
     #[test]
@@ -1263,23 +1308,34 @@ mod tests {
 
         let revision = session.revision();
         session.vote("5").unwrap();
-        assert_eq!(session.revision(), revision + 1);
+        assert_eq!(session.revision(), revision);
         session.vote("5").unwrap();
-        assert_eq!(session.revision(), revision + 1);
+        assert_eq!(session.revision(), revision);
 
         session.rename("Alicia".to_string()).unwrap();
-        assert_eq!(session.revision(), revision + 2);
+        assert_eq!(session.revision(), revision);
         session.rename("Alicia".to_string()).unwrap();
-        assert_eq!(session.revision(), revision + 2);
+        assert_eq!(session.revision(), revision);
 
         session.chat("hello".to_string()).unwrap();
         session.reveal().unwrap();
-        assert_eq!(session.revision(), revision + 2);
+        assert_eq!(session.revision(), revision);
 
+        assert_error_code(session.restart(), ClientErrorCode::InvalidState);
+        assert_eq!(session.revision(), revision);
+
+        state
+            .borrow_mut()
+            .events
+            .push_back(TransportEvent::Text(room_payload(
+                "CARDS_REVEALED",
+                &[("Alice", "5", true)],
+                &[],
+            )));
+        session.update().unwrap();
+        assert_eq!(session.revision(), revision + 1);
         session.restart().unwrap();
-        assert_eq!(session.revision(), revision + 3);
-        session.restart().unwrap();
-        assert_eq!(session.revision(), revision + 3);
+        assert_eq!(session.revision(), revision + 1);
     }
 
     #[test]
@@ -1336,7 +1392,7 @@ mod tests {
     }
 
     #[test]
-    fn session_commands_preserve_validation_local_state_and_json_handoff() {
+    fn session_commands_use_exact_canonical_cards_and_authoritative_state() {
         let clock = Rc::new(ManualClock::default());
         let (client, state) = fake_client(vec![TransportEvent::Opened]);
         let mut session = Session::new(client, "Alice".to_string(), clock);
@@ -1344,27 +1400,30 @@ mod tests {
         let absent_error = session.vote("5").unwrap_err();
         assert_eq!(absent_error.code, ClientErrorCode::NotReady);
 
-        session.apply_room_snapshot(snapshot(room_payload(
-            "PLAYING",
-            &[("Alice", "", true)],
-            &[],
-        )));
-        session.vote(" 5 ").unwrap();
-        assert_eq!(session.vote, Some(VoteData::Number(5)));
-        session.vote("?").unwrap();
-        assert_eq!(session.vote, Some(VoteData::Special("?".to_string())));
+        let mut playing: serde_json::Value =
+            serde_json::from_str(&room_payload("PLAYING", &[("Alice", "", true)], &[])).unwrap();
+        playing["deck"] = serde_json::json!(["05", " Coffee ", "-", "?"]);
+        session.apply_room_snapshot(snapshot(playing.to_string()));
+
+        assert_error_code(session.vote(" 05 "), ClientErrorCode::InvalidCard);
+        session.vote("05").unwrap();
+        session.vote(" Coffee ").unwrap();
         session.vote("-").unwrap();
+        session.vote("?").unwrap();
+        session.retract_vote().unwrap();
         assert_eq!(session.vote, None);
         session.rename("Alicia".to_string()).unwrap();
         session.chat("hello".to_string()).unwrap();
         session.reveal().unwrap();
-        session.restart().unwrap();
+        assert_error_code(session.restart(), ClientErrorCode::InvalidState);
 
-        assert_eq!(session.name, "Alicia");
+        assert_eq!(session.name, "Alice");
         assert_eq!(
             state.borrow().sent,
             [
-                r#"{"requestType":"PlayCard","cardValue":"5"}"#,
+                r#"{"requestType":"PlayCard","cardValue":"05"}"#,
+                r#"{"requestType":"PlayCard","cardValue":" Coffee "}"#,
+                r#"{"requestType":"PlayCard","cardValue":"-"}"#,
                 r#"{"requestType":"PlayCard","cardValue":"?"}"#,
                 r#"{"requestType":"PlayCard","cardValue":null}"#,
                 r#"{"requestType":"ChangeName","name":"Alicia"}"#,
@@ -1373,9 +1432,39 @@ mod tests {
             ]
         );
 
-        session.vote("not-a-card").unwrap();
-        assert_eq!(session.log.last().unwrap().level, LogLevel::Error);
-        assert_eq!(state.borrow().sent.len(), 6);
+        let revision = session.revision();
+        assert_error_code(session.vote("not-a-card"), ClientErrorCode::InvalidCard);
+        assert_eq!(session.revision(), revision);
+        assert!(session.log().is_empty());
+        assert_eq!(state.borrow().sent.len(), 8);
+    }
+
+    #[test]
+    fn phase_illegal_commands_are_typed_and_send_nothing() {
+        for phase in ["CARDS_REVEALED", "FUTURE_PHASE"] {
+            let (mut session, state) =
+                open_session_with_phase(phase, Rc::new(ManualClock::default()));
+            let revision = session.revision();
+
+            assert_error_code(session.vote("5"), ClientErrorCode::InvalidState);
+            assert_error_code(session.retract_vote(), ClientErrorCode::InvalidState);
+            assert_eq!(session.revision(), revision);
+            assert!(state.borrow().sent.is_empty());
+        }
+
+        for phase in ["PLAYING", "FUTURE_PHASE"] {
+            let (mut session, state) =
+                open_session_with_phase(phase, Rc::new(ManualClock::default()));
+            let revision = session.revision();
+            let room = session.room().cloned();
+            let vote = session.own_vote().clone();
+
+            assert_error_code(session.restart(), ClientErrorCode::InvalidState);
+            assert_eq!(session.room(), room.as_ref());
+            assert_eq!(session.own_vote(), &vote);
+            assert_eq!(session.revision(), revision);
+            assert!(state.borrow().sent.is_empty());
+        }
     }
 
     #[test]
@@ -1388,6 +1477,7 @@ mod tests {
         session.restart().unwrap();
 
         assert_eq!(state.borrow().sent, [r#"{"requestType":"StartNewRound"}"#]);
+        assert_eq!(session.room().unwrap().phase, GamePhase::Revealed);
         assert_eq!(session.revision(), revision);
     }
 
@@ -1473,6 +1563,7 @@ mod tests {
             &[("Alice", "3", true), ("Bob", "5", false)],
             &[],
         )));
+        assert_eq!(session.average_votes(), None);
         clock.advance(Duration::from_millis(2500));
         session.apply_room_snapshot(snapshot(room_payload(
             "CARDS_REVEALED",
@@ -1528,19 +1619,24 @@ mod tests {
     }
 
     #[test]
-    fn session_keeps_room_player_order_and_own_vote_in_history() {
+    fn snapshots_reconcile_local_identity_vote_and_history_before_phase_effects() {
         let clock = Rc::new(ManualClock::default());
-        let mut session = new_session(clock.clone());
+        let mut session = Session::new(
+            WebPokerClient::new(),
+            "Configured name".to_string(),
+            clock.clone(),
+        );
         session.apply_room_snapshot(snapshot(room_payload(
             "PLAYING",
             &[("Bob", "✅", false), ("Alice", "3", true)],
             &[],
         )));
-        session.vote = Some(VoteData::Number(3));
+        assert_eq!(session.name(), "Alice");
+        assert_eq!(session.own_vote(), &Some(VoteData::Number(3)));
         clock.advance(Duration::from_secs(1));
         session.apply_room_snapshot(snapshot(room_payload(
             "CARDS_REVEALED",
-            &[("Bob", "5", false), ("Alice", "3", true)],
+            &[("Bob", "5", false), ("Alicia", "?", true)],
             &[],
         )));
 
@@ -1550,14 +1646,54 @@ mod tests {
                 .iter()
                 .map(|player: &Player| player.name.as_str())
                 .collect::<Vec<_>>(),
-            ["Bob", "Alice"]
+            ["Bob", "Alicia"]
         );
-        assert_eq!(session.history[0].own_vote, Some(VoteData::Number(3)));
+        assert_eq!(session.name(), "Alicia");
+        assert_eq!(
+            session.own_vote(),
+            &Some(VoteData::Special("?".to_string()))
+        );
+        assert_eq!(
+            session.history[0].own_vote,
+            Some(VoteData::Special("?".to_string()))
+        );
         assert!(session
             .room()
             .unwrap()
             .players
             .iter()
             .all(|player| player.user_type == UserType::Player));
+
+        session.apply_room_snapshot(snapshot(room_payload(
+            "PLAYING",
+            &[("Alicia", "✅", true)],
+            &[],
+        )));
+        assert_eq!(session.own_vote(), &None);
+    }
+
+    #[test]
+    fn snapshot_without_local_player_clears_vote_before_recording_history() {
+        let clock = Rc::new(ManualClock::default());
+        let mut session = new_session(clock.clone());
+        session.apply_room_snapshot(snapshot(room_payload(
+            "PLAYING",
+            &[("Alice", "5", true), ("Bob", "✅", false)],
+            &[],
+        )));
+        assert_eq!(session.name(), "Alice");
+        assert_eq!(session.own_vote(), &Some(VoteData::Number(5)));
+
+        clock.advance(Duration::from_secs(1));
+        session.apply_room_snapshot(snapshot(room_payload(
+            "CARDS_REVEALED",
+            &[("Bob", "3", false)],
+            &[],
+        )));
+
+        assert_eq!(session.name(), "Alice");
+        assert_eq!(session.own_vote(), &None);
+        assert_eq!(session.history().len(), 1);
+        assert_eq!(session.history()[0].own_vote, None);
     }
 }

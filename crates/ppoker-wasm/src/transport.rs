@@ -139,11 +139,17 @@ impl Transport for BrowserTransport {
     }
 
     fn send_text(&mut self, message: String) -> Result<(), String> {
-        self.socket
+        if self.closed || self.events.borrow().is_stopped() {
+            return Err("WebSocket transport is closed.".to_string());
+        }
+        let socket = self
+            .socket
             .as_ref()
-            .ok_or_else(|| "WebSocket transport is closed.".to_string())?
-            .send_with_str(&message)
-            .map_err(js_error_message)
+            .ok_or_else(|| "WebSocket transport is closed.".to_string())?;
+        if socket.ready_state() != WebSocket::OPEN {
+            return Err("WebSocket connection is not open.".to_string());
+        }
+        socket.send_with_str(&message).map_err(js_error_message)
     }
 
     fn close(&mut self) {

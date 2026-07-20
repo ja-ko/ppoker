@@ -292,23 +292,20 @@ pub mod tests {
                 .collect())
         }
 
-        fn vote(&mut self, card_value: Option<&str>) -> ClientResult<()> {
+        fn vote(&mut self, card_value: &str) -> ClientResult<()> {
             let name = self.current_user.name.clone();
-            self.current_user.vote_state = match card_value {
-                Some(value) => {
-                    self.current_user.actual_vote = Some(value.to_string());
-                    Vote::Hidden
-                }
-                None => {
-                    self.current_user.actual_vote = None;
-                    Vote::Missing
-                }
-            };
-            match &self.current_user.vote_state {
-                Vote::Hidden => self.add_log_entry(&format!("{} played a card", name)),
-                Vote::Missing => self.add_log_entry(&format!("{} removed their card", name)),
-                Vote::Revealed(_) => (), // Already revealed, no new log needed
-            };
+            self.current_user.actual_vote = Some(card_value.to_string());
+            self.current_user.vote_state = Vote::Hidden;
+            self.add_log_entry(&format!("{} played a card", name));
+            self.queue_room_update();
+            Ok(())
+        }
+
+        fn retract_vote(&mut self) -> ClientResult<()> {
+            let name = self.current_user.name.clone();
+            self.current_user.actual_vote = None;
+            self.current_user.vote_state = Vote::Missing;
+            self.add_log_entry(&format!("{} removed their card", name));
             self.queue_room_update();
             Ok(())
         }
@@ -365,7 +362,11 @@ pub mod tests {
             Ok(std::mem::take(&mut self.0))
         }
 
-        fn vote(&mut self, _card_value: Option<&str>) -> ClientResult<()> {
+        fn vote(&mut self, _card_value: &str) -> ClientResult<()> {
+            unreachable!()
+        }
+
+        fn retract_vote(&mut self) -> ClientResult<()> {
             unreachable!()
         }
 
@@ -450,7 +451,7 @@ pub mod tests {
         let bob_id = client.add_user("Bob");
 
         // Alice votes a number
-        client.vote(Some("5")).unwrap();
+        client.vote("5").unwrap();
 
         // Bob votes special
         client.user_vote(&bob_id, Some("?"));
@@ -503,7 +504,7 @@ pub mod tests {
         let bob_id = client.add_user("Bob");
 
         // Alice votes "5"
-        client.vote(Some("5")).unwrap();
+        client.vote("5").unwrap();
 
         // Bob votes "8"
         client.user_vote(&bob_id, Some("8"));
@@ -518,7 +519,7 @@ pub mod tests {
         assert!(matches!(&room.players[1].vote, Vote::Hidden)); // Bob's vote is hidden
 
         // Alice changes vote to "13"
-        client.vote(Some("13")).unwrap();
+        client.vote("13").unwrap();
 
         // Check updated state
         let rooms = client.get_updates().unwrap();

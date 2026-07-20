@@ -214,21 +214,21 @@ mod tests {
         let charlie_id = client.add_user("Charlie");
 
         // First round: Everyone votes numbers
-        client.vote(Some("5")).unwrap();
+        client.vote("5").unwrap();
         client.user_vote(&bob_id, Some("3"));
         client.user_vote(&charlie_id, Some("8"));
         client.reveal().unwrap();
         client.reset().unwrap();
 
         // Second round: Mix of numbers and special votes
-        client.vote(Some("13")).unwrap();
+        client.vote("13").unwrap();
         client.user_vote(&bob_id, Some("?"));
         client.user_vote(&charlie_id, Some("8"));
         client.reveal().unwrap();
         client.reset().unwrap();
 
         // Third round: Some abstentions
-        client.vote(Some("3")).unwrap();
+        client.vote("3").unwrap();
         client.user_vote(&bob_id, Some("5"));
         // Charlie doesn't vote
         client.reveal().unwrap();
