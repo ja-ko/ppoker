@@ -21,7 +21,6 @@ const result = spawnSync(
     "web",
     "--out-dir",
     output,
-    "--locked",
   ],
   { stdio: "inherit" },
 );

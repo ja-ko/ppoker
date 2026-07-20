@@ -35,7 +35,6 @@ run(
     "--headless",
     "--chrome",
     "crates/ppoker-wasm",
-    "--locked",
   ],
   repositoryRoot,
   { ...process.env, WASM_BINDGEN_TEST_TIMEOUT: "30" },
