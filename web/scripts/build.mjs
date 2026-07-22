@@ -1,29 +1,13 @@
-import { spawnSync } from "node:child_process";
 import { copyFile, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { pnpmInvocation } from "./subprocess.mjs";
+import { packageRoot, pnpmInvocation, runChecked } from "./subprocess.mjs";
 
-const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const distribution = join(packageRoot, "dist");
 const pnpm = pnpmInvocation();
 
-function run(command, arguments_) {
-  const result = spawnSync(command, arguments_, {
-    cwd: packageRoot,
-    stdio: "inherit",
-  });
-  if (result.error !== undefined) {
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
-  }
-}
-
 await rm(distribution, { force: true, recursive: true });
-run(pnpm.command, [...pnpm.arguments, "run", "wasm:generate"]);
-run(pnpm.command, [
+runChecked(pnpm.command, [...pnpm.arguments, "run", "wasm:generate"]);
+runChecked(pnpm.command, [
   ...pnpm.arguments,
   "exec",
   "tsc",
@@ -41,7 +25,7 @@ await copyFile(
   join(packageRoot, "src/generated/ppoker-wasm/ppoker_wasm.d.ts"),
   generatedDeclarations,
 );
-run(pnpm.command, [...pnpm.arguments, "exec", "vite", "build"]);
+runChecked(pnpm.command, [...pnpm.arguments, "exec", "vite", "build"]);
 
 await stat(join(distribution, "ppoker_wasm_bg.wasm"));
 const builtJavaScript = await readFile(join(distribution, "index.js"), "utf8");

@@ -1,98 +1,101 @@
+import type { ComponentProps } from "react";
+import type * as Generated from "../src/generated/ppoker-wasm/ppoker_wasm.js";
 import {
-  WasmPokerClient,
-  createPokerClientStore,
-  initializePpokerWasm,
+  createPokerClient,
   type ClientError,
   type ClientErrorCode,
   type ClientOptions,
   type ClientSnapshot,
   type ConnectionRole,
   type ConnectionStatus,
-  type DeepReadonly,
   type GamePhase,
   type HistoryEntry,
   type LogEntry,
   type Player,
-  type PokerClientPort,
-  type PokerClientSnapshot,
-  type PokerClientStore,
+  type PokerClient,
+  type PokerClientConfig,
   type Room,
   type UserType,
   type Vote,
   type VoteData,
 } from "../src/index.js";
+import {
+  PokerClientProvider,
+  usePokerClient,
+  usePokerClientSnapshot,
+  type ClientSnapshot as ReactClientSnapshot,
+  type PokerClient as ReactPokerClient,
+} from "../src/react.js";
 
 type IsAny<Value> = 0 extends 1 & Value ? true : false;
 type Assert<Value extends true> = Value;
 type NotAny<Value> = IsAny<Value> extends false ? true : false;
-type HasNoRawFree = Assert<"free" extends keyof WasmPokerClient ? false : true>;
+type Missing<Value, Key extends PropertyKey> = Key extends keyof Value
+  ? false
+  : true;
+type DeepNotAny<Value> =
+  IsAny<Value> extends true
+    ? false
+    : Value extends readonly (infer Item)[]
+      ? DeepNotAny<Item>
+      : Value extends object
+        ? false extends {
+            [Key in keyof Value]-?: DeepNotAny<Value[Key]>;
+          }[keyof Value]
+          ? false
+          : true
+        : true;
+type AllDeepTyped<Values extends readonly unknown[]> = false extends {
+  [Key in keyof Values]: DeepNotAny<Values[Key]>;
+}[number]
+  ? false
+  : true;
+// prettier-ignore
+type PublicShapes = [ClientError, ClientOptions, ClientSnapshot, HistoryEntry, LogEntry, Player, Room, Vote, VoteData];
+// prettier-ignore
+type GeneratedShapes = [Generated.ClientError, Generated.ClientOptions, Generated.ClientSnapshot, Generated.HistoryEntry, Generated.LogEntry, Generated.Player, Generated.Room, Generated.Vote, Generated.VoteData];
 
-function inspectVoteData(value: DeepReadonly<VoteData>): number | string {
-  return value.value;
+function inspectVote(vote: Vote | Generated.Vote): number | string | null {
+  switch (vote.state) {
+    case "missing":
+    case "hidden":
+      return null;
+    case "revealed":
+      return vote.value.kind === "number" ? vote.value.value : vote.value.value;
+    default: {
+      const exhaustive: never = vote;
+      return exhaustive;
+    }
+  }
 }
 
-function inspectVote(vote: DeepReadonly<Vote>): number | string | null {
-  return vote.state === "revealed" ? inspectVoteData(vote.value) : null;
-}
-
-function inspectPlayer(player: DeepReadonly<Player>): void {
-  const userType: UserType = player.userType;
-  void userType;
-  void inspectVote(player.vote);
-}
-
-function inspectRoom(room: DeepReadonly<Room>): void {
-  const phase: GamePhase = room.phase;
-  room.players.forEach(inspectPlayer);
-  void phase;
-}
-
-function inspectHistory(entry: DeepReadonly<HistoryEntry>): void {
-  const average: number | null = entry.average;
-  const ownVote: VoteData | null = entry.ownVote;
-  entry.votes.forEach(inspectPlayer);
-  void entry.lengthMs;
-  void average;
-  void ownVote;
-}
-
-function inspectLog(entry: DeepReadonly<LogEntry>): void {
-  const serverIndex: number | null = entry.serverIndex;
-  void entry.timestampMs;
-  void serverIndex;
-}
-
-function inspectError(error: DeepReadonly<ClientError>): void {
-  const code: ClientErrorCode = error.code;
-  void code;
-}
-
-function inspectSnapshot(snapshot: ClientSnapshot): void {
-  const status: ConnectionStatus = snapshot.status;
-  if (snapshot.terminalError !== null) inspectError(snapshot.terminalError);
-  if (snapshot.room !== null) inspectRoom(snapshot.room);
-  snapshot.log.forEach(inspectLog);
-  snapshot.history.forEach(inspectHistory);
-  void snapshot.roundNumber;
-  void snapshot.roundStartedAtMs;
-  void snapshot.average;
-  void status;
-}
-
-declare const client: WasmPokerClient;
+declare const client: PokerClient;
 declare const snapshot: ClientSnapshot;
-declare const port: PokerClientPort;
-declare const store: PokerClientStore;
-const participant: ConnectionRole = "participant";
-const spectatorOptions: ClientOptions = {
-  endpoint: "wss://example.test",
-  room: "typed",
-  name: "Spectator",
-  role: "spectator",
-};
+declare const generatedOptions: Generated.ClientOptions;
+declare const generatedSnapshot: Generated.ClientSnapshot;
+const generatedOptionsAsPublic: ClientOptions = generatedOptions;
+const generatedSnapshotAsPublic: ClientSnapshot = generatedSnapshot;
+const expectedValues: [
+  ClientErrorCode,
+  ConnectionRole,
+  ConnectionStatus,
+  GamePhase,
+  UserType,
+  number | null,
+  VoteData | null,
+  number | null,
+] = [
+  snapshot.terminalError?.code ?? "Transport",
+  "participant",
+  snapshot.status,
+  snapshot.room?.phase ?? "unknown",
+  snapshot.room?.players[0]?.userType ?? "player",
+  snapshot.history[0]?.average ?? null,
+  snapshot.history[0]?.ownVote ?? null,
+  snapshot.log[0]?.serverIndex ?? null,
+];
 
 client.connect();
-inspectSnapshot(client.snapshot());
 client.vote("5");
 client.retractVote();
 client.rename("Typed name");
@@ -101,37 +104,56 @@ client.reveal();
 client.startNewRound();
 client.close();
 client[Symbol.dispose]();
-void initializePpokerWasm;
-void participant;
-void spectatorOptions;
-inspectSnapshot(snapshot);
-inspectSnapshot(store.getSnapshot());
-inspectSnapshot(store.getServerSnapshot());
-const createdStore = createPokerClientStore(port, { pollIntervalMs: 25 });
-const wasmStore = createPokerClientStore(client);
-createdStore.dispose();
-wasmStore.dispose();
+inspectVote(snapshot.room?.players[0]?.vote ?? { state: "missing" });
+void [
+  generatedOptionsAsPublic,
+  generatedSnapshotAsPublic,
+  expectedValues,
+  client.getSnapshot(),
+];
 
-declare const readonlySnapshot: PokerClientSnapshot;
-type DerivedReadonlySnapshot = DeepReadonly<ClientSnapshot>;
-const derivedReadonlySnapshot: DerivedReadonlySnapshot = readonlySnapshot;
-// @ts-expect-error snapshots are deeply readonly
-readonlySnapshot.room.players[0].name = "mutated";
+const createdClient: Promise<PokerClient> = createPokerClient(
+  generatedOptionsAsPublic,
+  {
+    pollIntervalMs: 25,
+    wasm: new DataView(new ArrayBuffer(8)),
+  } satisfies PokerClientConfig,
+);
+const firstPlayer = snapshot.room?.players[0];
+if (firstPlayer !== undefined) {
+  // @ts-expect-error snapshots are deeply readonly
+  firstPlayer.name = "mutated";
+}
 // @ts-expect-error snapshot collections are deeply readonly
-readonlySnapshot.history[0] = snapshot.history[0];
-void derivedReadonlySnapshot;
+snapshot.history[0] = {} as HistoryEntry;
 
-type SnapshotIsTyped = Assert<NotAny<ClientSnapshot>>;
-type RoomIsTyped = Assert<NotAny<Room>>;
-type PlayerIsTyped = Assert<NotAny<Player>>;
-type VoteIsTyped = Assert<NotAny<Vote>>;
-type StoreSnapshotIsTyped = Assert<NotAny<PokerClientSnapshot>>;
-const assertions: [
-  HasNoRawFree,
-  SnapshotIsTyped,
-  RoomIsTyped,
-  PlayerIsTyped,
-  VoteIsTyped,
-  StoreSnapshotIsTyped,
-] = [true, true, true, true, true, true];
-void assertions;
+const providerProperties: ComponentProps<typeof PokerClientProvider> = {
+  client,
+};
+const hookClient: ReactPokerClient = usePokerClient();
+const hookSnapshot: ReactClientSnapshot = usePokerClientSnapshot();
+void [
+  createdClient,
+  providerProperties,
+  hookClient,
+  hookSnapshot.room?.players[0]?.vote,
+  hookSnapshot.history[0]?.votes[0]?.name,
+  hookSnapshot.terminalError?.message,
+  hookSnapshot.log[0]?.message,
+];
+
+export type TypeContracts = Assert<
+  [
+    Missing<PokerClient, "free">,
+    Missing<HistoryEntry, "lengthMs">,
+    Missing<Generated.HistoryEntry, "lengthMs">,
+    Missing<ClientSnapshot, "roundStartedAtMs">,
+    Missing<Generated.ClientSnapshot, "roundStartedAtMs">,
+    AllDeepTyped<PublicShapes>,
+    AllDeepTyped<GeneratedShapes>,
+    NotAny<ReactClientSnapshot>,
+    NotAny<ReactPokerClient>,
+  ] extends true[]
+    ? true
+    : false
+>;

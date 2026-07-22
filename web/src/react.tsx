@@ -5,47 +5,56 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import type { PokerClientSnapshot, PokerClientStore } from "./client-store.js";
+import type { ClientSnapshot, PokerClient } from "./poker-client.js";
 
-const PokerClientContext = createContext<PokerClientStore | null>(null);
+const PokerClientContext = createContext<PokerClient | null>(null);
+const SERVER_SNAPSHOT: ClientSnapshot = Object.freeze({
+  revision: 0,
+  status: "disconnected",
+  terminalError: null,
+  room: null,
+  localName: "",
+  localVote: null,
+  log: Object.freeze([]),
+  roundNumber: 0,
+  history: Object.freeze([]),
+  average: null,
+});
+const getServerSnapshot = (): ClientSnapshot => SERVER_SNAPSHOT;
 
 export interface PokerClientProviderProps {
   readonly children?: ReactNode;
-  readonly store: PokerClientStore;
+  readonly client: PokerClient;
 }
 
 export function PokerClientProvider({
   children,
-  store,
+  client,
 }: PokerClientProviderProps): ReactElement {
   return (
-    <PokerClientContext.Provider value={store}>
+    <PokerClientContext.Provider value={client}>
       {children}
     </PokerClientContext.Provider>
   );
 }
 
-export function usePokerClientStore(): PokerClientStore {
-  const store = useContext(PokerClientContext);
-  if (store === null) {
+export function usePokerClient(): PokerClient {
+  const client = useContext(PokerClientContext);
+  if (client === null) {
     throw new Error(
       "Poker client hooks must be used within a PokerClientProvider.",
     );
   }
-  return store;
+  return client;
 }
 
-export function usePokerClientSnapshot(): PokerClientSnapshot {
-  const store = usePokerClientStore();
+export function usePokerClientSnapshot(): ClientSnapshot {
+  const client = usePokerClient();
   return useSyncExternalStore(
-    store.subscribe,
-    store.getSnapshot,
-    store.getServerSnapshot,
+    client.subscribe,
+    client.getSnapshot,
+    getServerSnapshot,
   );
 }
 
-export type {
-  PokerClientSnapshot,
-  PokerClientStore,
-  PokerClientStoreOptions,
-} from "./client-store.js";
+export type { ClientSnapshot, PokerClient } from "./poker-client.js";

@@ -380,12 +380,7 @@ mod tests {
     fn room_fixture() -> Room {
         Room {
             room_id: "roomid".to_string(),
-            deck: vec![
-                "1".to_string(),
-                "2".to_string(),
-                "3".to_string(),
-                "5".to_string(),
-            ],
+            deck: ["1", "2", "3", "5"].map(str::to_string).to_vec(),
             game_phase: GamePhase::Playing,
             users: vec![
                 User {
@@ -421,6 +416,23 @@ mod tests {
         .to_string()
     }
 
+    fn wire_user(username: &str, user_type: &str, your_user: bool, card_value: &str) -> Value {
+        json!({
+            "username": username,
+            "userType": user_type,
+            "yourUser": your_user,
+            "cardValue": card_value
+        })
+    }
+
+    const PLAY_13: &str = r#"{"requestType":"PlayCard","cardValue":"13"}"#;
+    const PLAY_UNICODE: &str = r#"{"requestType":"PlayCard","cardValue":"☕/世界"}"#;
+    const RETRACT: &str = r#"{"requestType":"PlayCard","cardValue":null}"#;
+    const RENAME: &str = r#"{"requestType":"ChangeName","name":"Ålice 東京"}"#;
+    const CHAT: &str = r#"{"requestType":"ChatMessage","message":"hello \"world\"\n世界"}"#;
+    const REVEAL: &str = r#"{"requestType":"RevealCards"}"#;
+    const RESTART: &str = r#"{"requestType":"StartNewRound"}"#;
+
     #[test]
     fn wire_room_json_structure_is_preserved() {
         let room = room_fixture();
@@ -429,18 +441,8 @@ mod tests {
             "deck": ["1", "2", "3", "5"],
             "gamePhase": "PLAYING",
             "users": [
-                {
-                    "username": "user 1",
-                    "userType": "PARTICIPANT",
-                    "yourUser": true,
-                    "cardValue": "13"
-                },
-                {
-                    "username": "user 2",
-                    "userType": "SPECTATOR",
-                    "yourUser": false,
-                    "cardValue": "5"
-                }
+                wire_user("user 1", "PARTICIPANT", true, "13"),
+                wire_user("user 2", "SPECTATOR", false, "5")
             ],
             "average": "12",
             "log": [{ "level": "CHAT", "message": "Hello World" }]
@@ -456,24 +458,9 @@ mod tests {
             "deck": ["1", "3", "?", "☕"],
             "gamePhase": "CARDS_REVEALED",
             "users": [
-                {
-                    "username": "Alice",
-                    "userType": "PARTICIPANT",
-                    "yourUser": true,
-                    "cardValue": "13"
-                },
-                {
-                    "username": "Bøb",
-                    "userType": "PARTICIPANT",
-                    "yourUser": false,
-                    "cardValue": "☕"
-                },
-                {
-                    "username": "Observer",
-                    "userType": "SPECTATOR",
-                    "yourUser": false,
-                    "cardValue": "8"
-                }
+                wire_user("Alice", "PARTICIPANT", true, "13"),
+                wire_user("Bøb", "PARTICIPANT", false, "☕"),
+                wire_user("Observer", "SPECTATOR", false, "8")
             ],
             "average": "13",
             "log": [
@@ -524,42 +511,12 @@ mod tests {
     #[test]
     fn vote_sentinels_and_unicode_special_votes_are_normalized() {
         let payload = payload_with_users(json!([
-            {
-                "username": "hidden",
-                "userType": "PARTICIPANT",
-                "yourUser": false,
-                "cardValue": "✅"
-            },
-            {
-                "username": "missing-cross",
-                "userType": "PARTICIPANT",
-                "yourUser": false,
-                "cardValue": "❌"
-            },
-            {
-                "username": "missing-empty",
-                "userType": "PARTICIPANT",
-                "yourUser": true,
-                "cardValue": ""
-            },
-            {
-                "username": "number",
-                "userType": "PARTICIPANT",
-                "yourUser": false,
-                "cardValue": "8"
-            },
-            {
-                "username": "special",
-                "userType": "PARTICIPANT",
-                "yourUser": false,
-                "cardValue": "☕"
-            },
-            {
-                "username": "spectator-hidden",
-                "userType": "SPECTATOR",
-                "yourUser": false,
-                "cardValue": "✅"
-            }
+            wire_user("hidden", "PARTICIPANT", false, "✅"),
+            wire_user("missing-cross", "PARTICIPANT", false, "❌"),
+            wire_user("missing-empty", "PARTICIPANT", true, ""),
+            wire_user("number", "PARTICIPANT", false, "8"),
+            wire_user("special", "PARTICIPANT", false, "☕"),
+            wire_user("spectator-hidden", "SPECTATOR", false, "✅")
         ]));
 
         let votes = decode_room_snapshot(&payload)
@@ -589,12 +546,7 @@ mod tests {
             "roomId": "unknown-test",
             "deck": ["1"],
             "gamePhase": "FUTURE_PHASE",
-            "users": [{
-                "username": "Future user",
-                "userType": "FUTURE_ROLE",
-                "yourUser": true,
-                "cardValue": "5"
-            }],
+            "users": [wire_user("Future user", "FUTURE_ROLE", true, "5")],
             "average": "5",
             "log": [
                 { "level": "INFO", "message": "before" },
@@ -630,68 +582,47 @@ mod tests {
 
     #[test]
     fn every_command_keeps_its_exact_json_contract() {
-        assert_eq!(
-            encode_vote("13").unwrap(),
-            r#"{"requestType":"PlayCard","cardValue":"13"}"#
-        );
-        assert_eq!(
-            encode_vote("☕/世界").unwrap(),
-            r#"{"requestType":"PlayCard","cardValue":"☕/世界"}"#
-        );
-        assert_eq!(
-            encode_retract_vote().unwrap(),
-            r#"{"requestType":"PlayCard","cardValue":null}"#
-        );
-        assert_eq!(
-            encode_change_name("Ålice 東京").unwrap(),
-            r#"{"requestType":"ChangeName","name":"Ålice 東京"}"#
-        );
-        assert_eq!(
-            encode_chat_message("hello \"world\"\n世界").unwrap(),
-            r#"{"requestType":"ChatMessage","message":"hello \"world\"\n世界"}"#
-        );
-        assert_eq!(
-            encode_reveal_cards().unwrap(),
-            r#"{"requestType":"RevealCards"}"#
-        );
-        assert_eq!(
-            encode_start_new_round().unwrap(),
-            r#"{"requestType":"StartNewRound"}"#
-        );
+        let commands = [
+            (encode_vote("13"), PLAY_13),
+            (encode_vote("☕/世界"), PLAY_UNICODE),
+            (encode_retract_vote(), RETRACT),
+            (encode_change_name("Ålice 東京"), RENAME),
+            (encode_chat_message("hello \"world\"\n世界"), CHAT),
+            (encode_reveal_cards(), REVEAL),
+            (encode_start_new_round(), RESTART),
+        ];
+        for (command, expected) in commands {
+            assert_eq!(command.unwrap(), expected);
+        }
     }
 
     #[test]
     fn room_urls_preserve_root_and_nested_base_paths_without_trailing_separators() {
-        assert_eq!(
-            build_room_url(
+        for (endpoint, name, role, expected) in [
+            (
                 "wss://example.test",
-                "planning",
                 "Alice",
-                ConnectionRole::Participant
-            )
-            .unwrap(),
-            "wss://example.test/rooms/planning?user=Alice&userType=PARTICIPANT"
-        );
-        assert_eq!(
-            build_room_url(
+                ConnectionRole::Participant,
+                "wss://example.test/rooms/planning?user=Alice&userType=PARTICIPANT",
+            ),
+            (
                 "ws://example.test/",
-                "planning",
                 "Alice",
-                ConnectionRole::Participant
-            )
-            .unwrap(),
-            "ws://example.test/rooms/planning?user=Alice&userType=PARTICIPANT"
-        );
-        assert_eq!(
-            build_room_url(
+                ConnectionRole::Participant,
+                "ws://example.test/rooms/planning?user=Alice&userType=PARTICIPANT",
+            ),
+            (
                 "wss://example.test/base/path///",
-                "planning",
                 "Observer",
-                ConnectionRole::Spectator
-            )
-            .unwrap(),
-            "wss://example.test/base/path/rooms/planning?user=Observer&userType=SPECTATOR"
-        );
+                ConnectionRole::Spectator,
+                "wss://example.test/base/path/rooms/planning?user=Observer&userType=SPECTATOR",
+            ),
+        ] {
+            assert_eq!(
+                build_room_url(endpoint, "planning", name, role).unwrap(),
+                expected
+            );
+        }
     }
 
     #[test]
@@ -742,42 +673,26 @@ mod tests {
             build_room_url("not a URL", "room", "user", ConnectionRole::Participant),
             Err(RoomUrlError::InvalidUrl(_))
         ));
-        assert_eq!(
-            build_room_url(
-                "https://example.test",
-                "room",
-                "user",
-                ConnectionRole::Participant
-            ),
-            Err(RoomUrlError::UnsupportedScheme)
-        );
-        assert_eq!(
-            build_room_url(
+        for (endpoint, expected) in [
+            ("https://example.test", RoomUrlError::UnsupportedScheme),
+            (
                 "wss://user:password@example.test/base",
-                "room",
-                "user",
-                ConnectionRole::Participant
+                RoomUrlError::CredentialsNotAllowed,
             ),
-            Err(RoomUrlError::CredentialsNotAllowed)
-        );
-        assert_eq!(
-            build_room_url(
+            (
                 "wss://example.test/base?existing=value",
-                "room",
-                "user",
-                ConnectionRole::Participant
+                RoomUrlError::QueryNotAllowed,
             ),
-            Err(RoomUrlError::QueryNotAllowed)
-        );
-        assert_eq!(
-            build_room_url(
+            (
                 "wss://example.test/base#fragment",
-                "room",
-                "user",
-                ConnectionRole::Participant
+                RoomUrlError::FragmentNotAllowed,
             ),
-            Err(RoomUrlError::FragmentNotAllowed)
-        );
+        ] {
+            assert_eq!(
+                build_room_url(endpoint, "room", "user", ConnectionRole::Participant),
+                Err(expected)
+            );
+        }
     }
 
     #[test]

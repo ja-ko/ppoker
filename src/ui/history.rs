@@ -8,8 +8,8 @@ use crate::app::{App, AppResult};
 use crate::models::{GamePhase, HistoryEntry};
 use crate::ui::voting::{format_vote, render_overview, render_own_vote};
 use crate::ui::{
-    colored_box_style, footer_entries, FooterEntry, format_duration, render_box, render_box_colored, Page,
-    UIAction, UiPage,
+    colored_box_style, footer_entries, format_duration, render_box, render_box_colored,
+    FooterEntry, Page, UIAction, UiPage,
 };
 
 pub struct HistoryPage {
@@ -101,10 +101,26 @@ impl HistoryPage {
 
     fn render_footer(&mut self, app: &mut App, rect: Rect, frame: &mut Frame) {
         let entries = vec![
-            FooterEntry { name: "Vote".to_string(), shortcut: 'V', highlight: app.has_updates },
-            FooterEntry { name: "↑".to_string(), shortcut: '↑', highlight: false },
-            FooterEntry { name: "↓".to_string(), shortcut: '↓', highlight: false },
-            FooterEntry { name: "Quit".to_string(), shortcut: 'Q', highlight: false },
+            FooterEntry {
+                name: "Vote".to_string(),
+                shortcut: 'V',
+                highlight: app.has_updates,
+            },
+            FooterEntry {
+                name: "↑".to_string(),
+                shortcut: '↑',
+                highlight: false,
+            },
+            FooterEntry {
+                name: "↓".to_string(),
+                shortcut: '↓',
+                highlight: false,
+            },
+            FooterEntry {
+                name: "Quit".to_string(),
+                shortcut: 'Q',
+                highlight: false,
+            },
         ];
 
         let footer = footer_entries(entries);
@@ -117,11 +133,16 @@ impl HistoryPage {
         let rows: Vec<Row> = app
             .history()
             .iter()
-            .map(|entry| {
+            .enumerate()
+            .map(|(index, entry)| {
+                let duration = app.history_duration(index);
                 Row::new(vec![
                     Cell::from(Span::raw(entry.round_number.to_string())),
-                    Cell::from(Span::raw(format!("{:.1}", entry.average.unwrap_or(f32::NAN)))),
-                    Cell::from(Span::raw(format_duration(&entry.length))),
+                    Cell::from(Span::raw(format!(
+                        "{:.1}",
+                        entry.average.unwrap_or(f32::NAN)
+                    ))),
+                    Cell::from(Span::raw(format_duration(&duration))),
                 ])
             })
             .collect();
@@ -187,18 +208,35 @@ fn render_player_list(entry: &HistoryEntry, rect: Rect, frame: &mut Frame) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::tests::create_test_app;
-    use crate::ui::tests::{send_input, tick};
-    use crate::web::client::tests::LocalMockPokerClient;
-    use crate::web::client::PokerClient;
+    use crate::ui::tests::{local_ui, send_input, test_app, test_terminal, tick};
+    use crate::web::client::tests::LocalTestTransport;
     use insta::assert_snapshot;
-    use ratatui::backend::TestBackend;
+
+    fn play_round(
+        app: &mut App,
+        transport: &LocalTestTransport,
+        users: [&str; 2],
+        own_vote: &str,
+        other_votes: [Option<&str>; 2],
+    ) {
+        app.vote(own_vote).unwrap();
+        for (user, vote) in users
+            .into_iter()
+            .zip(other_votes)
+            .filter_map(|(u, v)| v.map(|v| (u, v)))
+        {
+            transport.user_vote(user, Some(vote));
+        }
+        app.update().unwrap();
+        app.reveal().unwrap();
+        app.update().unwrap();
+        app.restart().unwrap();
+        app.update().unwrap();
+    }
 
     #[test]
     fn test_render_page() {
-        let mut page = HistoryPage::new();
-        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
-        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        let (mut page, mut app, mut terminal) = local_ui(HistoryPage::new(), (80, 20));
         tick(&mut terminal, &mut page, &mut app);
 
         assert_snapshot!("Empty history page", terminal.backend());
@@ -207,37 +245,21 @@ mod tests {
     #[test]
     fn test_render_page_with_history() {
         let mut page = HistoryPage::new();
-        let mut client = LocalMockPokerClient::new("Alice");
+        let transport = LocalTestTransport::new("Alice");
 
         // Add other players
-        let bob_id = client.add_user("Bob");
-        let charlie_id = client.add_user("Charlie");
+        let bob_id = transport.add_user("Bob");
+        let charlie_id = transport.add_user("Charlie");
+        let mut app = test_app(transport.clone());
+        app.update().unwrap();
 
-        // First round: Everyone votes numbers
-        client.vote("5").unwrap();
-        client.user_vote(&bob_id, Some("3"));
-        client.user_vote(&charlie_id, Some("8"));
-        client.reveal().unwrap();
-        client.reset().unwrap();
-
-        // Second round: Mix of numbers and special votes
-        client.vote("13").unwrap();
-        client.user_vote(&bob_id, Some("?"));
-        client.user_vote(&charlie_id, Some("8"));
-        client.reveal().unwrap();
-        client.reset().unwrap();
-
-        // Third round: Some abstentions
-        client.vote("3").unwrap();
-        client.user_vote(&bob_id, Some("5"));
-        // Charlie doesn't vote
-        client.reveal().unwrap();
-        client.reset().unwrap();
-
-        let mut app = create_test_app(Box::new(client));
+        let users = [&*bob_id, &*charlie_id];
+        play_round(&mut app, &transport, users, "5", [Some("3"), Some("8")]);
+        play_round(&mut app, &transport, users, "13", [Some("?"), Some("8")]);
+        play_round(&mut app, &transport, users, "3", [Some("5"), None]);
 
         // Render and snapshot the history page
-        let mut terminal = Terminal::new(TestBackend::new(90, 30)).unwrap();
+        let mut terminal = test_terminal((90, 30));
         tick(&mut terminal, &mut page, &mut app);
 
         assert_snapshot!("History page with multiple rounds", terminal.backend());

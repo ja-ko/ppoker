@@ -1,11 +1,13 @@
 use log::{debug, info};
+use ppoker_core::client::{Client, ClientErrorCode, ClientResult, ClientUpdate, RoomTransition};
 #[cfg(test)]
-use ppoker_core::client::ClientError;
-use ppoker_core::client::{ClientErrorCode, ClientResult, PokerClient, Session, SessionUpdate};
+use ppoker_core::client::{Transport, TransportEvent};
 #[cfg(test)]
 use ppoker_core::protocol::RoomSnapshot;
 #[cfg(test)]
 use std::cell::RefCell;
+#[cfg(test)]
+use std::collections::VecDeque;
 use std::error;
 #[cfg(test)]
 use std::rc::Rc;
@@ -25,13 +27,22 @@ struct LocalLogEntry {
     entry: LogEntry,
 }
 
+#[cfg(test)]
+#[derive(Default)]
+struct InjectedTransportState {
+    events: VecDeque<TransportEvent>,
+    active: bool,
+}
+
 pub struct App {
     pub running: bool,
-    session: Session<Box<dyn PokerClient>>,
+    client: Client,
     #[cfg(test)]
-    session_updates: Option<Rc<RefCell<Vec<RoomSnapshot>>>>,
+    client_updates: Option<Rc<RefCell<InjectedTransportState>>>,
     local_log: Vec<LocalLogEntry>,
     local_log_position: usize,
+    round_started_at: Option<Instant>,
+    history_durations: Vec<Option<Duration>>,
 
     pub config: Config,
 
@@ -48,15 +59,24 @@ pub struct App {
 
 impl App {
     pub fn new(config: Config) -> AppResult<Self> {
-        let session = connect(&config)?;
+        let client = connect(&config)?;
 
-        Ok(Self {
+        Ok(Self::from_client(config, client))
+    }
+
+    pub(crate) fn from_client(config: Config, client: Client) -> Self {
+        let round_started_at = client.room().map(|_| Instant::now());
+        let history_durations = vec![None; client.history().len()];
+
+        Self {
             running: true,
-            session,
+            client,
             #[cfg(test)]
-            session_updates: None,
+            client_updates: None,
             local_log: vec![],
             local_log_position: 0,
+            round_started_at,
+            history_durations,
             config,
             has_focus: true,
             notify_vote_at: None,
@@ -65,7 +85,7 @@ impl App {
             auto_reveal_at: None,
             notification_handler: Box::new(crate::notification::create_notification_handler()),
             has_seen_changelog: false,
-        })
+        }
     }
 
     pub fn tick(&mut self) -> AppResult<()> {
@@ -134,21 +154,51 @@ impl App {
             })
     }
 
+    fn merge_round_timing(
+        update: &RoomTransition,
+        round_started_at: &mut Option<Instant>,
+        history_durations: &mut Vec<Option<Duration>>,
+    ) {
+        let now = Instant::now();
+        let phase_changed = update
+            .previous_room
+            .as_ref()
+            .is_some_and(|old| old.phase != update.room.phase);
+
+        while history_durations.len() < update.history_len {
+            let duration = if phase_changed && update.room.phase == GamePhase::Revealed {
+                round_started_at
+                    .take()
+                    .map(|started_at| now.saturating_duration_since(started_at))
+            } else {
+                None
+            };
+            history_durations.push(duration);
+        }
+
+        if phase_changed && update.room.phase == GamePhase::Playing {
+            *round_started_at = Some(now);
+        }
+    }
+
     fn handle_session_update(
-        session: &Session<Box<dyn PokerClient>>,
-        update: SessionUpdate,
+        client: &Client,
+        update: ClientUpdate,
         local_log: &mut Vec<LocalLogEntry>,
         local_log_position: usize,
+        round_started_at: &mut Option<Instant>,
+        history_durations: &mut Vec<Option<Duration>>,
         is_notified: &mut bool,
         notify_vote_at: &mut Option<Instant>,
         has_updates: &mut bool,
         auto_reveal_at: &mut Option<Instant>,
         disable_auto_reveal: bool,
     ) {
-        let room = session
-            .room()
-            .expect("room effects follow an authoritative room snapshot");
-        if let Some(old) = update.previous_room {
+        let ClientUpdate::Room(update) = update;
+        Self::merge_round_timing(&update, round_started_at, history_durations);
+
+        let room = &update.room;
+        if let Some(old) = update.previous_room.as_ref() {
             if old.phase != room.phase {
                 if room.phase == GamePhase::Playing {
                     *is_notified = false;
@@ -156,7 +206,7 @@ impl App {
                 }
                 *has_updates = true;
             }
-            if !disable_auto_reveal && Self::confirms_last_missing_vote(&old, room) {
+            if !disable_auto_reveal && Self::confirms_last_missing_vote(old, room) {
                 debug!("Starting auto-reveal timer.");
                 *auto_reveal_at = Some(Instant::now() + Duration::from_secs(3));
             }
@@ -167,7 +217,7 @@ impl App {
                 Self::push_log_message(
                     local_log,
                     local_log_position,
-                    session.now(),
+                    client.now(),
                     LogLevel::Info,
                     "Your vote is the last one missing.".to_string(),
                 );
@@ -183,7 +233,7 @@ impl App {
                 || room
                     .players
                     .iter()
-                    .any(|p| p.user_type == UserType::Player && p.vote == Vote::Missing))
+                    .any(|p| p.user_type != UserType::Spectator && p.vote == Vote::Missing))
         {
             debug!("Auto-reveal cancelled because of invalid state");
             *auto_reveal_at = None;
@@ -200,18 +250,24 @@ impl App {
 
     #[cfg(test)]
     fn merge_snapshot(&mut self, update: RoomSnapshot) {
-        self.session_updates
+        self.queue_test_snapshot(update);
+        self.update().expect("test client update should succeed");
+    }
+
+    #[cfg(test)]
+    fn queue_test_snapshot(&self, update: RoomSnapshot) {
+        self.client_updates
             .as_ref()
-            .expect("test Apps have an injectable session backend")
+            .expect("test Apps have an injectable client transport")
             .borrow_mut()
-            .push(update);
-        self.update().expect("test session update should succeed");
+            .events
+            .push_back(test_snapshot_event(update));
     }
 
     pub fn vote(&mut self, data: &str) -> AppResult<()> {
         let data = data.trim();
         let result = if data == "-" {
-            self.session.retract_vote()
+            self.client.retract_vote()
         } else {
             let card = self
                 .room()
@@ -226,103 +282,115 @@ impl App {
                 })
                 .cloned()
                 .unwrap_or_else(|| data.to_string());
-            self.session.vote(&card)
+            self.client.vote(&card)
         };
         self.handle_command_result(result)
     }
 
     pub fn rename(&mut self, data: String) -> AppResult<()> {
-        self.session.rename(data)?;
+        self.client.rename(data)?;
         Ok(())
     }
 
     pub fn reveal(&mut self) -> AppResult<()> {
-        self.session.ensure_ready()?;
+        self.client.ensure_ready()?;
         self.cancel_auto_reveal();
-        self.session.reveal()?;
+        self.client.reveal()?;
         Ok(())
     }
 
     pub fn chat(&mut self, message: String) -> AppResult<()> {
-        self.session.chat(message)?;
+        self.client.chat(message)?;
         Ok(())
     }
 
     pub fn restart(&mut self) -> AppResult<()> {
-        let result = self.session.restart();
+        let result = self.client.restart();
         self.handle_command_result(result)
     }
 
     pub fn update(&mut self) -> AppResult<()> {
-        self.local_log_position = self.session.log().len();
+        self.local_log_position = self.client.log().len();
+        let outcome = self.client.poll()?;
         {
             let local_log_position = self.local_log_position;
+            let client = &self.client;
             let local_log = &mut self.local_log;
+            let round_started_at = &mut self.round_started_at;
+            let history_durations = &mut self.history_durations;
             let is_notified = &mut self.is_notified;
             let notify_vote_at = &mut self.notify_vote_at;
             let has_updates = &mut self.has_updates;
             let auto_reveal_at = &mut self.auto_reveal_at;
             let disable_auto_reveal = self.config.disable_auto_reveal;
-            self.session.update_with(|session, update| {
-                debug!("room update: {:?}", session.room());
+            for update in outcome.updates {
+                debug!("room update: {:?}", update);
                 Self::handle_session_update(
-                    session,
+                    client,
                     update,
                     local_log,
                     local_log_position,
+                    round_started_at,
+                    history_durations,
                     is_notified,
                     notify_vote_at,
                     has_updates,
                     auto_reveal_at,
                     disable_auto_reveal,
                 );
-            })?;
+            }
         }
-        self.local_log_position = self.session.log().len();
+        self.local_log_position = self.client.log().len();
 
         Ok(())
     }
 
     pub fn room(&self) -> &Room {
-        self.session
+        self.client
             .room()
             .expect("native App is created after its initial room snapshot")
     }
 
     #[cfg(test)]
     pub fn set_room_for_test(&mut self, room: Room) {
-        self.session_updates
-            .as_ref()
-            .expect("test Apps have an injectable session backend")
-            .borrow_mut()
-            .push(RoomSnapshot { room, log: vec![] });
-        self.session
-            .update()
-            .expect("test session update should succeed");
+        self.queue_test_snapshot(RoomSnapshot { room, log: vec![] });
+        self.client
+            .poll()
+            .expect("test client update should succeed");
     }
 
     pub fn own_vote(&self) -> &Option<VoteData> {
-        self.session.own_vote()
+        self.client.own_vote()
     }
 
     pub fn name(&self) -> &str {
-        self.session.name()
+        self.client.name()
     }
 
     pub fn history(&self) -> &[HistoryEntry] {
-        self.session.history()
+        self.client.history()
     }
 
     pub fn round_number(&self) -> u32 {
-        self.session.round_number()
+        self.client.round_number()
     }
 
     pub fn round_elapsed(&self) -> Duration {
-        self.session.round_elapsed().unwrap_or_default()
+        self.round_started_at
+            .map(|started_at| started_at.elapsed())
+            .unwrap_or_default()
+    }
+
+    pub fn history_duration(&self, index: usize) -> Duration {
+        self.history_durations
+            .get(index)
+            .copied()
+            .flatten()
+            .unwrap_or_default()
     }
 
     pub fn activity_log(&self) -> Vec<&LogEntry> {
-        let log = self.session.log();
+        let log = self.client.log();
         let mut result = Vec::with_capacity(log.len() + self.local_log.len());
         for position in 0..=log.len() {
             result.extend(
@@ -368,8 +436,8 @@ impl App {
             {
                 Self::push_log_message(
                     &mut self.local_log,
-                    self.session.log().len(),
-                    self.session.now(),
+                    self.client.log().len(),
+                    self.client.now(),
                     LogLevel::Error,
                     error.message,
                 );
@@ -380,87 +448,117 @@ impl App {
     }
 
     pub fn average_votes(&self) -> f32 {
-        self.session.average_votes().unwrap_or(f32::NAN)
+        self.client.average_votes().unwrap_or(f32::NAN)
     }
+}
+
+#[cfg(test)]
+pub(crate) fn encode_test_snapshot(snapshot: RoomSnapshot) -> String {
+    let RoomSnapshot { room, log } = snapshot;
+    let phase = match room.phase {
+        GamePhase::Playing => "PLAYING",
+        GamePhase::Revealed => "CARDS_REVEALED",
+        GamePhase::Unknown => "FUTURE_PHASE",
+    };
+    let users = room
+        .players
+        .into_iter()
+        .map(|player| {
+            let user_type = match player.user_type {
+                UserType::Player => "PARTICIPANT",
+                UserType::Spectator => "SPECTATOR",
+                UserType::Unknown => "FUTURE_TYPE",
+            };
+            let card_value = match player.vote {
+                Vote::Missing => String::new(),
+                Vote::Hidden => "✅".to_string(),
+                Vote::Revealed(vote) => vote.to_string(),
+            };
+            serde_json::json!({
+                "username": player.name,
+                "userType": user_type,
+                "yourUser": player.is_you,
+                "cardValue": card_value,
+            })
+        })
+        .collect::<Vec<_>>();
+    let logs = log
+        .iter()
+        .map(|entry| {
+            let level = match entry.level {
+                LogLevel::Chat => "CHAT",
+                LogLevel::Info => "INFO",
+                LogLevel::Error => "ERROR",
+            };
+            serde_json::json!({ "level": level, "message": entry.message })
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::json!({
+        "roomId": room.name,
+        "deck": room.deck,
+        "gamePhase": phase,
+        "users": users,
+        "average": "0",
+        "log": logs,
+    })
+    .to_string()
+}
+
+#[cfg(test)]
+pub(crate) fn test_snapshot_event(snapshot: RoomSnapshot) -> TransportEvent {
+    TransportEvent::Text(encode_test_snapshot(snapshot))
+}
+
+#[cfg(test)]
+pub(crate) fn test_room_event(room: Room) -> TransportEvent {
+    test_snapshot_event(RoomSnapshot { room, log: vec![] })
 }
 
 #[cfg(test)]
 pub mod tests {
     use super::*;
     use crate::models::VoteData;
-    use crate::notification::create_notification_handler;
     use crate::notification::MockNotificationHandler;
     use crate::web::client::NativeClock;
     use mockall::predicate::*;
-    use ppoker_core::client::{ClientErrorCode, PokerClient};
-    use std::rc::Rc;
+    use ppoker_core::client::ConnectionStatus;
+    use std::cell::Cell;
     use std::time::Duration;
 
-    mockall::mock! {
-        pub PokerClient {}
+    struct RecordingNotification(Cell<bool>);
 
-        impl PokerClient for PokerClient {
-            fn ensure_ready(&self) -> ClientResult<()>;
-            fn get_updates(&mut self) -> ClientResult<Vec<RoomSnapshot>>;
-            fn vote<'a>(&mut self, card_value: &'a str) -> ClientResult<()>;
-            fn retract_vote(&mut self) -> ClientResult<()>;
-            fn change_name(&mut self, name: &str) -> ClientResult<()>;
-            fn chat(&mut self, message: &str) -> ClientResult<()>;
-            fn reveal(&mut self) -> ClientResult<()>;
-            fn reset(&mut self) -> ClientResult<()>;
-            fn close(&mut self);
+    impl NotificationHandler for RecordingNotification {
+        fn notify(&self, _summary: &str, _body: &str) {
+            self.0.set(true);
         }
     }
 
-    struct TestPokerClient {
-        inner: Box<dyn PokerClient>,
-        updates: Rc<RefCell<Vec<RoomSnapshot>>>,
+    struct InjectableTransport {
+        inner: Box<dyn Transport>,
+        updates: Rc<RefCell<InjectedTransportState>>,
     }
 
-    impl PokerClient for TestPokerClient {
-        fn status(&self) -> ppoker_core::client::ConnectionStatus {
-            self.inner.status()
-        }
-
-        fn terminal_error(&self) -> Option<&ClientError> {
-            self.inner.terminal_error()
-        }
-
-        fn ensure_ready(&self) -> ClientResult<()> {
-            self.inner.ensure_ready()
-        }
-
-        fn get_updates(&mut self) -> ClientResult<Vec<RoomSnapshot>> {
-            let updates = std::mem::take(&mut *self.updates.borrow_mut());
-            if updates.is_empty() {
-                self.inner.get_updates()
-            } else {
-                Ok(updates)
+    impl Transport for InjectableTransport {
+        fn poll_event(&mut self) -> Option<TransportEvent> {
+            let mut updates = self.updates.borrow_mut();
+            if updates.active {
+                if let Some(event) = updates.events.pop_front() {
+                    return Some(event);
+                }
+                updates.active = false;
+                return None;
             }
+            if let Some(event) = updates.events.pop_front() {
+                updates.active = true;
+                return Some(event);
+            }
+            drop(updates);
+            self.inner.poll_event()
         }
 
-        fn vote(&mut self, card_value: &str) -> ClientResult<()> {
-            self.inner.vote(card_value)
-        }
-
-        fn retract_vote(&mut self) -> ClientResult<()> {
-            self.inner.retract_vote()
-        }
-
-        fn change_name(&mut self, name: &str) -> ClientResult<()> {
-            self.inner.change_name(name)
-        }
-
-        fn chat(&mut self, message: &str) -> ClientResult<()> {
-            self.inner.chat(message)
-        }
-
-        fn reveal(&mut self) -> ClientResult<()> {
-            self.inner.reveal()
-        }
-
-        fn reset(&mut self) -> ClientResult<()> {
-            self.inner.reset()
+        fn send_text(&mut self, message: String) -> Result<(), String> {
+            self.inner.send_text(message)
         }
 
         fn close(&mut self) {
@@ -468,11 +566,34 @@ pub mod tests {
         }
     }
 
-    fn create_mock_client() -> MockPokerClient {
-        let mut client = MockPokerClient::new();
-        client.expect_ensure_ready().returning(|| Ok(()));
-        client.expect_close().times(1).return_const(());
-        client
+    #[derive(Default)]
+    struct TestTransportState {
+        events: VecDeque<TransportEvent>,
+        sent: Vec<String>,
+        send_error: Option<String>,
+        closes: usize,
+    }
+
+    struct TestTransport(Rc<RefCell<TestTransportState>>);
+
+    impl Transport for TestTransport {
+        fn poll_event(&mut self) -> Option<TransportEvent> {
+            self.0.borrow_mut().events.pop_front()
+        }
+
+        fn send_text(&mut self, message: String) -> Result<(), String> {
+            let mut state = self.0.borrow_mut();
+            if let Some(error) = state.send_error.clone() {
+                Err(error)
+            } else {
+                state.sent.push(message);
+                Ok(())
+            }
+        }
+
+        fn close(&mut self) {
+            self.0.borrow_mut().closes += 1;
+        }
     }
 
     fn create_test_room() -> Room {
@@ -500,40 +621,55 @@ pub mod tests {
         }
     }
 
-    pub fn create_test_app(mock_client: Box<dyn PokerClient>) -> App {
+    fn recording_transport_with_events(
+        events: impl IntoIterator<Item = TransportEvent>,
+    ) -> (Box<dyn Transport>, Rc<RefCell<TestTransportState>>) {
+        let state = Rc::new(RefCell::new(TestTransportState {
+            events: events.into_iter().collect(),
+            ..TestTransportState::default()
+        }));
+        (Box::new(TestTransport(state.clone())), state)
+    }
+
+    fn recording_transport() -> (Box<dyn Transport>, Rc<RefCell<TestTransportState>>) {
+        recording_transport_with_events([])
+    }
+
+    pub fn create_test_app(transport: Box<dyn Transport>) -> App {
+        create_test_app_with_startup_events(
+            transport,
+            [TransportEvent::Opened, test_room_event(create_test_room())],
+        )
+    }
+
+    fn create_test_app_with_startup_events(
+        transport: Box<dyn Transport>,
+        events: impl IntoIterator<Item = TransportEvent>,
+    ) -> App {
         let mut config = Config::default();
         config.server = "wss://mocked".to_owned();
         config.name = "test".to_owned();
         config.room = "test-room".to_owned();
-        let session_updates = Rc::new(RefCell::new(vec![]));
-        let client = TestPokerClient {
-            inner: mock_client,
-            updates: session_updates.clone(),
+        let client_updates = Rc::new(RefCell::new(InjectedTransportState {
+            events: events.into_iter().collect(),
+            ..InjectedTransportState::default()
+        }));
+        let transport = InjectableTransport {
+            inner: transport,
+            updates: client_updates.clone(),
         };
-        let session = Session::with_room_snapshot(
-            Box::new(client) as Box<dyn PokerClient>,
-            "Test User".to_string(),
-            Rc::new(NativeClock::new()),
-            RoomSnapshot {
-                room: create_test_room(),
-                log: vec![],
-            },
-        );
-        App {
-            running: true,
-            session,
-            session_updates: Some(session_updates),
-            local_log: vec![],
-            local_log_position: 0,
-            config,
-            has_focus: true,
-            notify_vote_at: None,
-            is_notified: false,
-            has_updates: false,
-            auto_reveal_at: None,
-            notification_handler: Box::new(create_notification_handler()),
-            has_seen_changelog: false,
-        }
+        let mut client = Client::new(config.name.clone(), Rc::new(NativeClock::new()));
+        client.connect(Box::new(transport)).unwrap();
+        client.poll_next_room().unwrap();
+        client_updates.borrow_mut().active = false;
+        let mut app = App::from_client(config, client);
+        app.client_updates = Some(client_updates);
+        app
+    }
+
+    fn create_recording_app() -> (App, Rc<RefCell<TestTransportState>>) {
+        let (transport, state) = recording_transport();
+        (create_test_app(transport), state)
     }
 
     fn add_test_player(app: &mut App, player: Player) {
@@ -552,530 +688,188 @@ pub mod tests {
         app.merge_update(room);
     }
 
-    #[test]
-    fn test_vote_success() -> AppResult<()> {
-        let mut mock_client = create_mock_client();
-        mock_client
-            .expect_vote()
-            .withf(|x: &str| x == "5")
-            .times(1)
-            .returning(|_| Ok(()));
-
-        let mut app = create_test_app(Box::new(mock_client));
-
-        app.vote("5")?;
-        assert!(app.own_vote().is_none());
-        confirm_local_vote(&mut app, VoteData::Number(5));
-        assert!(app.own_vote().is_some());
-        if let Some(VoteData::Number(n)) = app.own_vote() {
-            assert_eq!(*n, 5);
-        } else {
-            panic!("Expected numeric vote");
+    fn player(name: &str, vote: Vote, user_type: UserType) -> Player {
+        Player {
+            name: name.to_string(),
+            vote,
+            is_you: false,
+            user_type,
         }
+    }
 
-        Ok(())
+    fn arm_auto_reveal(app: &mut App) {
+        add_test_player(app, player("Other Player", Vote::Hidden, UserType::Player));
+        app.vote("5").unwrap();
+        assert!(app.auto_reveal_at.is_none());
+        confirm_local_vote(app, VoteData::Number(5));
+        assert!(app.auto_reveal_at.is_some());
     }
 
     #[test]
-    fn test_update_merges_room_data() -> AppResult<()> {
-        let mut mock_client = create_mock_client();
-
-        // Set up the mock to return a room update
-        let mut updated_room = create_test_room();
-        updated_room.phase = GamePhase::Revealed;
-        updated_room.players[0].vote = Vote::Revealed(VoteData::Number(5));
-
-        mock_client
-            .expect_get_updates()
-            .times(1)
-            .return_once(move || {
-                Ok(vec![RoomSnapshot {
-                    room: updated_room,
-                    log: vec![],
-                }])
-            });
-
-        let mut app = create_test_app(Box::new(mock_client));
-
-        // Initial state checks
-        assert_eq!(app.room().phase, GamePhase::Playing);
-        assert_eq!(app.room().players[0].vote, Vote::Missing);
-        assert!(app.history().is_empty());
-
-        // Perform update
-        app.update()?;
-
-        // Verify state changes
-        assert_eq!(app.room().phase, GamePhase::Revealed);
-        assert_eq!(
-            app.room().players[0].vote,
-            Vote::Revealed(VoteData::Number(5))
-        );
-        assert_eq!(app.history().len(), 1);
-        assert_eq!(app.history()[0].round_number, 1);
-        assert_eq!(app.history()[0].votes.len(), 1);
-        assert_eq!(
-            app.history()[0].votes[0].vote,
-            Vote::Revealed(VoteData::Number(5))
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_update_commits_one_revision_for_multiple_room_snapshots() -> AppResult<()> {
-        let mut mock_client = create_mock_client();
+    fn batched_room_updates_keep_native_timing_aligned() -> AppResult<()> {
+        let (mut app, state) = create_recording_app();
         let mut revealed = create_test_room();
         revealed.phase = GamePhase::Revealed;
         revealed.players[0].vote = Vote::Revealed(VoteData::Number(5));
         let playing = create_test_room();
-        mock_client
-            .expect_get_updates()
-            .times(1)
-            .return_once(move || {
-                Ok(vec![
-                    RoomSnapshot {
-                        room: revealed,
-                        log: vec![],
-                    },
-                    RoomSnapshot {
-                        room: playing,
-                        log: vec![],
-                    },
-                ])
-            });
+        state
+            .borrow_mut()
+            .events
+            .extend([test_room_event(revealed), test_room_event(playing)]);
 
-        let mut app = create_test_app(Box::new(mock_client));
-        let revision = app.session.revision();
         app.update()?;
 
-        assert_eq!(app.session.revision(), revision + 1);
-        assert_eq!(app.room().phase, GamePhase::Playing);
-        assert_eq!(app.history().len(), 1);
-        assert_eq!(app.round_number(), 2);
-        Ok(())
-    }
-
-    #[test]
-    fn test_chat_message() -> AppResult<()> {
-        let mut mock_client = create_mock_client();
-        mock_client
-            .expect_chat()
-            .withf(|msg: &str| msg == "Hello!")
-            .times(1)
-            .returning(|_| Ok(()));
-
-        let mut app = create_test_app(Box::new(mock_client));
-        app.chat("Hello!".to_string())?;
+        assert!(matches!(app.history_durations.as_slice(), [Some(_)]));
+        assert_eq!(app.history_durations.len(), app.history().len());
+        assert!(app.round_started_at.is_some());
 
         Ok(())
     }
 
     #[test]
-    fn test_reveal_not_ready_preserves_auto_reveal_timer() {
-        let mut mock_client = MockPokerClient::new();
-        mock_client.expect_close().times(1).return_const(());
-        mock_client
-            .expect_ensure_ready()
-            .times(1)
-            .returning(|| Err(ClientError::not_ready("not ready")));
-        let mut app = create_test_app(Box::new(mock_client));
-        let timer = Instant::now() + Duration::from_secs(3);
-        app.auto_reveal_at = Some(timer);
+    fn reveal_errors_preserve_or_cancel_auto_reveal_at_the_command_boundary() {
+        for (case, timer_survives) in [("not ready", true), ("closed", true), ("send", false)] {
+            let (mut app, state) = if case == "not ready" {
+                let (transport, state) = recording_transport();
+                let app = create_test_app_with_startup_events(
+                    transport,
+                    [test_room_event(create_test_room())],
+                );
+                assert_eq!(app.client.status(), ConnectionStatus::Connecting);
+                (app, state)
+            } else {
+                create_recording_app()
+            };
+            match case {
+                "closed" => {
+                    app.client.close();
+                }
+                "send" => state.borrow_mut().send_error = Some("send failed".to_string()),
+                _ => {}
+            }
+            let timer = Instant::now() + Duration::from_secs(3);
+            app.auto_reveal_at = Some(timer);
 
-        assert!(app.reveal().is_err());
-        assert_eq!(app.auto_reveal_at, Some(timer));
+            assert!(app.reveal().is_err(), "{case}");
+            assert_eq!(
+                app.auto_reveal_at,
+                timer_survives.then_some(timer),
+                "{case}"
+            );
+        }
     }
 
     #[test]
-    fn test_reveal_closed_preserves_auto_reveal_timer() {
-        let mut mock_client = MockPokerClient::new();
-        mock_client.expect_close().times(1).return_const(());
-        mock_client
-            .expect_ensure_ready()
-            .times(1)
-            .returning(|| Err(ClientError::closed("closed")));
-        let mut app = create_test_app(Box::new(mock_client));
-        let timer = Instant::now() + Duration::from_secs(3);
-        app.auto_reveal_at = Some(timer);
+    fn autoreveal_confirmation_covers_voters_spectators_and_disabled_config() -> AppResult<()> {
+        for (case, other_vote, spectator, disabled, should_arm) in [
+            ("confirmed", Vote::Hidden, false, false, true),
+            ("other missing", Vote::Missing, false, false, false),
+            ("spectator missing", Vote::Hidden, true, false, true),
+            ("disabled", Vote::Hidden, false, true, false),
+        ] {
+            let (mut app, state) = create_recording_app();
+            add_test_player(
+                &mut app,
+                player("Other Player", other_vote, UserType::Player),
+            );
+            if spectator {
+                add_test_player(
+                    &mut app,
+                    player("Spectator", Vote::Missing, UserType::Spectator),
+                );
+            }
+            app.config.disable_auto_reveal = disabled;
+            app.vote("5")?;
+            assert!(app.auto_reveal_at.is_none(), "{case} before confirmation");
+            confirm_local_vote(&mut app, VoteData::Number(5));
+            assert_eq!(app.auto_reveal_at.is_some(), should_arm, "{case}");
 
-        assert!(app.reveal().is_err());
-        assert_eq!(app.auto_reveal_at, Some(timer));
-    }
-
-    #[test]
-    fn test_reveal_send_failure_keeps_auto_reveal_cancelled() {
-        let mut mock_client = create_mock_client();
-        mock_client.expect_reveal().times(1).returning(|| {
-            Err(ClientError {
-                code: ClientErrorCode::Transport,
-                message: "send failed".to_string(),
-            })
-        });
-        let mut app = create_test_app(Box::new(mock_client));
-        app.auto_reveal_at = Some(Instant::now() + Duration::from_secs(3));
-
-        assert!(app.reveal().is_err());
-        assert!(app.auto_reveal_at.is_none());
-    }
-
-    #[test]
-    fn test_autoreveal_triggers_when_last_to_vote() -> AppResult<()> {
-        let mut mock_client = create_mock_client();
-        // Expect vote to be called first
-        mock_client
-            .expect_vote()
-            .withf(|x: &str| x == "5")
-            .times(1)
-            .returning(|_| Ok(()));
-
-        // Expect reveal to be called after 3 seconds
-        mock_client.expect_reveal().times(1).returning(|| Ok(()));
-
-        let mut app = create_test_app(Box::new(mock_client));
-
-        // Add another player who has already voted
-        add_test_player(
-            &mut app,
-            Player {
-                name: "Other Player".to_string(),
-                vote: Vote::Hidden,
-                is_you: false,
-                user_type: UserType::Player,
-            },
-        );
-
-        // Cast our vote as the last person
-        app.vote("5")?;
-
-        // A transport handoff is not enough to start the timer.
-        assert!(app.auto_reveal_at.is_none());
-        confirm_local_vote(&mut app, VoteData::Number(5));
-
-        // The authoritative confirmation starts the timer.
-        assert!(app.auto_reveal_at.is_some());
-
-        // Fast forward time and trigger the auto-reveal
-        app.auto_reveal_at = Some(Instant::now() - Duration::from_secs(1));
-        app.check_auto_reveal()?;
-
+            if should_arm {
+                let sent = state.borrow().sent.len();
+                app.check_auto_reveal()?;
+                assert_eq!(state.borrow().sent.len(), sent, "{case}");
+                app.auto_reveal_at = Some(Instant::now() - Duration::from_secs(1));
+                app.check_auto_reveal()?;
+                assert_eq!(
+                    state.borrow().sent.last().map(String::as_str),
+                    Some(r#"{"requestType":"RevealCards"}"#),
+                    "{case}"
+                );
+            }
+        }
         Ok(())
     }
 
     #[test]
-    fn test_autoreveal_not_triggered_when_others_not_voted() -> AppResult<()> {
-        let mut mock_client = create_mock_client();
-        mock_client
-            .expect_vote()
-            .withf(|x: &str| x == "5")
-            .times(1)
-            .returning(|_| Ok(()));
+    fn autoreveal_cancels_for_each_new_missing_voter_shape() {
+        for cancellation in 0..3 {
+            let (mut app, _) = create_recording_app();
+            arm_auto_reveal(&mut app);
+            let mut room = app.room().clone();
+            match cancellation {
+                0 => room
+                    .players
+                    .push(player("New Player", Vote::Missing, UserType::Player)),
+                1 => room.players[1].vote = Vote::Missing,
+                2 => room.players.push(player(
+                    "Unknown participant",
+                    Vote::Missing,
+                    UserType::Unknown,
+                )),
+                _ => unreachable!(),
+            }
 
-        let mut app = create_test_app(Box::new(mock_client));
-
-        // Add another player who hasn't voted
-        add_test_player(
-            &mut app,
-            Player {
-                name: "Other Player".to_string(),
-                vote: Vote::Missing,
-                is_you: false,
-                user_type: UserType::Player,
-            },
-        );
-
-        // Cast our vote
-        app.vote("5")?;
-        confirm_local_vote(&mut app, VoteData::Number(5));
-
-        // Verify auto-reveal timer is not set since we're not last
-        assert!(app.auto_reveal_at.is_none());
-
-        Ok(())
+            app.merge_update(room);
+            assert!(
+                app.auto_reveal_at.is_none(),
+                "cancellation case {cancellation}"
+            );
+        }
     }
 
     #[test]
-    fn test_autoreveal_not_affected_by_spectators() -> AppResult<()> {
-        let mut mock_client = create_mock_client();
-        mock_client
-            .expect_vote()
-            .withf(|x: &str| x == "5")
-            .times(1)
-            .returning(|_| Ok(()));
-
-        mock_client.expect_reveal().times(1).returning(|| Ok(()));
-
-        let mut app = create_test_app(Box::new(mock_client));
-
-        // Add another player who has voted
-        add_test_player(
-            &mut app,
-            Player {
-                name: "Other Player".to_string(),
-                vote: Vote::Hidden,
-                is_you: false,
-                user_type: UserType::Player,
-            },
-        );
-
-        // Add a spectator
-        add_test_player(
-            &mut app,
-            Player {
-                name: "Spectator".to_string(),
-                vote: Vote::Missing,
-                is_you: false,
-                user_type: UserType::Spectator,
-            },
-        );
-
-        // Cast our vote as the last player (spectator doesn't count)
-        app.vote("5")?;
-        confirm_local_vote(&mut app, VoteData::Number(5));
-
-        // Verify auto-reveal timer is set
-        assert!(app.auto_reveal_at.is_some());
-
-        // Fast forward time and trigger the auto-reveal
-        app.auto_reveal_at = Some(Instant::now() - Duration::from_secs(1));
-        app.check_auto_reveal()?;
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_autoreveal_respects_config_disable() -> AppResult<()> {
-        let mut mock_client = create_mock_client();
-        mock_client
-            .expect_vote()
-            .withf(|x: &str| x == "5")
-            .times(1)
-            .returning(|_| Ok(()));
-
-        let mut app = create_test_app(Box::new(mock_client));
-
-        // Add another player who has voted
-        add_test_player(
-            &mut app,
-            Player {
-                name: "Other Player".to_string(),
-                vote: Vote::Hidden,
-                is_you: false,
-                user_type: UserType::Player,
-            },
-        );
-
-        // Disable auto-reveal in config
-        app.config.disable_auto_reveal = true;
-
-        // Cast our vote as the last person
-        app.vote("5")?;
-        confirm_local_vote(&mut app, VoteData::Number(5));
-
-        // Verify auto-reveal timer is not set due to config
-        assert!(app.auto_reveal_at.is_none());
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_autoreveal_cancels_when_new_player_joins() -> AppResult<()> {
-        let mut mock_client = create_mock_client();
-        mock_client
-            .expect_vote()
-            .withf(|x: &str| x == "5")
-            .times(1)
-            .returning(|_| Ok(()));
-
-        let mut app = create_test_app(Box::new(mock_client));
-
-        // Add another player who has voted
-        add_test_player(
-            &mut app,
-            Player {
-                name: "Other Player".to_string(),
-                vote: Vote::Hidden,
-                is_you: false,
-                user_type: UserType::Player,
-            },
-        );
-
-        // Cast our vote as the last person
-        app.vote("5")?;
-        confirm_local_vote(&mut app, VoteData::Number(5));
-
-        // Verify auto-reveal timer is set
-        assert!(app.auto_reveal_at.is_some());
-
-        // Create updated room state with new player
-        let mut updated_room = app.room().clone();
-        updated_room.players.push(Player {
-            name: "New Player".to_string(),
-            vote: Vote::Missing,
-            is_you: false,
-            user_type: UserType::Player,
-        });
-
-        // Merge the room update
-        app.merge_update(updated_room);
-
-        // Verify auto-reveal was cancelled
-        assert!(app.auto_reveal_at.is_none());
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_autoreveal_cancels_when_vote_retracted() -> AppResult<()> {
-        let mut mock_client = create_mock_client();
-        mock_client
-            .expect_vote()
-            .withf(|x: &str| x == "5")
-            .times(1)
-            .returning(|_| Ok(()));
-
-        let mut app = create_test_app(Box::new(mock_client));
-
-        // Add another player who has voted
-        add_test_player(
-            &mut app,
-            Player {
-                name: "Other Player".to_string(),
-                vote: Vote::Hidden,
-                is_you: false,
-                user_type: UserType::Player,
-            },
-        );
-
-        // Cast our vote as the last person
-        app.vote("5")?;
-        confirm_local_vote(&mut app, VoteData::Number(5));
-
-        // Verify auto-reveal timer is set
-        assert!(app.auto_reveal_at.is_some());
-
-        // Create updated room state with retracted vote
-        let mut updated_room = app.room().clone();
-        updated_room.players[1].vote = Vote::Missing;
-
-        // Merge the room update
-        app.merge_update(updated_room);
-
-        // Verify auto-reveal was cancelled
-        assert!(app.auto_reveal_at.is_none());
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_vote_with_special_values() -> AppResult<()> {
-        let mut mock_client = create_mock_client();
-        mock_client
-            .expect_vote()
-            .withf(|x: &str| x == "coffee")
-            .times(1)
-            .returning(|_| Ok(()));
-
-        let mut app = create_test_app_with_special_deck(mock_client);
+    fn native_vote_input_trims_matches_case_preserves_utf8_and_retracts() -> AppResult<()> {
+        let (transport, state) = recording_transport();
+        let mut app = create_test_app(transport);
+        app.set_room_for_test(create_test_room_with_deck(vec![
+            "coffee".to_string(),
+            "☕".to_string(),
+        ]));
 
         app.vote(" COFFEE ")?;
-        assert!(app.own_vote().is_none());
-        confirm_local_vote(&mut app, VoteData::Special("coffee".to_string()));
-        assert!(app.own_vote().is_some());
-        if let Some(VoteData::Special(value)) = app.own_vote() {
-            assert_eq!(value, "coffee");
-        } else {
-            panic!("Expected special vote");
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_vote_with_utf8_values() -> AppResult<()> {
-        let mut mock_client = create_mock_client();
-        mock_client
-            .expect_vote()
-            .withf(|x: &str| x == "☕")
-            .times(1)
-            .returning(|_| Ok(()));
-
-        let deck = vec!["1".to_string(), "☕".to_string(), "🎲".to_string()];
-        let mut app = create_test_app(Box::new(mock_client));
-        app.set_room_for_test(create_test_room_with_deck(deck));
-
         app.vote("☕")?;
-        assert!(app.own_vote().is_none());
-        confirm_local_vote(&mut app, VoteData::Special("☕".to_string()));
-        assert!(app.own_vote().is_some());
-        if let Some(VoteData::Special(value)) = app.own_vote() {
-            assert_eq!(value, "☕");
-        } else {
-            panic!("Expected special vote with UTF-8 character");
-        }
+        app.vote(" - ")?;
+
+        let values = state
+            .borrow()
+            .sent
+            .iter()
+            .map(|request| {
+                serde_json::from_str::<serde_json::Value>(request).unwrap()["cardValue"].clone()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values,
+            [
+                serde_json::json!("coffee"),
+                serde_json::json!("☕"),
+                serde_json::Value::Null
+            ]
+        );
+
+        state.borrow_mut().send_error = Some("send failed".to_string());
+        assert!(app.vote("coffee").is_err());
+        assert!(!app
+            .activity_log()
+            .iter()
+            .any(|entry| entry.message == "send failed"));
 
         Ok(())
-    }
-
-    #[test]
-    fn test_vote_retraction() -> AppResult<()> {
-        let mut mock_client = create_mock_client();
-        mock_client
-            .expect_vote()
-            .withf(|x: &str| x == "5")
-            .times(1)
-            .returning(|_| Ok(()));
-        mock_client
-            .expect_retract_vote()
-            .times(1)
-            .returning(|| Ok(()));
-
-        let mut app = create_test_app(Box::new(mock_client));
-
-        // Set initial vote
-        app.vote("5")?;
-
-        // Retract vote using "-"
-        app.vote("-")?;
-
-        assert!(app.own_vote().is_none());
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_rename() -> AppResult<()> {
-        let mut mock_client = create_mock_client();
-        mock_client
-            .expect_change_name()
-            .withf(|name: &str| name == "New Name")
-            .times(1)
-            .returning(|_| Ok(()));
-
-        let mut app = create_test_app(Box::new(mock_client));
-
-        app.rename("New Name".to_string())?;
-
-        assert_eq!(app.name(), "Test User");
-        let mut room = app.room().clone();
-        room.players[0].name = "New Name".to_string();
-        app.merge_update(room);
-        assert_eq!(app.name(), "New Name");
-
-        Ok(())
-    }
-
-    fn create_test_app_with_special_deck(mock_client: MockPokerClient) -> App {
-        let deck = vec!["1".to_string(), "coffee".to_string(), "?".to_string()];
-        let mut app = create_test_app(Box::new(mock_client));
-        app.set_room_for_test(create_test_room_with_deck(deck));
-        app
     }
 
     #[test]
     fn expected_command_errors_are_logged_without_propagating() {
-        let mock_client = create_mock_client();
-        let mut app = create_test_app(Box::new(mock_client));
+        let (mut app, _) = create_recording_app();
 
         app.vote("not-a-card").unwrap();
         app.restart().unwrap();
@@ -1093,74 +887,103 @@ pub mod tests {
         );
     }
 
-    pub fn expect_notification(mock: &mut MockNotificationHandler, summary: String, body: String) {
-        mock.expect_notify_with_bell()
-            .with(eq(summary), eq(body))
-            .times(1)
-            .return_const(());
+    #[test]
+    fn round_timing_is_app_owned_and_history_aligned() {
+        let (mut app, state) = create_recording_app();
+        app.round_started_at = Some(Instant::now() - Duration::from_millis(2500));
+        let mut revealed = app.room().clone();
+        revealed.phase = GamePhase::Revealed;
+        revealed.players[0].vote = Vote::Revealed(VoteData::Number(5));
+        state
+            .borrow_mut()
+            .events
+            .push_back(test_room_event(revealed));
+
+        app.update().unwrap();
+
+        assert_eq!(app.history_durations.len(), app.history().len());
+        assert!(app.history_durations[0].is_some());
+        assert!(app.history_duration(0) >= Duration::from_millis(2500));
+        assert_eq!(app.round_elapsed(), Duration::ZERO);
+        assert_eq!(app.history_duration(1), Duration::ZERO);
+
+        let mut revealed = create_test_room();
+        revealed.phase = GamePhase::Revealed;
+        let update = RoomTransition {
+            previous_room: Some(create_test_room()),
+            room: revealed,
+            history_len: 1,
+        };
+        let mut no_start = None;
+        let mut durations = vec![];
+        App::merge_round_timing(&update, &mut no_start, &mut durations);
+        assert_eq!(durations, [None]);
     }
 
     #[test]
-    fn test_notification_triggers_when_last_to_vote() -> AppResult<()> {
-        let mut mock_client = MockPokerClient::new();
-        mock_client.expect_close().times(1).return_const(());
-        let mut mock_notification = MockNotificationHandler::new();
+    fn every_initial_non_playing_room_starts_native_round_timer() {
+        for phase in [GamePhase::Revealed, GamePhase::Unknown] {
+            let (transport, _) = recording_transport();
+            let mut room = create_test_room();
+            room.phase = phase;
+            let app = create_test_app_with_startup_events(
+                transport,
+                [TransportEvent::Opened, test_room_event(room)],
+            );
 
-        // Set up notification expectation before boxing the mock
-        expect_notification(
-            &mut mock_notification,
-            "Planning Poker".to_string(),
-            "Your vote is the last one missing.".to_string(),
-        );
+            assert_eq!(app.room().phase, phase);
+            assert!(app.history().is_empty());
+            assert!(app.round_started_at.is_some());
+            assert!(app.round_elapsed() < Duration::from_secs(1));
+        }
+    }
 
-        let mut app = App {
-            notification_handler: Box::new(mock_notification),
-            has_focus: false, // Ensure notification can trigger
-            config: Config {
-                disable_notifications: false,
-                ..Config::default()
-            },
-            ..create_test_app(Box::new(mock_client))
-        };
+    #[test]
+    fn notification_is_table_driven_for_delivery_focus_and_disabled_config() -> AppResult<()> {
+        let default_handler = RecordingNotification(Cell::new(false));
+        default_handler.notify_with_bell("summary", "body");
+        assert!(default_handler.0.get());
 
-        // First create a room with players who haven't voted yet
-        let mut new_room = app.room().clone();
-        new_room.players.push(Player {
-            name: "Player 2".to_string(),
-            vote: Vote::Missing,
-            is_you: false,
-            user_type: UserType::Player,
-        });
-        new_room.players.push(Player {
-            name: "Player 3".to_string(),
-            vote: Vote::Missing,
-            is_you: false,
-            user_type: UserType::Player,
-        });
+        for (case, has_focus, notifications_disabled, deliveries) in [
+            ("background", false, false, 1),
+            ("focused", true, false, 0),
+            ("disabled", false, true, 0),
+        ] {
+            let (mut app, _) = create_recording_app();
+            let mut notification = MockNotificationHandler::new();
+            notification
+                .expect_notify_with_bell()
+                .with(
+                    eq("Planning Poker".to_string()),
+                    eq("Your vote is the last one missing.".to_string()),
+                )
+                .times(deliveries)
+                .return_const(());
+            app.notification_handler = Box::new(notification);
+            app.has_focus = has_focus;
+            app.config.disable_notifications = notifications_disabled;
 
-        // Merge the room with missing votes and verify no notification is scheduled
-        app.merge_update(new_room.clone());
-        app.tick()?;
-        assert!(app.notify_vote_at.is_none());
-        assert!(!app.is_notified);
+            let mut room = app.room().clone();
+            room.players.extend([
+                player("Player 2", Vote::Missing, UserType::Player),
+                player("Player 3", Vote::Missing, UserType::Player),
+            ]);
+            app.merge_update(room.clone());
+            app.tick()?;
+            assert!(app.notify_vote_at.is_none(), "{case}");
+            assert!(!app.is_notified, "{case}");
 
-        // Now update the room so other players have voted
-        let mut voted_room = new_room.clone();
-        voted_room.players[1].vote = Vote::Hidden;
-        voted_room.players[2].vote = Vote::Hidden;
+            room.players[1].vote = Vote::Hidden;
+            room.players[2].vote = Vote::Hidden;
+            app.merge_update(room);
+            assert!(app.notify_vote_at.is_some(), "{case}");
+            assert!(!app.is_notified, "{case}");
 
-        // Merge the room with voted players and verify notification gets scheduled
-        app.merge_update(voted_room);
-        assert!(app.notify_vote_at.is_some());
-        assert!(!app.is_notified);
-
-        // Fast forward time past notification deadline
-        app.notify_vote_at = Some(Instant::now() - Duration::from_secs(1));
-        app.tick()?;
-
-        // Verify notification was sent
-        assert!(app.is_notified);
-        assert!(app.notify_vote_at.is_none());
+            app.notify_vote_at = Some(Instant::now() - Duration::from_secs(1));
+            app.tick()?;
+            assert!(app.is_notified, "{case}");
+            assert!(app.notify_vote_at.is_none(), "{case}");
+        }
 
         Ok(())
     }

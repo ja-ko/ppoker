@@ -115,7 +115,6 @@ pub struct ClientSnapshot {
     pub local_vote: Option<VoteData>,
     pub log: Vec<LogEntry>,
     pub round_number: u32,
-    pub round_started_at_ms: Option<f64>,
     pub history: Vec<HistoryEntry>,
     pub average: Option<f32>,
 }
@@ -135,89 +134,68 @@ pub trait Transport {
     fn close(&mut self);
 }
 
-pub trait PokerClient {
-    fn status(&self) -> ConnectionStatus {
-        ConnectionStatus::Open
-    }
-    fn terminal_error(&self) -> Option<&ClientError> {
-        None
-    }
-    fn ensure_ready(&self) -> ClientResult<()>;
-    fn get_updates(&mut self) -> ClientResult<Vec<RoomSnapshot>>;
-    fn vote(&mut self, card_value: &str) -> ClientResult<()>;
-    fn retract_vote(&mut self) -> ClientResult<()>;
-    fn change_name(&mut self, name: &str) -> ClientResult<()>;
-    fn chat(&mut self, message: &str) -> ClientResult<()>;
-    fn reveal(&mut self) -> ClientResult<()>;
-    fn reset(&mut self) -> ClientResult<()>;
-    fn close(&mut self);
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoomTransition {
+    pub previous_room: Option<Room>,
+    pub room: Room,
+    pub history_len: usize,
 }
 
-impl<T: PokerClient + ?Sized> PokerClient for Box<T> {
-    fn status(&self) -> ConnectionStatus {
-        (**self).status()
-    }
-
-    fn terminal_error(&self) -> Option<&ClientError> {
-        (**self).terminal_error()
-    }
-
-    fn ensure_ready(&self) -> ClientResult<()> {
-        (**self).ensure_ready()
-    }
-
-    fn get_updates(&mut self) -> ClientResult<Vec<RoomSnapshot>> {
-        (**self).get_updates()
-    }
-
-    fn vote(&mut self, card_value: &str) -> ClientResult<()> {
-        (**self).vote(card_value)
-    }
-
-    fn retract_vote(&mut self) -> ClientResult<()> {
-        (**self).retract_vote()
-    }
-
-    fn change_name(&mut self, name: &str) -> ClientResult<()> {
-        (**self).change_name(name)
-    }
-
-    fn chat(&mut self, message: &str) -> ClientResult<()> {
-        (**self).chat(message)
-    }
-
-    fn reveal(&mut self) -> ClientResult<()> {
-        (**self).reveal()
-    }
-
-    fn reset(&mut self) -> ClientResult<()> {
-        (**self).reset()
-    }
-
-    fn close(&mut self) {
-        (**self).close();
-    }
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClientUpdate {
+    Room(RoomTransition),
 }
 
-pub struct WebPokerClient {
+#[derive(Clone, Debug, PartialEq)]
+pub struct PollOutcome {
+    pub changed: bool,
+    pub updates: Vec<ClientUpdate>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct PublicState {
+    status: ConnectionStatus,
+    terminal_error: Option<ClientError>,
+}
+
+pub struct Client {
     transport: Option<Box<dyn Transport>>,
     status: ConnectionStatus,
     terminal_error: Option<ClientError>,
     pending_error: Option<ClientError>,
+    vote: Option<VoteData>,
+    name: String,
+    room: Option<Room>,
+    log: Vec<LogEntry>,
+    seen_server_log_indexes: HashSet<u32>,
+    round_number: u32,
+    history: Vec<HistoryEntry>,
+    revision: u32,
+    clock: Rc<dyn Clock>,
 }
 
-impl WebPokerClient {
-    pub fn new() -> Self {
+impl Client {
+    pub fn new(name: String, clock: Rc<dyn Clock>) -> Self {
         Self {
             transport: None,
             status: ConnectionStatus::Disconnected,
             terminal_error: None,
             pending_error: None,
+            vote: None,
+            name,
+            room: None,
+            log: vec![],
+            seen_server_log_indexes: HashSet::new(),
+            round_number: 0,
+            history: vec![],
+            revision: 0,
+            clock,
         }
     }
 
-    pub fn connect(&mut self, mut transport: Box<dyn Transport>) -> ClientResult<()> {
-        match self.status {
+    pub fn connect(&mut self, mut transport: Box<dyn Transport>) -> ClientResult<bool> {
+        let before = self.public_state();
+        let result = match self.status {
             ConnectionStatus::Disconnected => {
                 self.transport = Some(transport);
                 self.status = ConnectionStatus::Connecting;
@@ -231,248 +209,17 @@ impl WebPokerClient {
                 transport.close();
                 Err(ClientError::closed("Client is closed."))
             }
-        }
-    }
-
-    pub fn status(&self) -> ConnectionStatus {
-        self.status
-    }
-
-    pub fn terminal_error(&self) -> Option<&ClientError> {
-        self.terminal_error.as_ref()
+        };
+        let changed = self.commit_operation(before, false);
+        result.map(|_| changed)
     }
 
     pub fn fail_transport(&mut self, message: impl Into<String>) -> ClientError {
+        let before = self.public_state();
         let error = ClientError::transport(message);
         self.finish(Some(error.clone()));
+        self.commit_operation(before, false);
         error
-    }
-
-    pub fn get_update(&mut self) -> ClientResult<Option<RoomSnapshot>> {
-        if let Some(error) = self.pending_error.take() {
-            return Err(error);
-        }
-        self.read()
-    }
-
-    fn read(&mut self) -> ClientResult<Option<RoomSnapshot>> {
-        loop {
-            let event = match self.transport.as_mut() {
-                Some(transport) => transport.poll_event(),
-                None => return Ok(None),
-            };
-            match event {
-                Some(TransportEvent::Opened) => {
-                    self.status = ConnectionStatus::Open;
-                }
-                Some(TransportEvent::Text(text)) => {
-                    return decode_room_snapshot(&text).map(Some).map_err(|error| {
-                        let error = ClientError::protocol(error.to_string());
-                        self.finish(Some(error.clone()));
-                        error
-                    });
-                }
-                Some(TransportEvent::Binary { length }) => {
-                    warn!(
-                        "Ignoring unsupported binary WebSocket message ({} bytes).",
-                        length
-                    );
-                }
-                Some(TransportEvent::Closed) => {
-                    let error = ClientError::closed("Server closed connection.");
-                    self.finish(None);
-                    return Err(error);
-                }
-                Some(TransportEvent::Error(message)) => {
-                    let error = ClientError::transport(message);
-                    self.finish(Some(error.clone()));
-                    return Err(error);
-                }
-                None => return Ok(None),
-            }
-        }
-    }
-
-    fn send_request(&mut self, body: String) -> ClientResult<()> {
-        match self.status {
-            ConnectionStatus::Open => {}
-            ConnectionStatus::Closed => return Err(ClientError::closed("Client is closed.")),
-            ConnectionStatus::Disconnected | ConnectionStatus::Connecting => {
-                return Err(ClientError::not_ready("WebSocket connection is not open."));
-            }
-        }
-
-        let result = self
-            .transport
-            .as_mut()
-            .expect("open clients retain their transport")
-            .send_text(body);
-        if let Err(message) = result {
-            let error = ClientError::transport(message);
-            self.finish(Some(error.clone()));
-            return Err(error);
-        }
-        Ok(())
-    }
-
-    fn finish(&mut self, error: Option<ClientError>) {
-        if self.status == ConnectionStatus::Closed {
-            return;
-        }
-        if let Some(mut transport) = self.transport.take() {
-            transport.close();
-        }
-        self.status = ConnectionStatus::Closed;
-        self.terminal_error = error;
-    }
-}
-
-impl Default for WebPokerClient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PokerClient for WebPokerClient {
-    fn status(&self) -> ConnectionStatus {
-        self.status()
-    }
-
-    fn terminal_error(&self) -> Option<&ClientError> {
-        self.terminal_error()
-    }
-
-    fn ensure_ready(&self) -> ClientResult<()> {
-        match self.status {
-            ConnectionStatus::Open => Ok(()),
-            ConnectionStatus::Closed => Err(ClientError::closed("Client is closed.")),
-            ConnectionStatus::Disconnected | ConnectionStatus::Connecting => {
-                Err(ClientError::not_ready("WebSocket connection is not open."))
-            }
-        }
-    }
-
-    fn get_updates(&mut self) -> ClientResult<Vec<RoomSnapshot>> {
-        if let Some(error) = self.pending_error.take() {
-            return Err(error);
-        }
-        let mut result = vec![];
-        loop {
-            match self.read() {
-                Ok(Some(update)) => result.push(update),
-                Ok(None) => return Ok(result),
-                Err(error) if !result.is_empty() => {
-                    self.pending_error = Some(error);
-                    return Ok(result);
-                }
-                Err(error) => return Err(error),
-            }
-        }
-    }
-
-    fn vote(&mut self, card_value: &str) -> ClientResult<()> {
-        let request =
-            encode_vote(card_value).map_err(|error| ClientError::protocol(error.to_string()))?;
-        self.send_request(request)
-    }
-
-    fn retract_vote(&mut self) -> ClientResult<()> {
-        let request =
-            encode_retract_vote().map_err(|error| ClientError::protocol(error.to_string()))?;
-        self.send_request(request)
-    }
-
-    fn change_name(&mut self, name: &str) -> ClientResult<()> {
-        let request =
-            encode_change_name(name).map_err(|error| ClientError::protocol(error.to_string()))?;
-        self.send_request(request)
-    }
-
-    fn chat(&mut self, message: &str) -> ClientResult<()> {
-        let request = encode_chat_message(message)
-            .map_err(|error| ClientError::protocol(error.to_string()))?;
-        self.send_request(request)
-    }
-
-    fn reveal(&mut self) -> ClientResult<()> {
-        let request =
-            encode_reveal_cards().map_err(|error| ClientError::protocol(error.to_string()))?;
-        self.send_request(request)
-    }
-
-    fn reset(&mut self) -> ClientResult<()> {
-        let request =
-            encode_start_new_round().map_err(|error| ClientError::protocol(error.to_string()))?;
-        self.send_request(request)
-    }
-
-    fn close(&mut self) {
-        self.finish(None);
-    }
-}
-
-impl Drop for WebPokerClient {
-    fn drop(&mut self) {
-        self.finish(None);
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct BackendState {
-    status: ConnectionStatus,
-    terminal_error: Option<ClientError>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct SessionUpdate {
-    pub previous_room: Option<Room>,
-}
-
-pub struct Session<C: PokerClient> {
-    backend: C,
-    closed: bool,
-    vote: Option<VoteData>,
-    name: String,
-    room: Option<Room>,
-    log: Vec<LogEntry>,
-    seen_server_log_indexes: HashSet<u32>,
-    round_number: u32,
-    round_start: Option<Duration>,
-    history: Vec<HistoryEntry>,
-    revision: u32,
-    clock: Rc<dyn Clock>,
-}
-
-impl<C: PokerClient> Session<C> {
-    pub fn new(backend: C, name: String, clock: Rc<dyn Clock>) -> Self {
-        Self {
-            backend,
-            closed: false,
-            vote: None,
-            name,
-            room: None,
-            log: vec![],
-            seen_server_log_indexes: HashSet::new(),
-            round_number: 0,
-            round_start: None,
-            history: vec![],
-            revision: 0,
-            clock,
-        }
-    }
-
-    pub fn with_room_snapshot(
-        backend: C,
-        name: String,
-        clock: Rc<dyn Clock>,
-        snapshot: RoomSnapshot,
-    ) -> Self {
-        let mut session = Self::new(backend, name, clock);
-        let (_, changed) = session.merge_room_snapshot(snapshot);
-        if changed {
-            session.revision = session.revision.saturating_add(1);
-        }
-        session
     }
 
     pub fn own_vote(&self) -> &Option<VoteData> {
@@ -495,10 +242,6 @@ impl<C: PokerClient> Session<C> {
         self.round_number
     }
 
-    pub fn round_start(&self) -> Option<Duration> {
-        self.round_start
-    }
-
     pub fn history(&self) -> &[HistoryEntry] {
         &self.history
     }
@@ -512,7 +255,6 @@ impl<C: PokerClient> Session<C> {
             snapshot_duration_ms(entry.timestamp)?;
         }
         for entry in &self.history {
-            snapshot_duration_ms(entry.length)?;
             snapshot_average(entry.average)?;
         }
 
@@ -525,29 +267,26 @@ impl<C: PokerClient> Session<C> {
             local_vote: self.vote.clone(),
             log: self.log.clone(),
             round_number: self.round_number,
-            round_started_at_ms: self.round_start.map(snapshot_duration_ms).transpose()?,
             history: self.history.clone(),
             average: snapshot_average(self.average_votes())?,
         })
     }
 
     pub fn status(&self) -> ConnectionStatus {
-        if self.closed {
-            ConnectionStatus::Closed
-        } else {
-            self.backend.status()
-        }
+        self.status
     }
 
     pub fn terminal_error(&self) -> Option<&ClientError> {
-        self.backend.terminal_error()
+        self.terminal_error.as_ref()
     }
 
     pub fn ensure_ready(&self) -> ClientResult<()> {
-        if self.closed {
-            Err(ClientError::closed("Client is closed."))
-        } else {
-            self.backend.ensure_ready()
+        match self.status {
+            ConnectionStatus::Open => Ok(()),
+            ConnectionStatus::Closed => Err(ClientError::closed("Client is closed.")),
+            ConnectionStatus::Disconnected | ConnectionStatus::Connecting => {
+                Err(ClientError::not_ready("WebSocket connection is not open."))
+            }
         }
     }
 
@@ -555,52 +294,92 @@ impl<C: PokerClient> Session<C> {
         self.clock.now()
     }
 
-    pub fn round_elapsed(&self) -> Option<Duration> {
-        self.round_start
-            .map(|round_start| self.now().saturating_sub(round_start))
-    }
-
     #[cfg(test)]
     fn apply_room_snapshot(&mut self, snapshot: RoomSnapshot) -> Option<Room> {
-        let (old, changed) = self.merge_room_snapshot(snapshot);
+        let (transition, changed) = self.merge_room_snapshot(snapshot);
         if changed {
             self.revision = self.revision.saturating_add(1);
         }
-        old
+        transition.previous_room
     }
 
-    pub fn update(&mut self) -> ClientResult<bool> {
-        self.update_with(|_, _| {})
+    pub fn poll(&mut self) -> ClientResult<PollOutcome> {
+        self.poll_inner(false)
     }
 
-    pub fn update_with<F>(&mut self, mut observer: F) -> ClientResult<bool>
-    where
-        F: FnMut(&Self, SessionUpdate),
-    {
-        let before = self.backend_state();
-        let snapshots = match self.backend.get_updates() {
-            Ok(snapshots) => snapshots,
-            Err(error) => {
-                self.commit_operation(before, false);
-                return Err(error);
-            }
-        };
-        let mut changed = false;
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            for snapshot in snapshots {
-                let (old, update_changed) = self.merge_room_snapshot(snapshot);
-                changed |= update_changed;
-                observer(self, SessionUpdate { previous_room: old });
-            }
-        }));
-        let committed = self.commit_operation(before, changed);
-        if let Err(payload) = result {
-            std::panic::resume_unwind(payload);
+    pub fn poll_next_room(&mut self) -> ClientResult<PollOutcome> {
+        self.poll_inner(true)
+    }
+
+    fn poll_inner(&mut self, stop_after_room: bool) -> ClientResult<PollOutcome> {
+        let before = self.public_state();
+        if let Some(error) = self.pending_error.take() {
+            return Err(error);
         }
-        Ok(committed)
+
+        let mut state_changed = false;
+        let mut updates = vec![];
+        loop {
+            let event = match self.transport.as_mut() {
+                Some(transport) => transport.poll_event(),
+                None => None,
+            };
+            let error = match event {
+                Some(TransportEvent::Opened) => {
+                    self.status = ConnectionStatus::Open;
+                    None
+                }
+                Some(TransportEvent::Text(text)) => match decode_room_snapshot(&text) {
+                    Ok(snapshot) => {
+                        let (transition, changed) = self.merge_room_snapshot(snapshot);
+                        state_changed |= changed;
+                        updates.push(ClientUpdate::Room(transition));
+                        if stop_after_room {
+                            break;
+                        }
+                        None
+                    }
+                    Err(error) => {
+                        let error = ClientError::protocol(error.to_string());
+                        self.finish(Some(error.clone()));
+                        Some(error)
+                    }
+                },
+                Some(TransportEvent::Binary { length }) => {
+                    warn!(
+                        "Ignoring unsupported binary WebSocket message ({} bytes).",
+                        length
+                    );
+                    None
+                }
+                Some(TransportEvent::Closed) => {
+                    let error = ClientError::closed("Server closed connection.");
+                    self.finish(None);
+                    Some(error)
+                }
+                Some(TransportEvent::Error(message)) => {
+                    let error = ClientError::transport(message);
+                    self.finish(Some(error.clone()));
+                    Some(error)
+                }
+                None => break,
+            };
+
+            if let Some(error) = error {
+                if updates.is_empty() {
+                    self.commit_operation(before, state_changed);
+                    return Err(error);
+                }
+                self.pending_error = Some(error);
+                break;
+            }
+        }
+
+        let changed = self.commit_operation(before, state_changed);
+        Ok(PollOutcome { changed, updates })
     }
 
-    fn merge_room_snapshot(&mut self, snapshot: RoomSnapshot) -> (Option<Room>, bool) {
+    fn merge_room_snapshot(&mut self, snapshot: RoomSnapshot) -> (RoomTransition, bool) {
         let now = self.now();
         let old = self.room.replace(snapshot.room);
         let previous_name = self.name.clone();
@@ -623,9 +402,8 @@ impl<C: PokerClient> Session<C> {
         let first_room = old.is_none();
         if first_room {
             self.round_number = 1;
-            self.round_start = Some(now);
         } else if old.as_ref().map(|room| room.phase) != self.room.as_ref().map(|room| room.phase) {
-            self.new_phase(now);
+            self.new_phase();
         }
 
         let mut changed = first_room
@@ -644,21 +422,29 @@ impl<C: PokerClient> Session<C> {
                 changed = true;
             }
         }
-        (old, changed)
+        (
+            RoomTransition {
+                previous_room: old,
+                room: self
+                    .room
+                    .clone()
+                    .expect("a room snapshot installs authoritative room state"),
+                history_len: self.history.len(),
+            },
+            changed,
+        )
     }
 
-    fn new_phase(&mut self, now: Duration) {
+    fn new_phase(&mut self) {
         let room = self.room.as_ref().expect("phase changes require a room");
         if room.phase == GamePhase::Playing {
             self.round_number += 1;
-            self.round_start = Some(now);
         }
 
         if room.phase == GamePhase::Revealed {
             let entry = HistoryEntry {
                 round_number: self.round_number,
                 average: self.average_votes(),
-                length: now.saturating_sub(self.round_start.unwrap_or(now)),
                 votes: room.players.clone(),
                 deck: room.deck.clone(),
                 own_vote: self.vote.clone(),
@@ -668,7 +454,7 @@ impl<C: PokerClient> Session<C> {
     }
 
     pub fn vote(&mut self, data: &str) -> ClientResult<()> {
-        let before = self.backend_state();
+        let before = self.public_state();
         let result = (|| {
             self.ensure_ready()?;
             let room = self.room.as_ref().ok_or_else(|| {
@@ -688,21 +474,25 @@ impl<C: PokerClient> Session<C> {
                     ClientError::invalid_card(format!("Card is not in the deck: {data}"))
                 })?;
 
-            self.backend.vote(&card)
+            let request =
+                encode_vote(&card).map_err(|error| ClientError::protocol(error.to_string()))?;
+            self.send_request(request)
         })();
         self.commit_operation(before, false);
         result
     }
 
     pub fn retract_vote(&mut self) -> ClientResult<()> {
-        let before = self.backend_state();
+        let before = self.public_state();
         let result = (|| {
             self.ensure_ready()?;
             let room = self.room.as_ref().ok_or_else(|| {
                 ClientError::not_ready("Authoritative room state is not available.")
             })?;
             if room.phase == GamePhase::Playing {
-                self.backend.retract_vote()
+                let request = encode_retract_vote()
+                    .map_err(|error| ClientError::protocol(error.to_string()))?;
+                self.send_request(request)
             } else {
                 Err(ClientError::invalid_state(
                     "Votes can only be retracted during voting.",
@@ -714,30 +504,36 @@ impl<C: PokerClient> Session<C> {
     }
 
     pub fn rename(&mut self, data: String) -> ClientResult<()> {
-        let before = self.backend_state();
-        let result = self
-            .ensure_ready()
-            .and_then(|_| self.backend.change_name(data.as_str()));
+        let before = self.public_state();
+        let result = self.ensure_ready().and_then(|_| {
+            encode_change_name(data.as_str())
+                .map_err(|error| ClientError::protocol(error.to_string()))
+                .and_then(|request| self.send_request(request))
+        });
         self.commit_operation(before, false);
         result
     }
 
     pub fn chat(&mut self, message: String) -> ClientResult<()> {
-        let before = self.backend_state();
-        let result = self
-            .ensure_ready()
-            .and_then(|_| self.backend.chat(message.as_str()));
+        let before = self.public_state();
+        let result = self.ensure_ready().and_then(|_| {
+            encode_chat_message(message.as_str())
+                .map_err(|error| ClientError::protocol(error.to_string()))
+                .and_then(|request| self.send_request(request))
+        });
         self.commit_operation(before, false);
         result
     }
 
     pub fn reveal(&mut self) -> ClientResult<()> {
-        let before = self.backend_state();
+        let before = self.public_state();
         let result = if let Err(error) = self.ensure_ready() {
             Err(error)
         } else if let Some(room) = self.room.as_ref() {
             if room.phase != GamePhase::Revealed {
-                self.backend.reveal()
+                encode_reveal_cards()
+                    .map_err(|error| ClientError::protocol(error.to_string()))
+                    .and_then(|request| self.send_request(request))
             } else {
                 Ok(())
             }
@@ -751,14 +547,16 @@ impl<C: PokerClient> Session<C> {
     }
 
     pub fn restart(&mut self) -> ClientResult<()> {
-        let before = self.backend_state();
+        let before = self.public_state();
         let result = (|| {
             self.ensure_ready()?;
             let room = self.room.as_ref().ok_or_else(|| {
                 ClientError::not_ready("Authoritative room state is not available.")
             })?;
             if room.phase == GamePhase::Revealed {
-                self.backend.reset()
+                let request = encode_start_new_round()
+                    .map_err(|error| ClientError::protocol(error.to_string()))?;
+                self.send_request(request)
             } else {
                 Err(ClientError::invalid_state(
                     "A new round can only be started after cards are revealed.",
@@ -793,21 +591,46 @@ impl<C: PokerClient> Session<C> {
         if self.status() == ConnectionStatus::Closed {
             return false;
         }
-        let before = self.backend_state();
-        self.backend.close();
-        self.closed = true;
+        let before = self.public_state();
+        self.finish(None);
         self.commit_operation(before, false)
     }
 
-    fn backend_state(&self) -> BackendState {
-        BackendState {
+    fn send_request(&mut self, body: String) -> ClientResult<()> {
+        self.ensure_ready()?;
+        let result = self
+            .transport
+            .as_mut()
+            .expect("open clients retain their transport")
+            .send_text(body);
+        if let Err(message) = result {
+            let error = ClientError::transport(message);
+            self.finish(Some(error.clone()));
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn finish(&mut self, error: Option<ClientError>) {
+        if self.status == ConnectionStatus::Closed {
+            return;
+        }
+        if let Some(mut transport) = self.transport.take() {
+            transport.close();
+        }
+        self.status = ConnectionStatus::Closed;
+        self.terminal_error = error;
+    }
+
+    fn public_state(&self) -> PublicState {
+        PublicState {
             status: self.status(),
-            terminal_error: self.backend.terminal_error().cloned(),
+            terminal_error: self.terminal_error.clone(),
         }
     }
 
-    fn commit_operation(&mut self, before: BackendState, state_changed: bool) -> bool {
-        if state_changed || before != self.backend_state() {
+    fn commit_operation(&mut self, before: PublicState, state_changed: bool) -> bool {
+        if state_changed || before != self.public_state() {
             self.revision = self.revision.saturating_add(1);
             true
         } else {
@@ -833,26 +656,10 @@ fn snapshot_duration_ms(duration: Duration) -> ClientResult<f64> {
     })
 }
 
-impl Session<WebPokerClient> {
-    pub fn connect(&mut self, transport: Box<dyn Transport>) -> ClientResult<bool> {
-        let before = self.backend_state();
-        let result = self.backend.connect(transport);
-        let changed = self.commit_operation(before, false);
-        result.map(|_| changed)
-    }
-
-    pub fn fail_transport(&mut self, message: impl Into<String>) -> ClientError {
-        let before = self.backend_state();
-        let error = self.backend.fail_transport(message);
-        self.commit_operation(before, false);
-        error
-    }
-}
-
-impl<C: PokerClient> Drop for Session<C> {
+impl Drop for Client {
     fn drop(&mut self) {
         if self.status() != ConnectionStatus::Closed {
-            self.backend.close();
+            self.finish(None);
         }
     }
 }
@@ -862,7 +669,7 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
 
-    use crate::models::{Player, UserType};
+    use crate::models::{LogLevel, Player, UserType};
 
     use super::*;
 
@@ -940,18 +747,23 @@ mod tests {
         }
     }
 
-    fn fake_client(
+    fn fake_client_with_clock(
         events: Vec<TransportEvent>,
-    ) -> (WebPokerClient, Rc<RefCell<FakeTransportState>>) {
+        clock: Rc<dyn Clock>,
+    ) -> (Client, Rc<RefCell<FakeTransportState>>) {
         let state = Rc::new(RefCell::new(FakeTransportState {
             events: events.into(),
             ..FakeTransportState::default()
         }));
-        let mut client = WebPokerClient::new();
+        let mut client = Client::new("Alice".to_string(), clock);
         client
             .connect(Box::new(FakeTransport(state.clone())))
             .unwrap();
         (client, state)
+    }
+
+    fn fake_client(events: Vec<TransportEvent>) -> (Client, Rc<RefCell<FakeTransportState>>) {
+        fake_client_with_clock(events, Rc::new(ManualClock::default()))
     }
 
     fn room_payload(phase: &str, votes: &[(&str, &str, bool)], logs: &[(&str, &str)]) -> String {
@@ -978,33 +790,74 @@ mod tests {
         decode_room_snapshot(&payload).unwrap()
     }
 
-    fn new_session(clock: Rc<dyn Clock>) -> Session<WebPokerClient> {
-        Session::new(WebPokerClient::new(), "Alice".to_string(), clock)
+    fn room_snapshot(
+        phase: &str,
+        votes: &[(&str, &str, bool)],
+        logs: &[(&str, &str)],
+    ) -> RoomSnapshot {
+        snapshot(room_payload(phase, votes, logs))
     }
 
-    fn session_with_phase(phase: &str) -> Session<WebPokerClient> {
-        let mut session = new_session(Rc::new(ManualClock::default()));
-        session.apply_room_snapshot(snapshot(room_payload(phase, &[("Alice", "", true)], &[])));
-        session
+    fn apply_votes(client: &mut Client, phase: &str, votes: &[(&str, &str, bool)]) {
+        client.apply_room_snapshot(room_snapshot(phase, votes, &[]));
     }
 
-    fn open_session_with_phase(
+    fn room_event(phase: &str, votes: &[(&str, &str, bool)]) -> TransportEvent {
+        TransportEvent::Text(room_payload(phase, votes, &[]))
+    }
+
+    fn enqueue(state: &Rc<RefCell<FakeTransportState>>, event: TransportEvent) {
+        state.borrow_mut().events.push_back(event);
+    }
+
+    fn new_client(clock: Rc<dyn Clock>) -> Client {
+        Client::new("Alice".to_string(), clock)
+    }
+
+    fn client_with_phase(phase: &str) -> Client {
+        let mut client = new_client(Rc::new(ManualClock::default()));
+        apply_votes(&mut client, phase, &[("Alice", "", true)]);
+        client
+    }
+
+    fn open_client_with_phase(
         phase: &str,
         clock: Rc<dyn Clock>,
-    ) -> (Session<WebPokerClient>, Rc<RefCell<FakeTransportState>>) {
-        let (client, state) = fake_client(vec![TransportEvent::Opened]);
-        let mut session = Session::with_room_snapshot(
-            client,
-            "Alice".to_string(),
+    ) -> (Client, Rc<RefCell<FakeTransportState>>) {
+        let (mut client, state) = fake_client_with_clock(
+            vec![
+                TransportEvent::Opened,
+                room_event(phase, &[("Alice", "", true)]),
+            ],
             clock,
-            snapshot(room_payload(phase, &[("Alice", "", true)], &[])),
         );
-        session.update().unwrap();
-        (session, state)
+        client.poll().unwrap();
+        (client, state)
     }
 
     fn assert_error_code(result: ClientResult<()>, code: ClientErrorCode) {
         assert_eq!(result.unwrap_err().code, code);
+    }
+
+    fn assert_command_errors(playing: &mut Client, revealed: &mut Client, code: ClientErrorCode) {
+        for result in [
+            playing.vote("5"),
+            playing.vote("not-a-card"),
+            playing.vote("-"),
+            playing.retract_vote(),
+            playing.rename("Alicia".to_string()),
+            playing.chat("hello".to_string()),
+            playing.restart(),
+            revealed.reveal(),
+        ] {
+            assert_error_code(result, code);
+        }
+    }
+
+    fn room_transition(update: &ClientUpdate) -> &RoomTransition {
+        match update {
+            ClientUpdate::Room(transition) => transition,
+        }
     }
 
     #[test]
@@ -1014,13 +867,11 @@ mod tests {
         assert_eq!(error.code, ClientErrorCode::NotReady);
         assert!(state.borrow().sent.is_empty());
 
-        state.borrow_mut().events.push_back(TransportEvent::Opened);
-        assert!(client.get_updates().unwrap().is_empty());
+        enqueue(&state, TransportEvent::Opened);
+        enqueue(&state, room_event("PLAYING", &[("Alice", "", true)]));
+        client.poll().unwrap();
         client.vote("5").unwrap();
-        assert_eq!(
-            state.borrow().sent,
-            [r#"{"requestType":"PlayCard","cardValue":"5"}"#]
-        );
+        assert_eq!(state.borrow().sent.len(), 1);
     }
 
     #[test]
@@ -1029,84 +880,116 @@ mod tests {
         let (mut client, _) =
             fake_client(vec![TransportEvent::Opened, TransportEvent::Text(payload)]);
 
-        let updates = client.get_updates().unwrap();
-        assert_eq!(updates.len(), 1);
-        assert_eq!(updates[0].room.name, "test-room");
-        assert_eq!(updates[0].room.players[0].name, "Alice");
-        assert_eq!(updates[0].log[0].message, "joined");
+        let outcome = client.poll().unwrap();
+        assert_eq!(outcome.updates.len(), 1);
+        assert_eq!(room_transition(&outcome.updates[0]).room.name, "test-room");
+        assert_eq!(client.room().unwrap().players[0].name, "Alice");
+        assert_eq!(client.log()[0].message, "joined");
     }
 
     #[test]
-    fn single_update_read_preserves_later_text_events_for_startup() {
-        let first = room_payload("PLAYING", &[("Alice", "", true)], &[]);
-        let second = room_payload("PLAYING", &[("Bob", "", true)], &[]);
+    fn poll_applies_all_available_room_snapshots_in_order() {
         let (mut client, _) = fake_client(vec![
             TransportEvent::Opened,
-            TransportEvent::Text(first),
-            TransportEvent::Text(second),
+            room_event("PLAYING", &[("Alice", "", true)]),
+            room_event("PLAYING", &[("Bob", "", true)]),
         ]);
 
-        let initial = client.get_update().unwrap().unwrap();
-        assert_eq!(initial.room.players[0].name, "Alice");
-        let remaining = client.get_updates().unwrap();
-        assert_eq!(remaining.len(), 1);
-        assert_eq!(remaining[0].room.players[0].name, "Bob");
-    }
-
-    #[test]
-    fn text_before_close_is_delivered_before_terminal_close() {
-        let payload = room_payload("PLAYING", &[("Alice", "", true)], &[]);
-        let (mut client, state) = fake_client(vec![
-            TransportEvent::Opened,
-            TransportEvent::Text(payload),
-            TransportEvent::Closed,
-        ]);
-
-        let updates = client.get_updates().unwrap();
-        assert_eq!(updates.len(), 1);
-        assert_eq!(updates[0].room.players[0].name, "Alice");
-        assert_eq!(client.status(), ConnectionStatus::Closed);
-        assert_eq!(state.borrow().closes, 1);
+        let outcome = client.poll().unwrap();
+        assert_eq!(outcome.updates.len(), 2);
         assert_eq!(
-            client.get_updates().unwrap_err().code,
-            ClientErrorCode::Closed
+            room_transition(&outcome.updates[0]).room.players[0].name,
+            "Alice"
         );
+        assert_eq!(
+            room_transition(&outcome.updates[1]).room.players[0].name,
+            "Bob"
+        );
+        assert_eq!(client.room().unwrap().players[0].name, "Bob");
     }
 
     #[test]
-    fn text_before_error_is_delivered_before_terminal_error() {
-        let payload = room_payload("PLAYING", &[("Alice", "", true)], &[]);
+    fn poll_next_room_leaves_later_snapshots_and_terminal_events_queued() {
         let (mut client, state) = fake_client(vec![
             TransportEvent::Opened,
-            TransportEvent::Text(payload),
-            TransportEvent::Error("network failed".to_string()),
+            TransportEvent::Binary { length: 3 },
+            room_event("PLAYING", &[("Alice", "", true)]),
+            room_event("CARDS_REVEALED", &[("Alice", "5", true)]),
+            TransportEvent::Error("after rooms".to_string()),
         ]);
 
-        let updates = client.get_updates().unwrap();
-        assert_eq!(updates.len(), 1);
-        assert_eq!(updates[0].room.players[0].name, "Alice");
+        let first = client.poll_next_room().unwrap();
+        assert_eq!(first.updates.len(), 1);
+        assert_eq!(
+            room_transition(&first.updates[0]).room.phase,
+            GamePhase::Playing
+        );
+        assert_eq!(client.status(), ConnectionStatus::Open);
+        assert_eq!(state.borrow().closes, 0);
+
+        let second = client.poll().unwrap();
+        assert_eq!(second.updates.len(), 1);
+        assert_eq!(
+            room_transition(&second.updates[0]).room.phase,
+            GamePhase::Revealed
+        );
         assert_eq!(client.status(), ConnectionStatus::Closed);
-        assert_eq!(state.borrow().closes, 1);
-        let error = client.get_updates().unwrap_err();
+        let error = client.poll().unwrap_err();
         assert_eq!(error.code, ClientErrorCode::Transport);
-        assert_eq!(error.message, "network failed");
+        assert_eq!(error.message, "after rooms");
+    }
+
+    #[test]
+    fn text_is_delivered_before_each_terminal_variant() {
+        for (terminal, code, message) in [
+            (TransportEvent::Closed, ClientErrorCode::Closed, None),
+            (
+                TransportEvent::Error("network failed".to_string()),
+                ClientErrorCode::Transport,
+                Some("network failed"),
+            ),
+        ] {
+            let (mut client, state) = fake_client(vec![
+                TransportEvent::Opened,
+                room_event("PLAYING", &[("Alice", "", true)]),
+                terminal,
+            ]);
+
+            let outcome = client.poll().unwrap();
+            assert_eq!(outcome.updates.len(), 1);
+            assert_eq!(
+                room_transition(&outcome.updates[0]).room.players[0].name,
+                "Alice"
+            );
+            assert_eq!(client.status(), ConnectionStatus::Closed);
+            assert_eq!(state.borrow().closes, 1);
+            let error = client.poll().unwrap_err();
+            assert_eq!(error.code, code);
+            if let Some(message) = message {
+                assert_eq!(error.message, message);
+            }
+        }
     }
 
     #[test]
     fn close_and_errors_are_terminal_and_release_transport() {
         let (mut closed_client, closed_state) = fake_client(vec![TransportEvent::Closed]);
-        let error = closed_client.get_updates().unwrap_err();
+        let revision = closed_client.revision();
+        let error = closed_client.poll().unwrap_err();
         assert_eq!(error.code, ClientErrorCode::Closed);
         assert_eq!(closed_client.status(), ConnectionStatus::Closed);
         assert!(closed_client.terminal_error().is_none());
         assert_eq!(closed_state.borrow().closes, 1);
+        assert_eq!(closed_client.revision(), revision + 1);
 
         let (mut failed_client, failed_state) =
             fake_client(vec![TransportEvent::Error("network failed".to_string())]);
-        let error = failed_client.get_updates().unwrap_err();
+        let revision = failed_client.revision();
+        let error = failed_client.poll().unwrap_err();
         assert_eq!(error.code, ClientErrorCode::Transport);
         assert_eq!(failed_client.terminal_error(), Some(&error));
         assert_eq!(failed_state.borrow().closes, 1);
+        assert_eq!(failed_client.revision(), revision + 1);
     }
 
     #[test]
@@ -1118,7 +1001,7 @@ mod tests {
             TransportEvent::Text(payload),
         ]);
 
-        assert_eq!(client.get_updates().unwrap().len(), 1);
+        assert_eq!(client.poll().unwrap().updates.len(), 1);
         assert_eq!(client.status(), ConnectionStatus::Open);
     }
 
@@ -1128,9 +1011,9 @@ mod tests {
         client.close();
         client.close();
         assert_eq!(state.borrow().closes, 1);
-        assert!(client.get_updates().unwrap().is_empty());
+        assert!(client.poll().unwrap().updates.is_empty());
         assert_eq!(
-            client.chat("after close").unwrap_err().code,
+            client.chat("after close".to_string()).unwrap_err().code,
             ClientErrorCode::Closed
         );
         drop(client);
@@ -1142,36 +1025,15 @@ mod tests {
     }
 
     #[test]
-    fn owning_session_closes_its_backend_exactly_once() {
-        let (client, state) = fake_client(vec![]);
-        let mut session =
-            Session::new(client, "Alice".to_string(), Rc::new(ManualClock::default()));
+    fn connection_only_poll_commits_one_revision() {
+        let (mut client, _) = fake_client(vec![TransportEvent::Opened]);
+        let revision = client.revision();
 
-        assert!(session.close());
-        assert!(!session.close());
-        drop(session);
-        assert_eq!(state.borrow().closes, 1);
-
-        let (client, drop_state) = fake_client(vec![]);
-        drop(Session::new(
-            client,
-            "Alice".to_string(),
-            Rc::new(ManualClock::default()),
-        ));
-        assert_eq!(drop_state.borrow().closes, 1);
-    }
-
-    #[test]
-    fn connection_only_update_commits_one_revision() {
-        let (client, _) = fake_client(vec![TransportEvent::Opened]);
-        let mut session =
-            Session::new(client, "Alice".to_string(), Rc::new(ManualClock::default()));
-
-        assert!(session.update().unwrap());
-        assert_eq!(session.status(), ConnectionStatus::Open);
-        assert_eq!(session.revision(), 1);
-        assert!(!session.update().unwrap());
-        assert_eq!(session.revision(), 1);
+        assert!(client.poll().unwrap().changed);
+        assert_eq!(client.status(), ConnectionStatus::Open);
+        assert_eq!(client.revision(), revision + 1);
+        assert!(!client.poll().unwrap().changed);
+        assert_eq!(client.revision(), revision + 1);
     }
 
     #[test]
@@ -1180,27 +1042,34 @@ mod tests {
             TransportEvent::Opened,
             TransportEvent::Text("not json".to_string()),
         ]);
-        let error = malformed.get_updates().unwrap_err();
+        let error = malformed.poll().unwrap_err();
         assert_eq!(error.code, ClientErrorCode::Protocol);
         assert_eq!(malformed_state.borrow().closes, 1);
 
-        let (mut failed_send, send_state) = fake_client(vec![TransportEvent::Opened]);
-        failed_send.get_updates().unwrap();
+        let (mut failed_send, send_state) = fake_client(vec![
+            TransportEvent::Opened,
+            room_event("PLAYING", &[("Alice", "", true)]),
+        ]);
+        failed_send.poll().unwrap();
         send_state.borrow_mut().send_error = Some("send failed".to_string());
-        let error = failed_send.chat("hello").unwrap_err();
+        let error = failed_send.chat("hello".to_string()).unwrap_err();
         assert_eq!(error.code, ClientErrorCode::Transport);
         assert_eq!(send_state.borrow().closes, 1);
     }
 
     #[test]
     fn transport_creation_failures_can_be_recorded_before_connect() {
-        let mut client = WebPokerClient::new();
+        let mut client = new_client(Rc::new(ManualClock::default()));
 
         let error = client.fail_transport("socket construction failed");
 
         assert_eq!(error.code, ClientErrorCode::Transport);
         assert_eq!(client.status(), ConnectionStatus::Closed);
         assert_eq!(client.terminal_error(), Some(&error));
+        let revision = client.revision();
+        client.fail_transport("ignored after close");
+        assert_eq!(client.terminal_error(), Some(&error));
+        assert_eq!(client.revision(), revision);
         assert_eq!(
             client
                 .connect(Box::new(FakeTransport(Rc::new(RefCell::new(
@@ -1233,23 +1102,13 @@ mod tests {
 
     #[test]
     fn all_commands_check_readiness_before_validation_and_noop_policy() {
-        let mut playing = session_with_phase("PLAYING");
+        let mut playing = client_with_phase("PLAYING");
         playing.vote = Some(VoteData::Number(3));
-        let mut revealed = session_with_phase("CARDS_REVEALED");
+        let mut revealed = client_with_phase("CARDS_REVEALED");
         let playing_revision = playing.revision();
         let revealed_revision = revealed.revision();
 
-        assert_error_code(playing.vote("5"), ClientErrorCode::NotReady);
-        assert_error_code(playing.vote("not-a-card"), ClientErrorCode::NotReady);
-        assert_error_code(playing.vote("-"), ClientErrorCode::NotReady);
-        assert_error_code(playing.retract_vote(), ClientErrorCode::NotReady);
-        assert_error_code(
-            playing.rename("Alicia".to_string()),
-            ClientErrorCode::NotReady,
-        );
-        assert_error_code(playing.chat("hello".to_string()), ClientErrorCode::NotReady);
-        assert_error_code(playing.restart(), ClientErrorCode::NotReady);
-        assert_error_code(revealed.reveal(), ClientErrorCode::NotReady);
+        assert_command_errors(&mut playing, &mut revealed, ClientErrorCode::NotReady);
         assert_eq!(playing.own_vote(), &Some(VoteData::Number(3)));
         assert_eq!(playing.name(), "Alice");
         assert_eq!(playing.revision(), playing_revision);
@@ -1260,17 +1119,7 @@ mod tests {
         revealed.close();
         let playing_revision = playing.revision();
         let revealed_revision = revealed.revision();
-        assert_error_code(playing.vote("5"), ClientErrorCode::Closed);
-        assert_error_code(playing.vote("not-a-card"), ClientErrorCode::Closed);
-        assert_error_code(playing.vote("-"), ClientErrorCode::Closed);
-        assert_error_code(playing.retract_vote(), ClientErrorCode::Closed);
-        assert_error_code(
-            playing.rename("Alicia".to_string()),
-            ClientErrorCode::Closed,
-        );
-        assert_error_code(playing.chat("hello".to_string()), ClientErrorCode::Closed);
-        assert_error_code(playing.restart(), ClientErrorCode::Closed);
-        assert_error_code(revealed.reveal(), ClientErrorCode::Closed);
+        assert_command_errors(&mut playing, &mut revealed, ClientErrorCode::Closed);
         assert_eq!(playing.own_vote(), &Some(VoteData::Number(3)));
         assert_eq!(playing.name(), "Alice");
         assert_eq!(playing.revision(), playing_revision);
@@ -1280,7 +1129,7 @@ mod tests {
     #[test]
     fn command_failures_do_not_mutate_authoritative_local_fields() {
         let (mut retraction, retraction_state) =
-            open_session_with_phase("PLAYING", Rc::new(ManualClock::default()));
+            open_client_with_phase("PLAYING", Rc::new(ManualClock::default()));
         retraction.vote = Some(VoteData::Number(5));
         retraction_state.borrow_mut().send_error = Some("send failed".to_string());
         let revision = retraction.revision();
@@ -1294,7 +1143,7 @@ mod tests {
         assert_eq!(retraction.revision(), revision + 1);
 
         let (mut rename, rename_state) =
-            open_session_with_phase("PLAYING", Rc::new(ManualClock::default()));
+            open_client_with_phase("PLAYING", Rc::new(ManualClock::default()));
         rename_state.borrow_mut().send_error = Some("send failed".to_string());
         let revision = rename.revision();
         assert_error_code(
@@ -1306,7 +1155,7 @@ mod tests {
 
         for card in ["5", "?"] {
             let (mut vote, vote_state) =
-                open_session_with_phase("PLAYING", Rc::new(ManualClock::default()));
+                open_client_with_phase("PLAYING", Rc::new(ManualClock::default()));
             vote_state.borrow_mut().send_error = Some("send failed".to_string());
             let revision = vote.revision();
             assert_error_code(vote.vote(card), ClientErrorCode::Transport);
@@ -1315,7 +1164,7 @@ mod tests {
         }
 
         let (mut restart, restart_state) =
-            open_session_with_phase("CARDS_REVEALED", Rc::new(ManualClock::default()));
+            open_client_with_phase("CARDS_REVEALED", Rc::new(ManualClock::default()));
         restart_state.borrow_mut().send_error = Some("send failed".to_string());
         let revision = restart.revision();
         let room = restart.room().cloned();
@@ -1327,224 +1176,166 @@ mod tests {
 
     #[test]
     fn poll_batch_and_repeated_commands_have_precise_revisions() {
-        let (client, state) = fake_client(vec![
+        let (mut client, state) = fake_client(vec![
             TransportEvent::Opened,
-            TransportEvent::Text(room_payload("PLAYING", &[("Alice", "", true)], &[])),
-            TransportEvent::Text(room_payload("CARDS_REVEALED", &[("Alice", "5", true)], &[])),
+            room_event("PLAYING", &[("Alice", "", true)]),
+            room_event("CARDS_REVEALED", &[("Alice", "5", true)]),
         ]);
-        let mut session =
-            Session::new(client, "Alice".to_string(), Rc::new(ManualClock::default()));
-        let mut transitions = vec![];
-        assert!(session
-            .update_with(|session, update| {
-                transitions.push((
-                    update.previous_room.map(|room| room.phase),
-                    session.room().unwrap().phase,
-                    session.revision(),
-                ));
-            })
-            .unwrap());
+        let revision = client.revision();
+        let outcome = client.poll().unwrap();
+        assert!(outcome.changed);
         assert_eq!(
-            transitions,
+            outcome
+                .updates
+                .iter()
+                .map(room_transition)
+                .map(|transition| (
+                    transition.previous_room.as_ref().map(|room| room.phase),
+                    transition.room.phase,
+                    transition.history_len,
+                ))
+                .collect::<Vec<_>>(),
             [
                 (None, GamePhase::Playing, 0),
-                (Some(GamePhase::Playing), GamePhase::Revealed, 0),
+                (Some(GamePhase::Playing), GamePhase::Revealed, 1),
             ]
         );
-        assert_eq!(session.history().len(), 1);
-        assert_eq!(session.revision(), 1);
-        assert!(!session.update_with(|_, _| unreachable!()).unwrap());
-        assert_eq!(session.revision(), 1);
+        assert_eq!(client.history().len(), 1);
+        assert_eq!(client.revision(), revision + 1);
+        assert!(!client.poll().unwrap().changed);
+        assert_eq!(client.revision(), revision + 1);
 
-        state
-            .borrow_mut()
-            .events
-            .push_back(TransportEvent::Text(room_payload(
-                "PLAYING",
-                &[("Alice", "", true)],
-                &[],
-            )));
-        session.update().unwrap();
+        enqueue(&state, room_event("PLAYING", &[("Alice", "", true)]));
+        client.poll().unwrap();
 
-        let revision = session.revision();
-        session.vote("5").unwrap();
-        assert_eq!(session.revision(), revision);
-        session.vote("5").unwrap();
-        assert_eq!(session.revision(), revision);
+        let revision = client.revision();
+        client.vote("5").unwrap();
+        assert_eq!(client.revision(), revision);
+        client.vote("5").unwrap();
+        assert_eq!(client.revision(), revision);
 
-        session.rename("Alicia".to_string()).unwrap();
-        assert_eq!(session.revision(), revision);
-        session.rename("Alicia".to_string()).unwrap();
-        assert_eq!(session.revision(), revision);
+        client.rename("Alicia".to_string()).unwrap();
+        assert_eq!(client.revision(), revision);
+        client.rename("Alicia".to_string()).unwrap();
+        assert_eq!(client.revision(), revision);
 
-        session.chat("hello".to_string()).unwrap();
-        session.reveal().unwrap();
-        assert_eq!(session.revision(), revision);
+        client.chat("hello".to_string()).unwrap();
+        client.reveal().unwrap();
+        assert_eq!(client.revision(), revision);
 
-        assert_error_code(session.restart(), ClientErrorCode::InvalidState);
-        assert_eq!(session.revision(), revision);
+        assert_error_code(client.restart(), ClientErrorCode::InvalidState);
+        assert_eq!(client.revision(), revision);
 
-        state
-            .borrow_mut()
-            .events
-            .push_back(TransportEvent::Text(room_payload(
-                "CARDS_REVEALED",
-                &[("Alice", "5", true)],
-                &[],
-            )));
-        session.update().unwrap();
-        assert_eq!(session.revision(), revision + 1);
-        session.restart().unwrap();
-        assert_eq!(session.revision(), revision + 1);
+        enqueue(
+            &state,
+            room_event("CARDS_REVEALED", &[("Alice", "5", true)]),
+        );
+        client.poll().unwrap();
+        assert_eq!(client.revision(), revision + 1);
+        client.restart().unwrap();
+        assert_eq!(client.revision(), revision + 1);
     }
 
     #[test]
-    fn panicking_batch_callback_commits_revision_and_leaves_session_usable() {
-        let (client, state) = fake_client(vec![TransportEvent::Text(room_payload(
-            "PLAYING",
-            &[("Alice", "", true)],
-            &[],
-        ))]);
-        let mut session =
-            Session::new(client, "Alice".to_string(), Rc::new(ManualClock::default()));
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            session
-                .update_with(|session, _| {
-                    assert_eq!(session.room().unwrap().phase, GamePhase::Playing);
-                    panic!("callback panic");
-                })
-                .unwrap();
-        }));
-
-        assert!(result.is_err());
-        assert_eq!(session.revision(), 1);
-        assert_eq!(session.room().unwrap().phase, GamePhase::Playing);
-
-        let mut callbacks = 0;
-        state
-            .borrow_mut()
-            .events
-            .push_back(TransportEvent::Text(room_payload(
-                "CARDS_REVEALED",
-                &[("Alice", "5", true)],
-                &[],
-            )));
-        session.update_with(|_, _| callbacks += 1).unwrap();
-        assert_eq!(callbacks, 1);
-        assert_eq!(session.revision(), 2);
-        assert_eq!(session.room().unwrap().phase, GamePhase::Revealed);
-        assert_eq!(session.history().len(), 1);
-    }
-
-    #[test]
-    fn update_error_is_returned_and_commits_terminal_state_once() {
-        let (client, state) = fake_client(vec![TransportEvent::Error("failed".to_string())]);
-        let mut session =
-            Session::new(client, "Alice".to_string(), Rc::new(ManualClock::default()));
-
-        let error = session.update().unwrap_err();
-
-        assert_eq!(error.code, ClientErrorCode::Transport);
-        assert_eq!(session.revision(), 1);
-        assert_eq!(session.status(), ConnectionStatus::Closed);
-        assert_eq!(session.terminal_error(), Some(&error));
-        assert_eq!(state.borrow().closes, 1);
-    }
-
-    #[test]
-    fn session_commands_use_exact_canonical_cards_and_authoritative_state() {
+    fn commands_use_canonical_cards_and_authoritative_state() {
         let clock = Rc::new(ManualClock::default());
-        let (client, state) = fake_client(vec![TransportEvent::Opened]);
-        let mut session = Session::new(client, "Alice".to_string(), clock);
-        session.update().unwrap();
-        let absent_error = session.vote("5").unwrap_err();
+        let (mut client, state) = fake_client_with_clock(vec![TransportEvent::Opened], clock);
+        client.poll().unwrap();
+        let absent_error = client.vote("5").unwrap_err();
         assert_eq!(absent_error.code, ClientErrorCode::NotReady);
+        assert_error_code(client.retract_vote(), ClientErrorCode::NotReady);
+        assert_error_code(client.restart(), ClientErrorCode::NotReady);
+        assert_error_code(client.reveal(), ClientErrorCode::NotReady);
+        client.rename("Alicia".to_string()).unwrap();
+        client.chat("hello".to_string()).unwrap();
 
         let mut playing: serde_json::Value =
             serde_json::from_str(&room_payload("PLAYING", &[("Alice", "", true)], &[])).unwrap();
         playing["deck"] = serde_json::json!(["05", " Coffee ", "-", "?"]);
-        session.apply_room_snapshot(snapshot(playing.to_string()));
+        client.apply_room_snapshot(snapshot(playing.to_string()));
 
-        assert_error_code(session.vote(" 05 "), ClientErrorCode::InvalidCard);
-        session.vote("05").unwrap();
-        session.vote(" Coffee ").unwrap();
-        session.vote("-").unwrap();
-        session.vote("?").unwrap();
-        session.retract_vote().unwrap();
-        assert_eq!(session.vote, None);
-        session.rename("Alicia".to_string()).unwrap();
-        session.chat("hello".to_string()).unwrap();
-        session.reveal().unwrap();
-        assert_error_code(session.restart(), ClientErrorCode::InvalidState);
+        assert_error_code(client.vote(" 05 "), ClientErrorCode::InvalidCard);
+        client.vote("05").unwrap();
+        client.vote(" Coffee ").unwrap();
+        client.vote("-").unwrap();
+        client.vote("?").unwrap();
+        client.retract_vote().unwrap();
+        assert_eq!(client.vote, None);
+        client.reveal().unwrap();
+        assert_error_code(client.restart(), ClientErrorCode::InvalidState);
 
-        assert_eq!(session.name, "Alice");
+        assert_eq!(client.name, "Alice");
         assert_eq!(
             state.borrow().sent,
             [
+                r#"{"requestType":"ChangeName","name":"Alicia"}"#,
+                r#"{"requestType":"ChatMessage","message":"hello"}"#,
                 r#"{"requestType":"PlayCard","cardValue":"05"}"#,
                 r#"{"requestType":"PlayCard","cardValue":" Coffee "}"#,
                 r#"{"requestType":"PlayCard","cardValue":"-"}"#,
                 r#"{"requestType":"PlayCard","cardValue":"?"}"#,
                 r#"{"requestType":"PlayCard","cardValue":null}"#,
-                r#"{"requestType":"ChangeName","name":"Alicia"}"#,
-                r#"{"requestType":"ChatMessage","message":"hello"}"#,
                 r#"{"requestType":"RevealCards"}"#,
             ]
         );
 
-        let revision = session.revision();
-        assert_error_code(session.vote("not-a-card"), ClientErrorCode::InvalidCard);
-        assert_eq!(session.revision(), revision);
-        assert!(session.log().is_empty());
-        assert_eq!(state.borrow().sent.len(), 8);
+        let revision = client.revision();
+        assert_error_code(client.vote("not-a-card"), ClientErrorCode::InvalidCard);
+        assert_eq!(client.revision(), revision);
+        assert!(client.log().is_empty());
     }
 
     #[test]
     fn phase_illegal_commands_are_typed_and_send_nothing() {
         for phase in ["CARDS_REVEALED", "FUTURE_PHASE"] {
-            let (mut session, state) =
-                open_session_with_phase(phase, Rc::new(ManualClock::default()));
-            let revision = session.revision();
+            let (mut client, state) =
+                open_client_with_phase(phase, Rc::new(ManualClock::default()));
+            let revision = client.revision();
 
-            assert_error_code(session.vote("5"), ClientErrorCode::InvalidState);
-            assert_error_code(session.retract_vote(), ClientErrorCode::InvalidState);
-            assert_eq!(session.revision(), revision);
+            assert_error_code(client.vote("5"), ClientErrorCode::InvalidState);
+            assert_error_code(client.retract_vote(), ClientErrorCode::InvalidState);
+            assert_eq!(client.revision(), revision);
             assert!(state.borrow().sent.is_empty());
         }
 
         for phase in ["PLAYING", "FUTURE_PHASE"] {
-            let (mut session, state) =
-                open_session_with_phase(phase, Rc::new(ManualClock::default()));
-            let revision = session.revision();
-            let room = session.room().cloned();
-            let vote = session.own_vote().clone();
+            let (mut client, state) =
+                open_client_with_phase(phase, Rc::new(ManualClock::default()));
+            let revision = client.revision();
+            let room = client.room().cloned();
+            let vote = client.own_vote().clone();
 
-            assert_error_code(session.restart(), ClientErrorCode::InvalidState);
-            assert_eq!(session.room(), room.as_ref());
-            assert_eq!(session.own_vote(), &vote);
-            assert_eq!(session.revision(), revision);
+            assert_error_code(client.restart(), ClientErrorCode::InvalidState);
+            assert_eq!(client.room(), room.as_ref());
+            assert_eq!(client.own_vote(), &vote);
+            assert_eq!(client.revision(), revision);
             assert!(state.borrow().sent.is_empty());
         }
     }
 
     #[test]
-    fn revealed_session_commands_do_not_repeat_reveal_and_do_handoff_reset() {
+    fn revealed_commands_do_not_repeat_reveal_and_do_handoff_reset() {
         let clock = Rc::new(ManualClock::default());
-        let (mut session, state) = open_session_with_phase("CARDS_REVEALED", clock);
+        let (mut client, state) = open_client_with_phase("CARDS_REVEALED", clock);
 
-        let revision = session.revision();
-        session.reveal().unwrap();
-        session.restart().unwrap();
+        let revision = client.revision();
+        client.reveal().unwrap();
+        client.restart().unwrap();
 
-        assert_eq!(state.borrow().sent, [r#"{"requestType":"StartNewRound"}"#]);
-        assert_eq!(session.room().unwrap().phase, GamePhase::Revealed);
-        assert_eq!(session.revision(), revision);
+        let state = state.borrow();
+        assert_eq!(state.sent.len(), 1);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&state.sent[0]).unwrap()["requestType"],
+            "StartNewRound"
+        );
+        assert_eq!(client.room().unwrap().phase, GamePhase::Revealed);
+        assert_eq!(client.revision(), revision);
     }
 
     #[test]
     fn room_updates_deduplicate_server_logs_and_do_not_fabricate_initial_history() {
         let clock = Rc::new(ManualClock::default());
-        let mut session = new_session(clock.clone());
+        let mut session = new_client(clock.clone());
         assert!(session.room().is_none());
         assert_eq!(session.round_number, 0);
 
@@ -1555,11 +1346,11 @@ mod tests {
         );
         session.apply_room_snapshot(snapshot(playing));
         clock.advance(Duration::from_secs(4));
-        session.apply_room_snapshot(snapshot(room_payload(
+        session.apply_room_snapshot(room_snapshot(
             "PLAYING",
             &[("Alice", "3", true), ("Bob", "5", false)],
             &[("INFO", "first"), ("CHAT", "second")],
-        )));
+        ));
 
         assert_eq!(session.log.len(), 2);
         assert_eq!(session.log[0].timestamp, Duration::ZERO);
@@ -1569,7 +1360,7 @@ mod tests {
     }
 
     #[test]
-    fn with_room_snapshot_indexes_sparse_logs_before_cumulative_updates() {
+    fn room_snapshots_index_sparse_logs_before_cumulative_updates() {
         let clock = Rc::new(ManualClock::default());
         let payload = |appended: bool| {
             let mut logs = vec![
@@ -1591,12 +1382,8 @@ mod tests {
             .to_string()
         };
 
-        let mut session = Session::with_room_snapshot(
-            WebPokerClient::new(),
-            "Alice".to_string(),
-            clock.clone(),
-            snapshot(payload(false)),
-        );
+        let mut session = new_client(clock.clone());
+        session.apply_room_snapshot(snapshot(payload(false)));
         assert_eq!(session.revision(), 1);
         assert_eq!(
             session
@@ -1633,20 +1420,53 @@ mod tests {
     #[test]
     fn aggregate_snapshot_is_core_owned_and_uses_safe_milliseconds() {
         let clock = Rc::new(ManualClock::default());
-        let mut session = new_session(clock.clone());
-        session.apply_room_snapshot(snapshot(room_payload(
+        let mut session = new_client(clock.clone());
+        session.apply_room_snapshot(room_snapshot(
             "PLAYING",
             &[("Alice", "5", true)],
             &[("INFO", "joined")],
-        )));
+        ));
         clock.advance(Duration::from_millis(2500));
-        session.apply_room_snapshot(snapshot(room_payload(
+        session.apply_room_snapshot(room_snapshot(
             "CARDS_REVEALED",
             &[("Alice", "5", true)],
             &[("INFO", "joined")],
-        )));
+        ));
 
-        let value = serde_json::to_value(session.snapshot().unwrap()).unwrap();
+        let aggregate = session.snapshot().unwrap();
+        let room = aggregate.room.as_ref().unwrap();
+        let local_player = &room.players[0];
+        let log = &aggregate.log[0];
+        let history = &aggregate.history[0];
+        assert_eq!(aggregate.revision, 2);
+        assert_eq!(aggregate.status, ConnectionStatus::Disconnected);
+        assert_eq!(aggregate.terminal_error, None);
+        assert_eq!(room.name, "test-room");
+        assert_eq!(room.phase, GamePhase::Revealed);
+        assert_eq!(room.deck, ["1", "3", "5", "?"]);
+        assert_eq!(room.players.len(), 1);
+        assert_eq!(local_player.name, "Alice");
+        assert_eq!(local_player.vote, Vote::Revealed(VoteData::Number(5)));
+        assert!(local_player.is_you);
+        assert_eq!(local_player.user_type, UserType::Player);
+        assert_eq!(aggregate.local_name, "Alice");
+        assert_eq!(aggregate.local_vote, Some(VoteData::Number(5)));
+        assert_eq!(aggregate.log.len(), 1);
+        assert_eq!(log.timestamp, Duration::ZERO);
+        assert_eq!(log.level, LogLevel::Info);
+        assert_eq!(log.message, "joined");
+        assert_eq!(log.source, LogSource::Server);
+        assert_eq!(log.server_index, Some(0));
+        assert_eq!(aggregate.round_number, 1);
+        assert_eq!(aggregate.history.len(), 1);
+        assert_eq!(history.round_number, 1);
+        assert_eq!(history.average, Some(5.0));
+        assert_eq!(history.votes.len(), 1);
+        assert_eq!(history.deck, ["1", "3", "5", "?"]);
+        assert_eq!(history.own_vote, Some(VoteData::Number(5)));
+        assert_eq!(aggregate.average, Some(5.0));
+
+        let value = serde_json::to_value(aggregate).unwrap();
         assert_eq!(value["revision"], 2);
         assert_eq!(value["status"], "disconnected");
         assert_eq!(value["terminalError"], serde_json::Value::Null);
@@ -1655,26 +1475,33 @@ mod tests {
         assert_eq!(value["localVote"]["value"], 5);
         assert_eq!(value["log"][0]["timestampMs"], 0.0);
         assert_eq!(value["roundNumber"], 1);
-        assert_eq!(value["roundStartedAtMs"], 0.0);
-        assert_eq!(value["history"][0]["lengthMs"], 2500.0);
+        assert!(value.get("roundStartedAtMs").is_none());
+        assert!(value["history"][0].get("lengthMs").is_none());
         assert_eq!(value["average"], 5.0);
     }
 
     #[test]
     fn aggregate_snapshot_rejects_unsafe_times_and_non_finite_averages_in_core() {
         let unsafe_duration = Duration::from_millis((crate::models::MAX_SAFE_INTEGER + 1) as u64);
-        let mut session = new_session(Rc::new(ManualClock::default()));
-        session.round_start = Some(unsafe_duration);
+        let mut session = new_client(Rc::new(ManualClock::default()));
+        session.log.push(LogEntry {
+            timestamp: unsafe_duration,
+            level: LogLevel::Info,
+            message: String::new(),
+            source: LogSource::Client,
+            server_index: None,
+        });
+        let error = session.snapshot().unwrap_err();
+        assert_eq!(error.code, ClientErrorCode::Protocol);
         assert_eq!(
-            session.snapshot().unwrap_err().code,
-            ClientErrorCode::Protocol
+            error.to_string(),
+            "Client snapshot contains a time outside the JavaScript safe integer range."
         );
 
-        session.round_start = None;
+        session.log.clear();
         session.history.push(HistoryEntry {
             round_number: 1,
             average: Some(f32::NAN),
-            length: Duration::ZERO,
             votes: vec![],
             deck: vec![],
             own_vote: None,
@@ -1688,18 +1515,17 @@ mod tests {
     #[test]
     fn authoritative_snapshot_samples_clock_once_before_mutation() {
         let clock = Rc::new(PanickingClock::new(2, Duration::from_secs(7)));
-        let mut session = new_session(clock.clone());
+        let mut session = new_client(clock.clone());
 
-        session.apply_room_snapshot(snapshot(room_payload(
+        session.apply_room_snapshot(room_snapshot(
             "PLAYING",
             &[("Alice", "", true)],
             &[("INFO", "first"), ("CHAT", "second")],
-        )));
+        ));
 
         assert_eq!(clock.calls.get(), 1);
         assert_eq!(session.revision(), 1);
         assert_eq!(session.room().unwrap().phase, GamePhase::Playing);
-        assert_eq!(session.round_start(), Some(Duration::from_secs(7)));
         assert_eq!(session.log().len(), 2);
         assert!(session
             .log()
@@ -1710,12 +1536,8 @@ mod tests {
     #[test]
     fn first_clock_sample_panic_leaves_session_unchanged() {
         let clock = Rc::new(PanickingClock::new(1, Duration::from_secs(7)));
-        let mut session = new_session(clock.clone());
-        let update = snapshot(room_payload(
-            "PLAYING",
-            &[("Alice", "", true)],
-            &[("INFO", "first")],
-        ));
+        let mut session = new_client(clock.clone());
+        let update = room_snapshot("PLAYING", &[("Alice", "", true)], &[("INFO", "first")]);
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             session.apply_room_snapshot(update);
@@ -1726,96 +1548,65 @@ mod tests {
         assert_eq!(session.revision(), 0);
         assert!(session.room().is_none());
         assert_eq!(session.round_number(), 0);
-        assert_eq!(session.round_start(), None);
         assert!(session.log().is_empty());
         assert!(session.history().is_empty());
     }
 
     #[test]
-    fn phase_transitions_record_optional_average_and_fixed_clock_duration() {
-        let clock = Rc::new(ManualClock::default());
-        let mut session = new_session(clock.clone());
-        session.apply_room_snapshot(snapshot(room_payload(
+    fn phase_transitions_record_optional_average_and_increment_rounds() {
+        let mut session = new_client(Rc::new(ManualClock::default()));
+        apply_votes(
+            &mut session,
             "PLAYING",
             &[("Alice", "3", true), ("Bob", "5", false)],
-            &[],
-        )));
+        );
         assert_eq!(session.average_votes(), None);
-        clock.advance(Duration::from_millis(2500));
-        session.apply_room_snapshot(snapshot(room_payload(
+        apply_votes(
+            &mut session,
             "CARDS_REVEALED",
             &[("Alice", "3", true), ("Bob", "5", false)],
-            &[],
-        )));
+        );
 
         assert_eq!(session.average_votes(), Some(4.0));
         assert_eq!(session.history.len(), 1);
         assert_eq!(session.history[0].average, Some(4.0));
-        assert_eq!(session.history[0].length, Duration::from_millis(2500));
 
-        clock.advance(Duration::from_secs(10));
-        assert_eq!(session.history[0].length, Duration::from_millis(2500));
-        session.apply_room_snapshot(snapshot(room_payload(
+        apply_votes(
+            &mut session,
             "PLAYING",
             &[("Alice", "", true), ("Bob", "", false)],
-            &[],
-        )));
+        );
         assert_eq!(session.round_number, 2);
-        assert_eq!(session.round_start, Some(Duration::from_millis(12500)));
     }
 
     #[test]
     fn absent_numeric_votes_have_no_non_finite_average() {
         let clock = Rc::new(ManualClock::default());
-        let mut session = new_session(clock);
-        session.apply_room_snapshot(snapshot(room_payload(
-            "PLAYING",
-            &[("Alice", "?", true)],
-            &[],
-        )));
-        session.apply_room_snapshot(snapshot(room_payload(
-            "CARDS_REVEALED",
-            &[("Alice", "?", true)],
-            &[],
-        )));
+        let mut session = new_client(clock);
+        apply_votes(&mut session, "PLAYING", &[("Alice", "?", true)]);
+        apply_votes(&mut session, "CARDS_REVEALED", &[("Alice", "?", true)]);
 
         assert_eq!(session.average_votes(), None);
         assert_eq!(session.history[0].average, None);
     }
 
     #[test]
-    fn advancing_time_and_reading_elapsed_do_not_change_revision() {
-        let clock = Rc::new(ManualClock::default());
-        let mut session = new_session(clock.clone());
-        session.apply_room_snapshot(snapshot(room_payload("PLAYING", &[], &[])));
-        let revision = session.revision;
-
-        clock.advance(Duration::from_secs(9));
-        assert_eq!(session.round_elapsed(), Some(Duration::from_secs(9)));
-        assert_eq!(session.revision, revision);
-    }
-
-    #[test]
     fn snapshots_reconcile_local_identity_vote_and_history_before_phase_effects() {
         let clock = Rc::new(ManualClock::default());
-        let mut session = Session::new(
-            WebPokerClient::new(),
-            "Configured name".to_string(),
-            clock.clone(),
-        );
-        session.apply_room_snapshot(snapshot(room_payload(
+        let mut session = Client::new("Configured name".to_string(), clock.clone());
+        apply_votes(
+            &mut session,
             "PLAYING",
             &[("Bob", "✅", false), ("Alice", "3", true)],
-            &[],
-        )));
+        );
         assert_eq!(session.name(), "Alice");
         assert_eq!(session.own_vote(), &Some(VoteData::Number(3)));
         clock.advance(Duration::from_secs(1));
-        session.apply_room_snapshot(snapshot(room_payload(
+        apply_votes(
+            &mut session,
             "CARDS_REVEALED",
             &[("Bob", "5", false), ("Alicia", "?", true)],
-            &[],
-        )));
+        );
 
         assert_eq!(
             session.history[0]
@@ -1841,32 +1632,24 @@ mod tests {
             .iter()
             .all(|player| player.user_type == UserType::Player));
 
-        session.apply_room_snapshot(snapshot(room_payload(
-            "PLAYING",
-            &[("Alicia", "✅", true)],
-            &[],
-        )));
+        apply_votes(&mut session, "PLAYING", &[("Alicia", "✅", true)]);
         assert_eq!(session.own_vote(), &None);
     }
 
     #[test]
     fn snapshot_without_local_player_clears_vote_before_recording_history() {
         let clock = Rc::new(ManualClock::default());
-        let mut session = new_session(clock.clone());
-        session.apply_room_snapshot(snapshot(room_payload(
+        let mut session = new_client(clock.clone());
+        apply_votes(
+            &mut session,
             "PLAYING",
             &[("Alice", "5", true), ("Bob", "✅", false)],
-            &[],
-        )));
+        );
         assert_eq!(session.name(), "Alice");
         assert_eq!(session.own_vote(), &Some(VoteData::Number(5)));
 
         clock.advance(Duration::from_secs(1));
-        session.apply_room_snapshot(snapshot(room_payload(
-            "CARDS_REVEALED",
-            &[("Bob", "3", false)],
-            &[],
-        )));
+        apply_votes(&mut session, "CARDS_REVEALED", &[("Bob", "3", false)]);
 
         assert_eq!(session.name(), "Alice");
         assert_eq!(session.own_vote(), &None);

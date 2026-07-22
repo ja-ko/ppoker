@@ -3,20 +3,8 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import {
-  WasmPokerClient,
-  initializePpokerWasm,
-  type ClientOptions,
-} from "../src/index.js";
-
-function captureError(operation: () => void): unknown {
-  try {
-    operation();
-  } catch (error: unknown) {
-    return error;
-  }
-  throw new Error("operation did not throw");
-}
+import { createPokerClient, type ClientOptions } from "../src/index.js";
+import { captureError } from "./fake-client.js";
 
 describe("generated WASM integration", () => {
   it("validates options in Rust and constructs both roles without network", async () => {
@@ -36,9 +24,7 @@ describe("generated WASM integration", () => {
     const offset = 11;
     const paddedWasm = new Uint8Array(wasmBytes.byteLength + offset + 7);
     paddedWasm.set(wasmBytes, offset);
-    await initializePpokerWasm(
-      new DataView(paddedWasm.buffer, offset, wasmBytes.byteLength),
-    );
+    const wasm = new DataView(paddedWasm.buffer, offset, wasmBytes.byteLength);
 
     const invalidOptions: ClientOptions = {
       endpoint: "https://example.test",
@@ -46,9 +32,9 @@ describe("generated WASM integration", () => {
       name: "Invalid",
       role: "participant",
     };
-    const invalid = captureError(() => {
-      new WasmPokerClient(invalidOptions);
-    });
+    const invalid = await createPokerClient(invalidOptions, { wasm }).catch(
+      (error: unknown) => error,
+    );
     expect(invalid).toBeInstanceOf(Error);
     expect(invalid).toMatchObject({
       code: "InvalidOptions",
@@ -58,13 +44,13 @@ describe("generated WASM integration", () => {
     });
 
     for (const role of ["participant", "spectator"] as const) {
-      const client = new WasmPokerClient({
+      const client = await createPokerClient({
         endpoint: "wss://example.test/base",
         room: `typed ${role}`,
         name: role,
         role,
       });
-      expect(client.snapshot()).toEqual({
+      expect(client.getSnapshot()).toEqual({
         revision: 0,
         status: "disconnected",
         terminalError: null,
@@ -73,27 +59,20 @@ describe("generated WASM integration", () => {
         localVote: null,
         log: [],
         roundNumber: 0,
-        roundStartedAtMs: null,
         history: [],
         average: null,
       });
 
-      const notReady = captureError(() => {
-        client.vote("5");
-      });
+      const notReady = captureError(client.vote.bind(client, "5"));
       expect(notReady).toBeInstanceOf(Error);
       expect(notReady).toMatchObject({ code: "NotReady" });
       client.close();
-      expect(client.snapshot()).toMatchObject({
+      expect(client.getSnapshot()).toMatchObject({
         revision: 1,
         status: "closed",
       });
       expect(client.poll()).toBe(false);
-      expect(
-        captureError(() => {
-          client.chat("closed");
-        }),
-      ).toMatchObject({
+      expect(captureError(client.chat.bind(client, "closed"))).toMatchObject({
         code: "Closed",
       });
     }

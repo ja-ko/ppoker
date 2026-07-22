@@ -88,13 +88,8 @@ mod tests {
     fn event_budget_retains_prior_events_then_exactly_one_error() {
         let mut queue = EventQueue::default();
         assert!(!queue.is_stopped());
-        for length in 0..MAX_QUEUED_EVENTS {
-            assert_eq!(
-                queue.push(TransportEvent::Binary { length }),
-                PushResult::Queued
-            );
-        }
-
+        assert!((0..MAX_QUEUED_EVENTS)
+            .all(|length| { queue.push(TransportEvent::Binary { length }) == PushResult::Queued }));
         assert_eq!(
             queue.push(TransportEvent::Binary { length: usize::MAX }),
             PushResult::Overflowed
@@ -104,10 +99,8 @@ mod tests {
             queue.push(TransportEvent::Error("late".to_string())),
             PushResult::Stopped
         );
-
-        for length in 0..MAX_QUEUED_EVENTS {
-            assert_eq!(queue.pop(), Some(TransportEvent::Binary { length }));
-        }
+        assert!((0..MAX_QUEUED_EVENTS)
+            .all(|length| queue.pop() == Some(TransportEvent::Binary { length })));
         assert_eq!(
             queue.pop(),
             Some(TransportEvent::Error(QUEUE_OVERFLOW_ERROR.to_string()))
@@ -120,26 +113,20 @@ mod tests {
     #[test]
     fn text_budget_is_exact_and_decrements_as_messages_are_consumed() {
         let mut queue = EventQueue::default();
-        assert_eq!(
-            queue.push(TransportEvent::Text("abc".to_string())),
-            PushResult::Queued
-        );
-        assert_eq!(
-            queue.push(TransportEvent::Text("x".repeat(MAX_QUEUED_TEXT_BYTES - 3))),
-            PushResult::Queued
-        );
+        for text in ["abc".to_string(), "x".repeat(MAX_QUEUED_TEXT_BYTES - 3)] {
+            assert_eq!(queue.push(TransportEvent::Text(text)), PushResult::Queued);
+        }
         assert_eq!(
             queue.push(TransportEvent::Text("overflow".to_string())),
             PushResult::Overflowed
         );
-
-        assert_eq!(queue.pop(), Some(TransportEvent::Text("abc".to_string())));
-        assert_eq!(queue.queued_text_bytes, MAX_QUEUED_TEXT_BYTES - 3);
-        assert_eq!(
-            queue.pop(),
-            Some(TransportEvent::Text("x".repeat(MAX_QUEUED_TEXT_BYTES - 3)))
-        );
-        assert_eq!(queue.queued_text_bytes, 0);
+        for (text, remaining) in [
+            ("abc".to_string(), MAX_QUEUED_TEXT_BYTES - 3),
+            ("x".repeat(MAX_QUEUED_TEXT_BYTES - 3), 0),
+        ] {
+            assert_eq!(queue.pop(), Some(TransportEvent::Text(text)));
+            assert_eq!(queue.queued_text_bytes, remaining);
+        }
         assert_eq!(
             queue.pop(),
             Some(TransportEvent::Error(QUEUE_OVERFLOW_ERROR.to_string()))
@@ -171,6 +158,7 @@ mod tests {
         ] {
             let mut queue = EventQueue::default();
             assert_eq!(queue.push(terminal), PushResult::Queued);
+            assert_eq!(queue.overflow(), PushResult::Stopped);
             assert_eq!(
                 queue.push(TransportEvent::Text("late".to_string())),
                 PushResult::Stopped

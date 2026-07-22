@@ -1,6 +1,5 @@
 export {
-  WasmPokerClient,
-  initializePpokerWasm,
+  createPokerClient,
   type ClientError,
   type ClientErrorCode,
   type ClientOptions,
@@ -14,19 +13,12 @@ export {
   type LogLevel,
   type LogSource,
   type Player,
-  type PpokerClientError,
+  type PokerClient,
+  type PokerClientConfig,
+  type PokerClientError,
   type PpokerWasmInitInput,
   type Room,
   type UserType,
   type Vote,
   type VoteData,
-} from "./wasm-client.js";
-
-export {
-  createPokerClientStore,
-  type PokerClientPort,
-  type PokerClientSnapshot,
-  type PokerClientStore,
-  type PokerClientStoreOptions,
-} from "./client-store.js";
-export type { DeepReadonly } from "./readonly.js";
+} from "./poker-client.js";

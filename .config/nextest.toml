@@ -1,5 +1,5 @@
 [[profile.default.overrides]]
-filter = "test(web::client::tests::test_voting_and_chat)"
+filter = "test(web::client::tests::real_upstream_accepts_native_participants)"
 retries = { backoff = "fixed", count = 5, delay = "1s" }
 
 [[profile.default.overrides]]

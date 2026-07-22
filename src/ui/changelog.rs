@@ -1,14 +1,16 @@
+use crate::app::{App, AppResult};
+use crate::ui::changelog::changelog_parser::parse_changelog;
+use crate::ui::{footer_entries, FooterEntry, Page, UIAction, UiPage};
 use crossterm::event::{KeyCode, KeyEvent};
 use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
-use regex::Regex;
-use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::prelude::*;
-use ratatui::widgets::{Paragraph, ScrollDirection, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
+use ratatui::widgets::{
+    Paragraph, ScrollDirection, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+};
+use ratatui::Frame;
+use regex::Regex;
 use semver::Version;
-use crate::app::{App, AppResult};
-use crate::ui::{footer_entries, FooterEntry, Page, UIAction, UiPage};
-use crate::ui::changelog::changelog_parser::parse_changelog;
 
 const CHANGELOG_RAW: &str = include_str!("../../CHANGELOG.md");
 pub struct ChangelogPage {
@@ -24,10 +26,7 @@ impl Page for ChangelogPage {
     fn render(&mut self, app: &mut App, frame: &mut Frame) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Fill(1),
-                Constraint::Length(3),
-            ])
+            .constraints([Constraint::Fill(1), Constraint::Length(3)])
             .split(frame.area());
 
         let primary = chunks[0];
@@ -41,7 +40,9 @@ impl Page for ChangelogPage {
         Ok(match event.code {
             KeyCode::Char('q') => UIAction::Quit,
             KeyCode::Esc => UIAction::ChangeView(UiPage::Voting),
-            KeyCode::Char(c) if c == 'v' || c == '-' || c == 'h' || c.is_ascii_digit() || c == 'u' => {
+            KeyCode::Char(c)
+                if c == 'v' || c == '-' || c == 'h' || c.is_ascii_digit() || c == 'u' =>
+            {
                 UIAction::ChangeView(UiPage::Voting)
             }
             KeyCode::Char('t') => {
@@ -70,7 +71,7 @@ impl Page for ChangelogPage {
                 self.scroll = self.content_length;
                 UIAction::Continue
             }
-            _ => UIAction::Continue
+            _ => UIAction::Continue,
         })
     }
 }
@@ -90,13 +91,36 @@ impl ChangelogPage {
 
     fn render_footer(&mut self, app: &mut App, rect: Rect, frame: &mut Frame) {
         let mut entries = vec![
-            FooterEntry { name: "Vote".to_string(), shortcut: 'V', highlight: app.has_updates },
-            FooterEntry { name: "↑".to_string(), shortcut: '↑', highlight: false },
-            FooterEntry { name: "↓".to_string(), shortcut: '↓', highlight: false },
-            FooterEntry { name: "Quit".to_string(), shortcut: 'Q', highlight: false },
+            FooterEntry {
+                name: "Vote".to_string(),
+                shortcut: 'V',
+                highlight: app.has_updates,
+            },
+            FooterEntry {
+                name: "↑".to_string(),
+                shortcut: '↑',
+                highlight: false,
+            },
+            FooterEntry {
+                name: "↓".to_string(),
+                shortcut: '↓',
+                highlight: false,
+            },
+            FooterEntry {
+                name: "Quit".to_string(),
+                shortcut: 'Q',
+                highlight: false,
+            },
         ];
         if self.version_from.is_some() {
-            entries.insert(3, FooterEntry { name: "Toggle filter".to_string(), shortcut: 'T', highlight: false });
+            entries.insert(
+                3,
+                FooterEntry {
+                    name: "Toggle filter".to_string(),
+                    shortcut: 'T',
+                    highlight: false,
+                },
+            );
         }
 
         let footer = footer_entries(entries);
@@ -106,7 +130,9 @@ impl ChangelogPage {
     fn render_changelog_content(&mut self, _app: &mut App, rect: Rect, frame: &mut Frame) {
         let content_to_parse = self.filter_changelog_by_version();
         let content = self.format_changelog(&content_to_parse, rect.width);
-        let content_length = content.len().saturating_sub(rect.height.saturating_sub(2) as usize);
+        let content_length = content
+            .len()
+            .saturating_sub(rect.height.saturating_sub(2) as usize);
         self.content_length = content_length;
         self.scroll_state = self.scroll_state.content_length(content_length);
 
@@ -120,7 +146,7 @@ impl ChangelogPage {
                 .begin_symbol(Some("↑"))
                 .end_symbol(Some("↓")),
             rect,
-            &mut self.scroll_state
+            &mut self.scroll_state,
         );
     }
 
@@ -147,7 +173,8 @@ impl ChangelogPage {
             return self.changelog_content.to_string();
         }
 
-        sections.iter()
+        sections
+            .iter()
             .map(|section| section.content.clone())
             .collect::<Vec<String>>()
             .join("\n")
@@ -417,34 +444,32 @@ Version 0.3.0 changes
             let filtered_sections = parse_changelog(
                 sample_changelog,
                 &Version::parse("0.4.0").unwrap(),
-                &Version::parse("999.999.999").unwrap()
+                &Version::parse("999.999.999").unwrap(),
             );
 
             assert_eq!(filtered_sections.len(), 1);
-            assert_eq!(filtered_sections[0].version, Version::parse("0.5.0").unwrap());
+            assert_eq!(
+                filtered_sections[0].version,
+                Version::parse("0.5.0").unwrap()
+            );
 
             let all_sections = parse_changelog(
                 sample_changelog,
                 &Version::parse("0.0.0").unwrap(),
-                &Version::parse("999.999.999").unwrap()
+                &Version::parse("999.999.999").unwrap(),
             );
 
             assert_eq!(all_sections.len(), 3);
         }
-
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::tests::create_test_app;
-    use crate::ui::tests::{tick, send_input};
-    use crate::web::client::tests::LocalMockPokerClient;
-    use insta::assert_snapshot;
-    use ratatui::backend::TestBackend;
-    use ratatui::Terminal;
+    use crate::ui::tests::{local_ui, send_input, tick};
     use crossterm::event::KeyCode;
+    use insta::assert_snapshot;
     #[test]
     fn test_parse_changelog_formatting() {
         let page = ChangelogPage {
@@ -479,53 +504,111 @@ mod tests {
 
         assert!(lines.len() > 0, "Expected non-empty lines");
 
-        let heading_line_index = lines.iter().position(|line| {
-            line.spans.iter().any(|span| span.content.contains("0.5.0"))
-        }).expect("Heading line not found");
+        let heading_line_index = lines
+            .iter()
+            .position(|line| line.spans.iter().any(|span| span.content.contains("0.5.0")))
+            .expect("Heading line not found");
 
-        let heading_span = lines[heading_line_index].spans.iter()
+        let heading_span = lines[heading_line_index]
+            .spans
+            .iter()
             .find(|span| span.content.contains("0.5.0"))
             .expect("Heading span not found");
 
-        assert!(heading_span.style.fg.is_some(), "Heading should have foreground color");
-        assert_eq!(heading_span.style.fg.unwrap(), Color::Cyan, "Heading should be cyan");
-        assert!(heading_span.style.add_modifier.contains(Modifier::BOLD), "Heading should be bold");
-        assert!(heading_span.style.add_modifier.contains(Modifier::UNDERLINED), "Heading should be underlined");
+        assert!(
+            heading_span.style.fg.is_some(),
+            "Heading should have foreground color"
+        );
+        assert_eq!(
+            heading_span.style.fg.unwrap(),
+            Color::Cyan,
+            "Heading should be cyan"
+        );
+        assert!(
+            heading_span.style.add_modifier.contains(Modifier::BOLD),
+            "Heading should be bold"
+        );
+        assert!(
+            heading_span
+                .style
+                .add_modifier
+                .contains(Modifier::UNDERLINED),
+            "Heading should be underlined"
+        );
 
-        let features_line_index = lines.iter().position(|line| {
-            line.spans.iter().any(|span| span.content.contains("Features"))
-        }).expect("Features line not found");
+        let features_line_index = lines
+            .iter()
+            .position(|line| {
+                line.spans
+                    .iter()
+                    .any(|span| span.content.contains("Features"))
+            })
+            .expect("Features line not found");
 
-        let features_span = lines[features_line_index].spans.iter()
+        let features_span = lines[features_line_index]
+            .spans
+            .iter()
             .find(|span| span.content.contains("Features"))
             .expect("Features span not found");
 
-        assert!(features_span.style.add_modifier.contains(Modifier::BOLD), "Features should be bold");
+        assert!(
+            features_span.style.add_modifier.contains(Modifier::BOLD),
+            "Features should be bold"
+        );
 
-        let commit_line_index = lines.iter().position(|line| {
-            line.spans.iter().any(|span| span.content.contains("4c823a3"))
-        }).expect("Commit line not found");
+        let commit_line_index = lines
+            .iter()
+            .position(|line| {
+                line.spans
+                    .iter()
+                    .any(|span| span.content.contains("4c823a3"))
+            })
+            .expect("Commit line not found");
 
-        let commit_span = lines[commit_line_index].spans.iter()
+        let commit_span = lines[commit_line_index]
+            .spans
+            .iter()
             .find(|span| span.content.contains("4c823a3"))
             .expect("Commit span not found");
 
-        assert!(commit_span.style.fg.is_some(), "Commit hash should have foreground color");
-        assert_eq!(commit_span.style.fg.unwrap(), Color::Yellow, "Commit hash should be yellow");
+        assert!(
+            commit_span.style.fg.is_some(),
+            "Commit hash should have foreground color"
+        );
+        assert_eq!(
+            commit_span.style.fg.unwrap(),
+            Color::Yellow,
+            "Commit hash should be yellow"
+        );
 
-        let strong_line_index = lines.iter().position(|line| {
-            line.spans.iter().any(|span| span.content.contains("ui:"))
-        }).expect("Strong text line not found");
+        let strong_line_index = lines
+            .iter()
+            .position(|line| line.spans.iter().any(|span| span.content.contains("ui:")))
+            .expect("Strong text line not found");
 
-        let strong_span = lines[strong_line_index].spans.iter()
+        let strong_span = lines[strong_line_index]
+            .spans
+            .iter()
             .find(|span| span.content.contains("ui:"))
             .expect("Strong span not found");
 
-        assert!(strong_span.style.add_modifier.contains(Modifier::BOLD), "Strong text should be bold");
+        assert!(
+            strong_span.style.add_modifier.contains(Modifier::BOLD),
+            "Strong text should be bold"
+        );
 
         let last_line = lines.last().expect("No last line found");
-        assert!(last_line.spans[0].content.contains("─"), "Last line should be a separator");
-        assert!(last_line.spans[0].style.add_modifier.contains(Modifier::DIM), "Separator should be dim");
+        assert!(
+            last_line.spans[0].content.contains("─"),
+            "Last line should be a separator"
+        );
+        assert!(
+            last_line.spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::DIM),
+            "Separator should be dim"
+        );
     }
 
     #[test]
@@ -540,7 +623,7 @@ mod tests {
 * Fix 2
 "#;
 
-        let mut page = ChangelogPage {
+        let page = ChangelogPage {
             scroll_state: ScrollbarState::default(),
             scroll: 0,
             content_length: 0,
@@ -548,8 +631,7 @@ mod tests {
             filter_version: false,
             changelog_content: mock_changelog,
         };
-        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
-        let mut terminal = Terminal::new(TestBackend::new(80, 30)).unwrap();
+        let (mut page, mut app, mut terminal) = local_ui(page, (80, 30));
         tick(&mut terminal, &mut page, &mut app);
 
         assert_snapshot!("changelog_page", terminal.backend());
@@ -591,7 +673,7 @@ mod tests {
 * Another Fix 3
 "#;
 
-        let mut page = ChangelogPage {
+        let page = ChangelogPage {
             scroll_state: ScrollbarState::default(),
             scroll: 0,
             content_length: 0,
@@ -599,8 +681,7 @@ mod tests {
             filter_version: false,
             changelog_content: mock_changelog,
         };
-        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
-        let mut terminal = Terminal::new(TestBackend::new(80, 30)).unwrap();
+        let (mut page, mut app, mut terminal) = local_ui(page, (80, 30));
 
         tick(&mut terminal, &mut page, &mut app);
         assert_snapshot!("changelog_filtering_full", terminal.backend());
@@ -675,7 +756,7 @@ mod tests {
 * More Fix 5
 "#;
 
-        let mut page = ChangelogPage {
+        let page = ChangelogPage {
             scroll_state: ScrollbarState::default(),
             scroll: 0,
             content_length: 0,
@@ -683,8 +764,7 @@ mod tests {
             filter_version: false,
             changelog_content: large_mock_changelog,
         };
-        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
-        let mut terminal = Terminal::new(TestBackend::new(80, 30)).unwrap();
+        let (mut page, mut app, mut terminal) = local_ui(page, (80, 30));
 
         tick(&mut terminal, &mut page, &mut app);
         assert_snapshot!("changelog_scrolling_initial", terminal.backend());

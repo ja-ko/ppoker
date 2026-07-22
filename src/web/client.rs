@@ -2,15 +2,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use log::{error, info};
-use ppoker_core::client::{Clock, Session, WebPokerClient};
+use ppoker_core::client::{Client, Clock, Transport};
 use snafu::Snafu;
 
 use crate::app::AppResult;
 use crate::config::Config;
 use crate::web::client::ClientError::ServerUpdateMissing;
 use crate::web::ws::PokerSocket;
-
-pub use ppoker_core::client::PokerClient;
 
 #[derive(Debug, Snafu)]
 pub enum ClientError {
@@ -36,20 +34,28 @@ impl Clock for NativeClock {
     }
 }
 
-pub fn connect(config: &Config) -> AppResult<Session<Box<dyn PokerClient>>> {
-    let mut result = WebPokerClient::new();
-    result.connect(Box::new(PokerSocket::connect(config)?))?;
+pub fn connect(config: &Config) -> AppResult<Client> {
+    wait_for_initial_room(
+        config.name.clone(),
+        Box::new(PokerSocket::connect(config)?),
+        thread::sleep,
+    )
+}
+
+fn wait_for_initial_room(
+    name: String,
+    transport: Box<dyn Transport>,
+    mut wait: impl FnMut(Duration),
+) -> AppResult<Client> {
+    let mut client = Client::new(name, std::rc::Rc::new(NativeClock::new()));
+    client.connect(transport)?;
     for i in 0..20 {
-        if let Some(snapshot) = result.get_update()? {
+        client.poll_next_room()?;
+        if client.room().is_some() {
             info!("Got initial room state with delay {}ms.", i * 20);
-            return Ok(Session::with_room_snapshot(
-                Box::new(result),
-                config.name.clone(),
-                std::rc::Rc::new(NativeClock::new()),
-                snapshot,
-            ));
+            return Ok(client);
         } else {
-            thread::sleep(Duration::from_millis(20));
+            wait(Duration::from_millis(20));
         }
     }
 
@@ -59,590 +65,596 @@ pub fn connect(config: &Config) -> AppResult<Session<Box<dyn PokerClient>>> {
 
 #[cfg(test)]
 pub mod tests {
-    use super::{connect, NativeClock, PokerClient};
+    use super::{connect, wait_for_initial_room};
+    use crate::app::tests::create_test_app;
+    use crate::app::{test_room_event, test_snapshot_event, App};
     use crate::config::Config;
-    use crate::models::{GamePhase, LogLevel, Player, Room, UserType, Vote, VoteData};
-    use ppoker_core::client::{ClientResult, Session};
-    use ppoker_core::protocol::{decode_room_snapshot, RoomSnapshot, ServerLogEntry};
+    use crate::models::{GamePhase, LogLevel, LogSource, Player, Room, UserType, Vote, VoteData};
+    use ppoker_core::client::{Client, Transport, TransportEvent};
+    use ppoker_core::protocol::{RoomSnapshot, ServerLogEntry};
+    use std::cell::RefCell;
     use std::collections::HashMap;
+    use std::collections::VecDeque;
     use std::rc::Rc;
+    use std::sync::mpsc::{self, RecvTimeoutError};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    const LIVE_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(12);
+
+    #[derive(Debug, serde::Deserialize, PartialEq, Eq)]
+    #[serde(tag = "requestType")]
+    enum TestClientRequest {
+        PlayCard {
+            #[serde(rename = "cardValue")]
+            card_value: Option<String>,
+        },
+        ChangeName {
+            name: String,
+        },
+        ChatMessage {
+            message: String,
+        },
+        RevealCards,
+        StartNewRound,
+    }
+
+    fn decode_client_request(message: &str) -> Result<TestClientRequest, serde_json::Error> {
+        serde_json::from_str(message)
+    }
+
+    #[derive(Default)]
+    struct BufferedTransportState {
+        events: VecDeque<TransportEvent>,
+        closes: usize,
+    }
+
+    struct BufferedTransport(Rc<RefCell<BufferedTransportState>>);
+
+    impl Transport for BufferedTransport {
+        fn poll_event(&mut self) -> Option<TransportEvent> {
+            self.0.borrow_mut().events.pop_front()
+        }
+
+        fn send_text(&mut self, _message: String) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn close(&mut self) {
+            self.0.borrow_mut().closes += 1;
+        }
+    }
+
+    fn room_event(phase: GamePhase, vote: Vote) -> TransportEvent {
+        room_with_players_event(phase, vec![player("Alice", vote, true)])
+    }
+
+    fn player(name: &str, vote: Vote, is_you: bool) -> Player {
+        Player {
+            name: name.to_string(),
+            vote,
+            is_you,
+            user_type: UserType::Player,
+        }
+    }
+
+    fn two_player_event(own_vote: Vote, other_vote: Vote) -> TransportEvent {
+        room_with_players_event(
+            GamePhase::Playing,
+            vec![
+                player("Alice", own_vote, true),
+                player("Bob", other_vote, false),
+            ],
+        )
+    }
+
+    fn room_with_players_event(phase: GamePhase, players: Vec<Player>) -> TransportEvent {
+        test_room_event(Room {
+            name: "startup-room".to_string(),
+            deck: vec!["5".to_string()],
+            phase,
+            players,
+        })
+    }
+
+    fn buffered_startup(
+        events: impl IntoIterator<Item = TransportEvent>,
+    ) -> (Client, Rc<RefCell<BufferedTransportState>>) {
+        let state = Rc::new(RefCell::new(BufferedTransportState {
+            events: events.into_iter().collect(),
+            ..BufferedTransportState::default()
+        }));
+        let client = wait_for_initial_room(
+            "Alice".to_string(),
+            Box::new(BufferedTransport(state.clone())),
+            |_| {},
+        )
+        .unwrap();
+        (client, state)
+    }
+
+    #[test]
+    fn startup_stops_at_first_room_and_leaves_every_later_event_buffered() {
+        for tail in [
+            room_event(GamePhase::Revealed, Vote::Revealed(VoteData::Number(5))),
+            TransportEvent::Closed,
+            TransportEvent::Error("startup transport failed".to_string()),
+        ] {
+            let (client, state) = buffered_startup([
+                TransportEvent::Opened,
+                room_event(GamePhase::Playing, Vote::Missing),
+                tail,
+            ]);
+            assert_eq!(client.room().unwrap().phase, GamePhase::Playing);
+            assert!(client.history().is_empty());
+            assert_eq!(state.borrow().events.len(), 1);
+        }
+    }
+
+    #[test]
+    fn app_processes_post_startup_notification_and_auto_reveal_transitions_in_order() {
+        let (client, _) = buffered_startup([
+            TransportEvent::Opened,
+            two_player_event(Vote::Missing, Vote::Missing),
+            two_player_event(Vote::Missing, Vote::Hidden),
+            two_player_event(Vote::Revealed(VoteData::Number(5)), Vote::Hidden),
+        ]);
+        let mut config = Config::default();
+        config.disable_auto_reveal = false;
+        let mut app = App::from_client(config, client);
+
+        app.update().unwrap();
+
+        assert!(app.has_updates);
+        assert!(app.auto_reveal_at.is_some());
+        assert!(app
+            .activity_log()
+            .iter()
+            .any(|entry| entry.message == "Your vote is the last one missing."));
+        assert_eq!(app.own_vote(), &Some(VoteData::Number(5)));
+    }
+
+    #[test]
+    fn startup_wait_remains_bounded_when_no_room_arrives() {
+        let state = Rc::new(RefCell::new(BufferedTransportState::default()));
+        let waits = Rc::new(RefCell::new(vec![]));
+        let recorded_waits = waits.clone();
+
+        let error = wait_for_initial_room(
+            "Alice".to_string(),
+            Box::new(BufferedTransport(state.clone())),
+            move |duration| recorded_waits.borrow_mut().push(duration),
+        )
+        .err()
+        .expect("startup without a room should time out");
+
+        assert_eq!(
+            error.to_string(),
+            "Server did not send room update in time."
+        );
+        assert_eq!(waits.borrow().as_slice(), [Duration::from_millis(20); 20]);
+        assert_eq!(state.borrow().closes, 1);
+    }
 
     #[derive(Debug, Clone)]
     struct LocalUser {
         name: String,
-        vote_state: Vote,
         actual_vote: Option<String>,
-        is_spectator: bool,
+        user_type: UserType,
+    }
+
+    impl LocalUser {
+        fn new(name: &str, user_type: UserType) -> Self {
+            Self {
+                name: name.to_string(),
+                actual_vote: None,
+                user_type,
+            }
+        }
+
+        fn participant(&self, is_you: bool, cards_revealed: bool) -> Player {
+            let vote = match &self.actual_vote {
+                Some(value) if is_you || cards_revealed => Vote::Revealed(
+                    value
+                        .parse::<u8>()
+                        .map(VoteData::Number)
+                        .unwrap_or_else(|_| VoteData::Special(value.clone())),
+                ),
+                Some(_) => Vote::Hidden,
+                None => Vote::Missing,
+            };
+            Player {
+                name: self.name.clone(),
+                vote,
+                is_you,
+                user_type: self.user_type.clone(),
+            }
+        }
     }
 
     #[derive(Debug)]
-    pub struct LocalMockPokerClient {
+    struct LocalServer {
         current_user: LocalUser,
         other_users: HashMap<String, LocalUser>,
         cards_revealed: bool,
-        pending_updates: Vec<Room>,
+        pending_updates: VecDeque<Room>,
         log_entries: Vec<ServerLogEntry>,
         next_user_id: u32,
+        opened_pending: bool,
     }
 
-    impl LocalMockPokerClient {
-        pub fn add_spectator(&mut self, username: &str) -> String {
-            let user_id = format!("user_{}", self.next_user_id);
-            self.next_user_id += 1;
-
-            let user = LocalUser {
-                name: username.to_string(),
-                vote_state: Vote::Missing,
-                actual_vote: None,
-                is_spectator: true,
+    impl LocalServer {
+        fn new(username: &str) -> Self {
+            let mut server = Self {
+                current_user: LocalUser::new(username, UserType::Player),
+                other_users: HashMap::new(),
+                cards_revealed: false,
+                pending_updates: VecDeque::new(),
+                log_entries: Vec::new(),
+                next_user_id: 1,
+                opened_pending: true,
             };
+            server.commit(format!("{username} joined the room"));
+            server
+        }
 
-            self.other_users.insert(user_id.clone(), user);
-            self.add_log_entry(&format!("{} joined as spectator", username));
-            self.queue_room_update();
-
+        fn add_participant(&mut self, name: &str, user_type: UserType) -> String {
+            let spectator = user_type == UserType::Spectator;
+            let separator = if spectator { '_' } else { '-' };
+            let user_id = format!("user{separator}{}", self.next_user_id);
+            self.next_user_id += 1;
+            self.other_users
+                .insert(user_id.clone(), LocalUser::new(name, user_type));
+            let suffix = if spectator {
+                " joined as spectator"
+            } else {
+                " joined the room"
+            };
+            self.commit(format!("{name}{suffix}"));
             user_id
         }
 
-        pub fn new(username: &str) -> Self {
-            let current_user = LocalUser {
-                name: username.to_string(),
-                vote_state: Vote::Missing,
-                actual_vote: None,
-                is_spectator: false,
-            };
-
-            let mut client = Self {
-                current_user,
-                other_users: HashMap::new(),
-                cards_revealed: false,
-                pending_updates: Vec::new(),
-                log_entries: Vec::new(),
-                next_user_id: 1,
-            };
-
-            // Create initial room state
-            client.add_log_entry(&format!("{} joined the room", username));
-            client.queue_room_update();
-
-            client
+        fn add_spectator(&mut self, username: &str) -> String {
+            self.add_participant(username, UserType::Spectator)
         }
 
-        fn add_log_entry(&mut self, message: &str) {
-            let entry = ServerLogEntry {
+        fn add_user(&mut self, name: &str) -> String {
+            self.add_participant(name, UserType::Player)
+        }
+
+        fn commit(&mut self, message: String) {
+            self.log_entries.push(ServerLogEntry {
                 level: LogLevel::Info,
-                message: message.to_string(),
+                message,
                 server_index: self.log_entries.len() as u32,
-            };
-            self.log_entries.push(entry);
+            });
+            self.queue_room_update();
         }
 
         fn queue_room_update(&mut self) {
-            let mut players = vec![Player {
-                name: self.current_user.name.clone(),
-                vote: if let Some(vote) = &self.current_user.actual_vote {
-                    // For current user, always show their own vote if they have one
-                    Vote::Revealed(if let Ok(num) = vote.parse::<u8>() {
-                        VoteData::Number(num)
-                    } else {
-                        VoteData::Special(vote.to_string())
-                    })
-                } else {
-                    self.current_user.vote_state.clone()
-                },
-                is_you: true,
-                user_type: if self.current_user.is_spectator {
-                    UserType::Spectator
-                } else {
-                    UserType::Player
-                },
-            }];
-
-            for user in self.other_users.values() {
-                let vote = if self.cards_revealed {
-                    if let Some(vote) = &user.actual_vote {
-                        Vote::Revealed(if let Ok(num) = vote.parse::<u8>() {
-                            VoteData::Number(num)
-                        } else {
-                            VoteData::Special(vote.to_string())
-                        })
-                    } else {
-                        Vote::Missing
-                    }
-                } else {
-                    user.vote_state.clone()
-                };
-
-                players.push(Player {
-                    name: user.name.clone(),
-                    vote,
-                    is_you: false,
-                    user_type: if user.is_spectator {
-                        UserType::Spectator
-                    } else {
-                        UserType::Player
-                    },
-                });
-            }
-
-            // Sort players so spectators appear after players
+            let mut players = vec![self.current_user.participant(true, self.cards_revealed)];
+            players.extend(
+                self.other_users
+                    .values()
+                    .map(|user| user.participant(false, self.cards_revealed)),
+            );
             players.sort_by_key(|p| match p.user_type {
                 UserType::Player => 0,
                 UserType::Spectator => 1,
                 UserType::Unknown => 2,
             });
-
-            let room = Room {
+            self.pending_updates.push_back(Room {
                 name: "Planning Room".to_string(),
-                deck: vec![
-                    "0".to_string(),
-                    "1".to_string(),
-                    "2".to_string(),
-                    "3".to_string(),
-                    "5".to_string(),
-                    "8".to_string(),
-                    "13".to_string(),
-                    "21".to_string(),
-                    "?".to_string(),
-                ],
+                deck: ["0", "1", "2", "3", "5", "8", "13", "21", "?"]
+                    .map(str::to_string)
+                    .to_vec(),
                 phase: if self.cards_revealed {
                     GamePhase::Revealed
                 } else {
                     GamePhase::Playing
                 },
                 players,
-            };
-
-            self.pending_updates.push(room);
+            });
         }
 
-        // Methods to simulate other users' actions
-        pub fn add_user(&mut self, name: &str) -> String {
-            let id = format!("user-{}", self.next_user_id);
-            self.next_user_id += 1;
-
-            let user = LocalUser {
-                name: name.to_string(),
-                vote_state: Vote::Missing,
-                actual_vote: None,
-                is_spectator: false,
-            };
-
-            self.other_users.insert(id.clone(), user);
-            self.add_log_entry(&format!("{} joined the room", name));
-            self.queue_room_update();
-            id
-        }
-
-        #[allow(dead_code)]
-        pub fn remove_user(&mut self, user_id: &str) {
-            if let Some(user) = self.other_users.remove(user_id) {
-                self.add_log_entry(&format!("{} left the room", user.name));
-                self.queue_room_update();
-            }
-        }
-
-        pub fn user_vote(&mut self, user_id: &str, card_value: Option<&str>) {
+        fn user_vote(&mut self, user_id: &str, card_value: Option<&str>) {
             if let Some(user) = self.other_users.get_mut(user_id) {
                 let name = user.name.clone();
-                user.vote_state = match card_value {
-                    Some(value) => {
-                        user.actual_vote = Some(value.to_string());
-                        Vote::Hidden
-                    }
-                    None => {
-                        user.actual_vote = None;
-                        Vote::Missing
-                    }
+                user.actual_vote = card_value.map(str::to_string);
+                let action = if card_value.is_some() {
+                    "played a card"
+                } else {
+                    "removed their card"
                 };
-                match &user.vote_state {
-                    Vote::Hidden => self.add_log_entry(&format!("{} played a card", name)),
-                    Vote::Missing => self.add_log_entry(&format!("{} removed their card", name)),
-                    Vote::Revealed(_) => (), // Already revealed, no new log needed
-                };
-                self.queue_room_update();
+                self.commit(format!("{name} {action}"));
             }
         }
 
-        pub fn user_change_name(&mut self, user_id: &str, new_name: &str) {
-            if let Some(user) = self.other_users.get_mut(user_id) {
-                let old_name = user.name.clone();
-                user.name = new_name.to_string();
-                self.add_log_entry(&format!("{} changed their name to {}", old_name, new_name));
-                self.queue_room_update();
-            }
-        }
-    }
-
-    impl PokerClient for LocalMockPokerClient {
-        fn ensure_ready(&self) -> ClientResult<()> {
-            Ok(())
-        }
-
-        fn get_updates(&mut self) -> ClientResult<Vec<RoomSnapshot>> {
-            let rooms = std::mem::take(&mut self.pending_updates);
-            Ok(rooms
-                .into_iter()
-                .map(|room| RoomSnapshot {
-                    room,
-                    log: self.log_entries.clone(),
-                })
-                .collect())
-        }
-
-        fn vote(&mut self, card_value: &str) -> ClientResult<()> {
+        fn vote(&mut self, card_value: &str) {
             let name = self.current_user.name.clone();
             self.current_user.actual_vote = Some(card_value.to_string());
-            self.current_user.vote_state = Vote::Hidden;
-            self.add_log_entry(&format!("{} played a card", name));
-            self.queue_room_update();
-            Ok(())
+            self.commit(format!("{name} played a card"));
         }
 
-        fn retract_vote(&mut self) -> ClientResult<()> {
+        fn retract_vote(&mut self) {
             let name = self.current_user.name.clone();
             self.current_user.actual_vote = None;
-            self.current_user.vote_state = Vote::Missing;
-            self.add_log_entry(&format!("{} removed their card", name));
-            self.queue_room_update();
-            Ok(())
+            self.commit(format!("{name} removed their card"));
         }
 
-        fn change_name(&mut self, name: &str) -> ClientResult<()> {
+        fn change_name(&mut self, name: &str) {
             let old_name = self.current_user.name.clone();
             self.current_user.name = name.to_string();
-            self.add_log_entry(&format!("{} changed their name to {}", old_name, name));
-            self.queue_room_update();
-            Ok(())
+            self.commit(format!("{old_name} changed their name to {name}"));
         }
 
-        fn chat(&mut self, message: &str) -> ClientResult<()> {
-            self.add_log_entry(&format!("{}: {}", self.current_user.name, message));
-            self.queue_room_update();
-            Ok(())
+        fn chat(&mut self, message: &str) {
+            self.commit(format!("{}: {message}", self.current_user.name));
         }
 
-        fn reveal(&mut self) -> ClientResult<()> {
+        fn reveal(&mut self) {
             if !self.cards_revealed {
                 self.cards_revealed = true;
-
-                self.add_log_entry(&format!("{} revealed all cards", self.current_user.name));
-                self.queue_room_update();
+                self.commit(format!("{} revealed all cards", self.current_user.name));
             }
-            Ok(())
         }
 
-        fn reset(&mut self) -> ClientResult<()> {
+        fn reset(&mut self) {
             self.cards_revealed = false;
-            // Clear all votes
-            self.current_user.vote_state = Vote::Missing;
             self.current_user.actual_vote = None;
             for user in self.other_users.values_mut() {
-                user.vote_state = Vote::Missing;
                 user.actual_vote = None;
             }
-            self.add_log_entry(&format!("{} started a new round", self.current_user.name));
-            self.queue_room_update();
+            self.commit(format!("{} started a new round", self.current_user.name));
+        }
+    }
+
+    #[derive(Clone)]
+    pub struct LocalTestTransport(Rc<RefCell<LocalServer>>);
+
+    impl LocalTestTransport {
+        pub fn new(username: &str) -> Self {
+            Self(Rc::new(RefCell::new(LocalServer::new(username))))
+        }
+
+        pub fn add_spectator(&self, username: &str) -> String {
+            self.0.borrow_mut().add_spectator(username)
+        }
+
+        pub fn add_user(&self, name: &str) -> String {
+            self.0.borrow_mut().add_user(name)
+        }
+
+        pub fn user_vote(&self, user_id: &str, card_value: Option<&str>) {
+            self.0.borrow_mut().user_vote(user_id, card_value);
+        }
+    }
+
+    impl Transport for LocalTestTransport {
+        fn poll_event(&mut self) -> Option<TransportEvent> {
+            let mut server = self.0.borrow_mut();
+            if server.opened_pending {
+                server.opened_pending = false;
+                return Some(TransportEvent::Opened);
+            }
+            let room = server.pending_updates.pop_front()?;
+            Some(test_snapshot_event(RoomSnapshot {
+                room,
+                log: server.log_entries.clone(),
+            }))
+        }
+
+        fn send_text(&mut self, message: String) -> Result<(), String> {
+            let request = decode_client_request(&message)
+                .map_err(|error| format!("Invalid local test request: {error}"))?;
+            let mut server = self.0.borrow_mut();
+            match request {
+                TestClientRequest::PlayCard {
+                    card_value: Some(value),
+                } => server.vote(&value),
+                TestClientRequest::PlayCard { card_value: None } => server.retract_vote(),
+                TestClientRequest::ChangeName { name } => server.change_name(&name),
+                TestClientRequest::ChatMessage { message } => server.chat(&message),
+                TestClientRequest::RevealCards => server.reveal(),
+                TestClientRequest::StartNewRound => server.reset(),
+            }
             Ok(())
         }
 
         fn close(&mut self) {}
     }
 
-    struct SnapshotPokerClient(Vec<RoomSnapshot>);
+    #[test]
+    fn local_transport_and_app_commit_escaped_rename_and_chat_authoritatively() {
+        let mut app = create_test_app(Box::new(LocalTestTransport::new("Alice")));
+        let name = "Ålice \"quoted\"\n東京";
+        let message = "line \"two\"\n世界 ☕";
 
-    impl PokerClient for SnapshotPokerClient {
-        fn ensure_ready(&self) -> ClientResult<()> {
-            Ok(())
-        }
+        app.rename(name.to_string()).unwrap();
+        app.chat(message.to_string()).unwrap();
+        assert_eq!(app.name(), "Test User");
+        assert!(!app
+            .activity_log()
+            .iter()
+            .any(|entry| entry.message.contains(message)));
 
-        fn get_updates(&mut self) -> ClientResult<Vec<RoomSnapshot>> {
-            Ok(std::mem::take(&mut self.0))
-        }
-
-        fn vote(&mut self, _card_value: &str) -> ClientResult<()> {
-            unreachable!()
-        }
-
-        fn retract_vote(&mut self) -> ClientResult<()> {
-            unreachable!()
-        }
-
-        fn change_name(&mut self, _name: &str) -> ClientResult<()> {
-            unreachable!()
-        }
-
-        fn chat(&mut self, _message: &str) -> ClientResult<()> {
-            unreachable!()
-        }
-
-        fn reveal(&mut self) -> ClientResult<()> {
-            unreachable!()
-        }
-
-        fn reset(&mut self) -> ClientResult<()> {
-            unreachable!()
-        }
-
-        fn close(&mut self) {}
+        app.update().unwrap();
+        assert_eq!(app.name(), name);
+        let log = app.activity_log();
+        assert!(log
+            .iter()
+            .any(|entry| entry.message == format!("Alice changed their name to {name}")));
+        assert!(log
+            .iter()
+            .any(|entry| entry.message == format!("{name}: {message}")));
     }
 
-    #[test]
-    fn unknown_log_level_does_not_collide_with_an_appended_log() {
-        let initial = decode_room_snapshot(
-            r#"{
-                "roomId":"log-room",
-                "deck":[],
-                "gamePhase":"PLAYING",
-                "users":[],
-                "average":"0",
-                "log":[
-                    {"level":"INFO","message":"first"},
-                    {"level":"FUTURE_LEVEL","message":"unknown"},
-                    {"level":"CHAT","message":"third"}
-                ]
-            }"#,
-        )
-        .unwrap();
-        let appended = decode_room_snapshot(
-            r#"{
-                "roomId":"log-room",
-                "deck":[],
-                "gamePhase":"PLAYING",
-                "users":[],
-                "average":"0",
-                "log":[
-                    {"level":"INFO","message":"first"},
-                    {"level":"FUTURE_LEVEL","message":"unknown"},
-                    {"level":"CHAT","message":"third"},
-                    {"level":"INFO","message":"appended"}
-                ]
-            }"#,
-        )
-        .unwrap();
-        let mut session = Session::new(
-            SnapshotPokerClient(vec![initial, appended]),
-            "Alice".to_string(),
-            Rc::new(NativeClock::new()),
-        );
-        session.update().unwrap();
+    fn run_live_native_attempt(mut config: Config) -> Result<(), String> {
+        let room_name = config.room.clone();
+        let participant_prefix = config.name.clone();
+        let first_name = format!("{participant_prefix}-first");
+        let second_name = format!("{participant_prefix}-second");
+        let chat_message = format!("authoritative-chat-{participant_prefix}");
+        config.name.clone_from(&first_name);
+        let mut second_config = config.clone();
+        second_config.name.clone_from(&second_name);
 
-        assert_eq!(
-            session
-                .log()
-                .iter()
-                .map(|entry| (entry.server_index, entry.message.as_str()))
-                .collect::<Vec<_>>(),
-            [
-                (Some(0), "first"),
-                (Some(2), "third"),
-                (Some(3), "appended")
-            ]
-        );
-    }
-
-    #[test]
-    fn test_mocked_voting_scenario() {
-        let mut client = LocalMockPokerClient::new("Alice");
-
-        // Add Bob
-        let bob_id = client.add_user("Bob");
-
-        // Alice votes a number
-        client.vote("5").unwrap();
-
-        // Bob votes special
-        client.user_vote(&bob_id, Some("?"));
-
-        // Get updates and verify initial state
-        let rooms = client.get_updates().unwrap();
-        let latest_room = &rooms.last().unwrap().room;
-
-        assert_eq!(latest_room.players.len(), 2);
-
-        // Alice should see her own vote as revealed, but Bob's should be hidden
-        assert!(matches!(
-            &latest_room.players[0].vote,
-            Vote::Revealed(VoteData::Number(5))
-        )); // Alice sees her vote
-        assert!(matches!(&latest_room.players[1].vote, Vote::Hidden)); // Bob's vote is hidden
-
-        // Reveal cards
-        client.reveal().unwrap();
-
-        // Get updates and verify revealed votes
-        let rooms = client.get_updates().unwrap();
-        let latest_room = &rooms.last().unwrap().room;
-
-        // Both votes should be revealed now
-        assert!(matches!(
-            &latest_room.players[0].vote,
-            Vote::Revealed(VoteData::Number(5))
-        )); // Alice's vote
-        assert!(
-            matches!(&latest_room.players[1].vote, Vote::Revealed(VoteData::Special(s)) if s == "?")
-        ); // Bob's actual vote
-
-        // Start new round
-        client.reset().unwrap();
-
-        // Get updates and verify votes are cleared
-        let rooms = client.get_updates().unwrap();
-        let latest_room = &rooms.last().unwrap().room;
-
-        assert!(matches!(&latest_room.players[0].vote, Vote::Missing)); // Alice's vote cleared
-        assert!(matches!(&latest_room.players[1].vote, Vote::Missing)); // Bob's vote cleared
-    }
-
-    #[test]
-    fn test_moked_vote_changes() {
-        let mut client = LocalMockPokerClient::new("Alice");
-
-        // Add Bob
-        let bob_id = client.add_user("Bob");
-
-        // Alice votes "5"
-        client.vote("5").unwrap();
-
-        // Bob votes "8"
-        client.user_vote(&bob_id, Some("8"));
-
-        // Check initial state
-        let rooms = client.get_updates().unwrap();
-        let room = &rooms.last().unwrap().room;
-        assert!(matches!(
-            &room.players[0].vote,
-            Vote::Revealed(VoteData::Number(5))
-        )); // Alice sees her vote
-        assert!(matches!(&room.players[1].vote, Vote::Hidden)); // Bob's vote is hidden
-
-        // Alice changes vote to "13"
-        client.vote("13").unwrap();
-
-        // Check updated state
-        let rooms = client.get_updates().unwrap();
-        let room = &rooms.last().unwrap().room;
-        assert!(matches!(
-            &room.players[0].vote,
-            Vote::Revealed(VoteData::Number(13))
-        )); // Alice's new vote
-        assert!(matches!(&room.players[1].vote, Vote::Hidden)); // Bob's vote still hidden
-
-        // Reveal cards
-        client.reveal().unwrap();
-
-        // Check final state
-        let rooms = client.get_updates().unwrap();
-        let room = &rooms.last().unwrap().room;
-        assert!(matches!(
-            &room.players[0].vote,
-            Vote::Revealed(VoteData::Number(13))
-        )); // Alice's final vote
-        assert!(matches!(
-            &room.players[1].vote,
-            Vote::Revealed(VoteData::Number(8))
-        )); // Bob's revealed vote
-    }
-
-    #[test]
-    fn test_chat_scenario() {
-        let mut client = LocalMockPokerClient::new("Alice");
-
-        // Add Bob
-        let bob_id = client.add_user("Bob");
-
-        // Alice sends a message
-        client.chat("Hello everyone!").unwrap();
-
-        // Bob changes name
-        client.user_change_name(&bob_id, "Bobby");
-
-        // Get updates and verify logs
-        let updates = client.get_updates().unwrap();
-        let logs = &updates.last().unwrap().log;
-
-        // Should contain 3 messages: join, chat, name change
-        assert_eq!(logs.len(), 4);
-        assert_eq!(logs[0].message, "Alice joined the room");
-        assert_eq!(logs[1].message, "Bob joined the room");
-        assert_eq!(logs[2].message, "Alice: Hello everyone!");
-        assert_eq!(logs[3].message, "Bob changed their name to Bobby");
-    }
-
-    #[test]
-    fn test_voting_and_chat() {
-        let config = Config::default();
-        let mut client1 = connect(&config).expect("Failed to create client 1");
-        let mut client2 = connect(&config).expect("Failed to create client 2");
-
-        // Let's have client1 vote and send a chat message
-        client1.vote("5").expect("Failed to vote");
+        let mut client1 = App::new(config)
+            .map_err(|error| format!("first participant connection failed: {error}"))?;
+        let mut client2 = connect(&second_config)
+            .map_err(|error| format!("second participant connection failed: {error}"))?;
         client1
-            .chat("Hello from client 1!".to_string())
-            .expect("Failed to send chat");
-        // Work around a race condition in the server.
-        thread::sleep(Duration::from_millis(10));
-        // Client2 votes as well
-        client2.vote("3").expect("Failed to vote");
-
-        // Small delay to ensure messages are processed
-        thread::sleep(Duration::from_millis(250));
-
-        // Get updates for both clients
+            .vote("5")
+            .map_err(|error| format!("first participant vote failed: {error}"))?;
         client1
-            .update()
-            .expect("Failed to get updates for client 1");
+            .chat(chat_message.clone())
+            .map_err(|error| format!("first participant chat failed: {error}"))?;
+        thread::sleep(Duration::from_millis(25));
         client2
-            .update()
-            .expect("Failed to get updates for client 2");
+            .vote("3")
+            .map_err(|error| format!("second participant vote failed: {error}"))?;
 
-        // Check room state - use the last update as it represents the final state
-        let room = client1.room().expect("Expected a room1 update");
-        let room2 = client2.room().expect("Expected a room2 update");
-        assert_eq!(room.players.len(), 2, "Expected 2 users in the room");
+        let deadline = Instant::now() + Duration::from_secs(4);
+        loop {
+            client1
+                .update()
+                .map_err(|error| format!("first participant poll failed: {error}"))?;
+            client2
+                .poll()
+                .map_err(|error| format!("second participant poll failed: {error}"))?;
 
-        // Find client1's vote
-        let client1_user = room
-            .players
-            .iter()
-            .find(|u| u.is_you)
-            .expect("Couldn't find self in players");
-        assert_eq!(
-            client1_user.vote,
-            Vote::Revealed(VoteData::Number(5)),
-            "Client 1's vote not correctly reflected"
+            let first_room = client1.room();
+            let second_room = client2
+                .room()
+                .ok_or_else(|| "second participant has no room snapshot".to_string())?;
+            let first_room_confirmed = first_room.name == room_name;
+            let second_room_confirmed = second_room.name == room_name;
+            let first_vote_confirmed = first_room.players.iter().any(|player| {
+                player.is_you
+                    && player.name == first_name
+                    && player.vote == Vote::Revealed(VoteData::Number(5))
+            });
+            let second_vote_confirmed = second_room.players.iter().any(|player| {
+                player.is_you
+                    && player.name == second_name
+                    && player.vote == Vote::Revealed(VoteData::Number(3))
+            });
+            let expected_chat = format!("[{first_name}]: {chat_message}");
+            let chat_confirmed = client1
+                .activity_log()
+                .iter()
+                .any(|entry| entry.source == LogSource::Server && entry.message == expected_chat);
+            let first_players_confirmed = first_room.players.len() == 2
+                && first_room
+                    .players
+                    .iter()
+                    .any(|player| !player.is_you && player.name == second_name);
+            let second_players_confirmed = second_room.players.len() == 2
+                && second_room
+                    .players
+                    .iter()
+                    .any(|player| !player.is_you && player.name == first_name);
+
+            if first_room_confirmed
+                && second_room_confirmed
+                && first_players_confirmed
+                && second_players_confirmed
+                && first_vote_confirmed
+                && second_vote_confirmed
+                && chat_confirmed
+            {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                let first_log = client1
+                    .activity_log()
+                    .into_iter()
+                    .map(|entry| (entry.source, entry.message.as_str()))
+                    .collect::<Vec<_>>();
+                return Err(format!(
+                    "timed out waiting for authoritative state in room {room_name:?}: first_room={:?} ({first_room_confirmed}), second_room={:?} ({second_room_confirmed}), first_players={:?} ({first_players_confirmed}), second_players={:?} ({second_players_confirmed}), first_vote={first_vote_confirmed}, second_vote={second_vote_confirmed}, expected_chat={expected_chat:?}, chat={chat_confirmed}, first_log={first_log:?}",
+                    first_room.name,
+                    second_room.name,
+                    first_room.players,
+                    second_room.players,
+                ));
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the live upstream Planning Poker server"]
+    fn real_upstream_accepts_native_participants() {
+        let unique = format!(
+            "{}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after the Unix epoch")
+                .as_nanos(),
+            std::process::id()
         );
+        let mut failures = vec![];
 
-        // Find client2's vote
-        let client2_user = room2
-            .players
-            .iter()
-            .find(|u| u.is_you)
-            .expect("Couldn't find other player");
+        for attempt in 1..=3 {
+            let mut config = Config::default();
+            config.room = format!("native-live-{unique}-{attempt}");
+            config.name = format!("native-live-participant-{unique}-{attempt}");
+            let room_name = config.room.clone();
+            let participant_prefix = config.name.clone();
+            let (result_tx, result_rx) = mpsc::channel();
+            let worker = thread::Builder::new()
+                .name(format!("native-live-{attempt}"))
+                .spawn(move || {
+                    let started = Instant::now();
+                    let result = run_live_native_attempt(config);
+                    let _ = result_tx.send((started.elapsed(), result));
+                })
+                .unwrap_or_else(|error| panic!("failed to spawn live attempt {attempt}: {error}"));
 
-        assert_eq!(
-            client2_user.vote,
-            Vote::Revealed(VoteData::Number(3)),
-            "Client 2's vote not correctly reflected"
-        );
+            match result_rx.recv_timeout(LIVE_ATTEMPT_TIMEOUT) {
+                Ok((elapsed, Ok(()))) => {
+                    println!(
+                        "native live attempt {attempt} passed in {elapsed:?} (room={room_name}, participants={participant_prefix}-first,{participant_prefix}-second)"
+                    );
+                    drop(worker);
+                    return;
+                }
+                Ok((elapsed, Err(error))) => {
+                    failures.push(format!(
+                        "attempt {attempt} failed after {elapsed:?} (room={room_name}): {error}"
+                    ));
+                    drop(worker);
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    failures.push(format!(
+                        "attempt {attempt} exceeded the {LIVE_ATTEMPT_TIMEOUT:?} hard timeout (room={room_name}, participants={participant_prefix}-first,{participant_prefix}-second); detached blocked worker"
+                    ));
+                    // A detached worker cannot delay test-process exit if connect stays blocked.
+                    drop(result_rx);
+                    drop(worker);
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    let diagnostic = match worker.join() {
+                        Ok(()) => "worker exited without reporting a result".to_string(),
+                        Err(payload) => payload
+                            .downcast_ref::<&str>()
+                            .map(|message| (*message).to_string())
+                            .or_else(|| payload.downcast_ref::<String>().cloned())
+                            .unwrap_or_else(|| {
+                                "worker panicked with a non-string payload".to_string()
+                            }),
+                    };
+                    failures.push(format!(
+                        "attempt {attempt} worker failed (room={room_name}): {diagnostic}"
+                    ));
+                }
+            }
+        }
 
-        // Check chat messages - use the last log as it should contain our message
-        let logs1 = client1.log();
-        assert!(!logs1.is_empty(), "Expected at least one chat message");
-        assert!(
-            logs1[logs1.len() - 1]
-                .message
-                .contains("Hello from client 1!"),
-            "Chat message not found in log entries"
-        );
-
-        // Both clients should see the same final room state
-        assert_eq!(
-            room.players.len(),
-            room2.players.len(),
-            "Room state inconsistent between clients"
+        panic!(
+            "real upstream native participant test failed: {}",
+            failures.join("; ")
         );
     }
 }

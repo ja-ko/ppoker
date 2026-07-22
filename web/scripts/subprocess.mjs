@@ -1,6 +1,32 @@
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+export const packageRoot = fileURLToPath(new URL("..", import.meta.url));
+
+export function runChecked(
+  command,
+  arguments_,
+  cwd = packageRoot,
+  env = process.env,
+) {
+  const result = spawnSync(command, arguments_, { cwd, env, stdio: "inherit" });
+  if (result.error !== undefined) throw result.error;
+  if (result.status !== 0) process.exit(result.status ?? 1);
+}
+
+export function runCaptured(command, arguments_, cwd = packageRoot) {
+  const result = spawnSync(command, arguments_, { cwd, encoding: "utf8" });
+  if (result.error !== undefined) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(
+      `${command} ${arguments_.join(" ")} failed\n${result.stdout}\n${result.stderr}`,
+    );
+  }
+  return result.stdout;
+}
 
 export function pnpmInvocation(
   environment = process.env,

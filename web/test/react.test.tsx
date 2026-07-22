@@ -1,23 +1,37 @@
 import { StrictMode, type ReactNode } from "react";
+import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { act, cleanup, render, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createPokerClientStore } from "../src/client-store.js";
 import {
   PokerClientProvider,
+  usePokerClient,
   usePokerClientSnapshot,
-  usePokerClientStore,
+  type ClientSnapshot,
+  type PokerClient,
 } from "../src/react.js";
 import { createFakeClient, makeSnapshot } from "./fake-client.js";
 
 afterEach(() => {
   cleanup();
-  vi.useRealTimers();
 });
 
-function SnapshotView(): ReactNode {
+function SnapshotView({
+  capture,
+}: {
+  readonly capture?: (snapshot: ClientSnapshot) => void;
+} = {}): ReactNode {
   const snapshot = usePokerClientSnapshot();
+  capture?.(snapshot);
   return `${snapshot.localName}:${snapshot.status}:${snapshot.revision.toString()}`;
+}
+
+function provide(client: PokerClient, children: ReactNode = <SnapshotView />) {
+  return <PokerClientProvider client={client}>{children}</PokerClientProvider>;
+}
+
+function renderClient(client: PokerClient) {
+  return render(provide(client));
 }
 
 describe("poker client hooks", () => {
@@ -26,166 +40,157 @@ describe("poker client hooks", () => {
     const expected =
       "Poker client hooks must be used within a PokerClientProvider.";
 
-    expect(() => renderHook(() => usePokerClientStore())).toThrow(expected);
+    expect(() => renderHook(() => usePokerClient())).toThrow(expected);
     expect(() => renderHook(() => usePokerClientSnapshot())).toThrow(expected);
   });
 
-  it("returns the provided store and updates snapshots", () => {
-    const { client, state } = createFakeClient();
-    client.connect.mockImplementation(() => {
-      state.value = makeSnapshot(1, "connecting", "Tester");
-    });
-    const store = createPokerClientStore(client);
-    const wrapper = ({ children }: { readonly children: ReactNode }) => (
-      <PokerClientProvider store={store}>{children}</PokerClientProvider>
-    );
-    const storeHook = renderHook(() => usePokerClientStore(), { wrapper });
+  it("returns the provided client and updates snapshots", () => {
+    const { client, publish } = createFakeClient();
+    const wrapper = ({ children }: { readonly children: ReactNode }) =>
+      provide(client, children);
+    const clientHook = renderHook(() => usePokerClient(), { wrapper });
     const snapshotHook = renderHook(() => usePokerClientSnapshot(), {
       wrapper,
     });
 
-    expect(storeHook.result.current).toBe(store);
+    expect(clientHook.result.current).toBe(client);
     expect(snapshotHook.result.current.revision).toBe(0);
     act(() => {
-      store.connect();
+      publish(makeSnapshot(1, "connecting", "Tester"));
     });
-    expect(snapshotHook.result.current).toBe(store.getSnapshot());
+    expect(snapshotHook.result.current).toBe(client.getSnapshot());
     expect(snapshotHook.result.current).toMatchObject({
       revision: 1,
       status: "connecting",
     });
   });
 
-  it("balances subscriptions when the provider store changes", () => {
-    vi.useFakeTimers();
+  it("balances subscriptions when the provider client changes", () => {
     const first = createFakeClient(makeSnapshot(1, "open", "First"));
     const second = createFakeClient(makeSnapshot(5, "open", "Second"));
-    const firstStore = createPokerClientStore(first.client);
-    const secondStore = createPokerClientStore(second.client);
-    const view = render(
-      <PokerClientProvider store={firstStore}>
-        <SnapshotView />
-      </PokerClientProvider>,
-    );
+    const view = renderClient(first.client);
 
     expect(view.container.textContent).toBe("First:open:1");
-    expect(vi.getTimerCount()).toBe(1);
-    view.rerender(
-      <PokerClientProvider store={secondStore}>
-        <SnapshotView />
-      </PokerClientProvider>,
-    );
+    expect(first.client.subscribe).toHaveBeenCalledOnce();
+    expect(first.activeListenerCount()).toBe(1);
+    view.rerender(provide(second.client));
     expect(view.container.textContent).toBe("Second:open:5");
-    expect(vi.getTimerCount()).toBe(1);
+    expect(second.client.subscribe).toHaveBeenCalledOnce();
+    expect(first.activeListenerCount()).toBe(0);
+    expect(second.activeListenerCount()).toBe(1);
 
-    vi.advanceTimersByTime(50);
-    expect(first.client.poll).not.toHaveBeenCalled();
-    expect(second.client.poll).toHaveBeenCalledOnce();
+    act(() => {
+      first.publish(makeSnapshot(2, "open", "Stale"));
+    });
+    expect(view.container.textContent).toBe("Second:open:5");
+    act(() => {
+      second.publish(makeSnapshot(6, "open", "Second updated"));
+    });
+    expect(view.container.textContent).toBe("Second updated:open:6");
     view.unmount();
-    expect(vi.getTimerCount()).toBe(0);
+    expect(second.activeListenerCount()).toBe(0);
     expect(first.client.close).not.toHaveBeenCalled();
     expect(second.client.close).not.toHaveBeenCalled();
   });
 
-  it("isolates multiple providers and their polling lifecycles", () => {
-    vi.useFakeTimers();
+  it("isolates multiple providers", () => {
     const first = createFakeClient(makeSnapshot(0, "open", "First"));
     const second = createFakeClient(makeSnapshot(4, "open", "Second"));
-    first.client.connect.mockImplementation(() => {
-      first.state.value = makeSnapshot(1, "open", "First updated");
-    });
-    const firstStore = createPokerClientStore(first.client);
-    const secondStore = createPokerClientStore(second.client);
-    const firstView = render(
-      <PokerClientProvider store={firstStore}>
-        <SnapshotView />
-      </PokerClientProvider>,
-    );
-    const secondView = render(
-      <PokerClientProvider store={secondStore}>
-        <SnapshotView />
-      </PokerClientProvider>,
-    );
+    const firstView = renderClient(first.client);
+    const secondView = renderClient(second.client);
 
-    expect(vi.getTimerCount()).toBe(2);
     act(() => {
-      firstStore.connect();
+      first.publish(makeSnapshot(1, "open", "First updated"));
     });
     expect(firstView.container.textContent).toBe("First updated:open:1");
     expect(secondView.container.textContent).toBe("Second:open:4");
 
     firstView.unmount();
-    expect(vi.getTimerCount()).toBe(1);
-    vi.advanceTimersByTime(50);
-    expect(first.client.poll).not.toHaveBeenCalled();
-    expect(second.client.poll).toHaveBeenCalledOnce();
     secondView.unmount();
-    expect(vi.getTimerCount()).toBe(0);
     expect(first.client.close).not.toHaveBeenCalled();
     expect(second.client.close).not.toHaveBeenCalled();
   });
 
-  it("unmounts without disposing, closing, or connecting the store", () => {
-    vi.useFakeTimers();
+  it("unmounts without closing or connecting the client", () => {
     const { client } = createFakeClient();
-    const store = createPokerClientStore(client);
-    const view = render(
-      <PokerClientProvider store={store}>
-        <SnapshotView />
-      </PokerClientProvider>,
-    );
+    const view = renderClient(client);
 
-    expect(vi.getTimerCount()).toBe(1);
     view.unmount();
-    expect(vi.getTimerCount()).toBe(0);
     expect(client.connect).not.toHaveBeenCalled();
     expect(client.close).not.toHaveBeenCalled();
-    expect(store.getSnapshot().status).toBe("disconnected");
+    expect(client.getSnapshot().status).toBe("disconnected");
   });
 
-  it("leaves exactly one interval mounted through Strict Mode cycling", () => {
-    vi.useFakeTimers();
-    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
-    const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
-    const { client } = createFakeClient();
-    const store = createPokerClientStore(client, { pollIntervalMs: 25 });
-    const view = render(
-      <StrictMode>
-        <PokerClientProvider store={store}>
-          <SnapshotView />
-        </PokerClientProvider>
-      </StrictMode>,
-    );
+  it("balances client subscriptions through Strict Mode cycling", () => {
+    const { activeListenerCount, client } = createFakeClient();
+    const view = render(<StrictMode>{provide(client)}</StrictMode>);
 
-    expect(setIntervalSpy).toHaveBeenCalledTimes(2);
-    expect(clearIntervalSpy).toHaveBeenCalledOnce();
-    expect(vi.getTimerCount()).toBe(1);
-    vi.advanceTimersByTime(25);
-    expect(client.poll).toHaveBeenCalledOnce();
-
+    expect(client.subscribe).toHaveBeenCalledTimes(2);
+    expect(activeListenerCount()).toBe(1);
     view.unmount();
-    expect(setIntervalSpy).toHaveBeenCalledTimes(2);
-    expect(clearIntervalSpy).toHaveBeenCalledTimes(2);
-    expect(vi.getTimerCount()).toBe(0);
+    expect(client.subscribe).toHaveBeenCalledTimes(2);
+    expect(activeListenerCount()).toBe(0);
     expect(client.close).not.toHaveBeenCalled();
   });
 
-  it("uses the immutable disconnected server snapshot during SSR", () => {
-    vi.useFakeTimers();
-    const { client } = createFakeClient(makeSnapshot(9, "open", "Browser"));
-    const store = createPokerClientStore(client);
+  it("hydrates the stable server snapshot before reading the client", () => {
+    const { activeListenerCount, client } = createFakeClient(
+      makeSnapshot(9, "open", "Browser"),
+    );
+    const element = provide(client);
+    const container = document.createElement("div");
+    container.innerHTML = renderToString(element);
+    document.body.append(container);
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    let root: ReturnType<typeof hydrateRoot> | undefined;
 
-    const html = renderToString(
-      <PokerClientProvider store={store}>
-        <SnapshotView />
-      </PokerClientProvider>,
+    try {
+      act(() => {
+        root = hydrateRoot(container, element);
+      });
+
+      expect(container.textContent).toBe("Browser:open:9");
+      expect(activeListenerCount()).toBe(1);
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      const hydratedRoot = root;
+      if (hydratedRoot !== undefined) {
+        act(() => {
+          hydratedRoot.unmount();
+        });
+      }
+      container.remove();
+    }
+    expect(activeListenerCount()).toBe(0);
+  });
+
+  it("uses one immutable disconnected server snapshot during SSR", () => {
+    const first = createFakeClient(makeSnapshot(9, "open", "Browser"));
+    const second = createFakeClient(makeSnapshot(4, "open", "Other"));
+    const serverSnapshots: ClientSnapshot[] = [];
+    const capture = (snapshot: ClientSnapshot): void => {
+      serverSnapshots.push(snapshot);
+    };
+
+    const firstHtml = renderToString(
+      provide(first.client, <SnapshotView capture={capture} />),
+    );
+    const secondHtml = renderToString(
+      provide(second.client, <SnapshotView capture={capture} />),
     );
 
-    expect(html).toContain(":disconnected:0");
-    expect(client.snapshot).toHaveBeenCalledOnce();
-    expect(client.poll).not.toHaveBeenCalled();
-    expect(client.connect).not.toHaveBeenCalled();
-    expect(vi.getTimerCount()).toBe(0);
-    expect(Object.isFrozen(store.getServerSnapshot())).toBe(true);
+    expect(firstHtml).toContain(":disconnected:0");
+    expect(secondHtml).toBe(firstHtml);
+    expect(serverSnapshots).toHaveLength(2);
+    expect(serverSnapshots[1]).toBe(serverSnapshots[0]);
+    expect(Object.isFrozen(serverSnapshots[0])).toBe(true);
+    expect(Object.isFrozen(serverSnapshots[0]?.log)).toBe(true);
+    expect(Object.isFrozen(serverSnapshots[0]?.history)).toBe(true);
+    expect(first.client.getSnapshot).not.toHaveBeenCalled();
+    expect(second.client.getSnapshot).not.toHaveBeenCalled();
+    expect(first.client.poll).not.toHaveBeenCalled();
+    expect(first.client.connect).not.toHaveBeenCalled();
   });
 });

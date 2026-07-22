@@ -16,8 +16,8 @@ use crate::app::{App, AppResult};
 use crate::models::{GamePhase, LogLevel, LogSource, Player, UserType, Vote, VoteData};
 use crate::ui::text_input::TextInput;
 use crate::ui::{
-    colored_box_style, footer_entries, FooterEntry, format_duration, render_box, render_box_colored,
-    render_confirmation_box, trim_name, Page, UIAction, UiPage,
+    colored_box_style, footer_entries, format_duration, render_box, render_box_colored,
+    render_confirmation_box, trim_name, FooterEntry, Page, UIAction, UiPage,
 };
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -142,7 +142,7 @@ impl Page for VotingPage {
                 match event.code {
                     KeyCode::Char('q') => {
                         return Ok(UIAction::Quit);
-                    },
+                    }
                     KeyCode::Esc => {
                         self.input_mode = InputMode::QuitConfirm;
                     }
@@ -240,7 +240,7 @@ impl Page for VotingPage {
                 _ => {}
             },
             InputMode::QuitConfirm => match event.code {
-                KeyCode::Char('y') | KeyCode::Char('q')| KeyCode::Enter => {
+                KeyCode::Char('y') | KeyCode::Char('q') | KeyCode::Enter => {
                     return Ok(UIAction::Quit);
                 }
                 KeyCode::Char('n') | KeyCode::Esc => {
@@ -248,7 +248,7 @@ impl Page for VotingPage {
                     return Ok(UIAction::Continue);
                 }
                 _ => {}
-            }
+            },
         }
         Ok(UIAction::Continue)
     }
@@ -372,7 +372,12 @@ impl VotingPage {
     }
 
     fn render_spectators(&mut self, app: &mut App, rect: Rect, frame: &mut Frame) {
-        let rect = render_box_colored("Spectators", colored_box_style(app.room().phase), rect, frame);
+        let rect = render_box_colored(
+            "Spectators",
+            colored_box_style(app.room().phase),
+            rect,
+            frame,
+        );
 
         let mut longest_name: usize = 0;
 
@@ -496,25 +501,76 @@ impl VotingPage {
             InputMode::Menu => {
                 let mut entries = if app.room().phase == GamePhase::Playing {
                     vec![
-                        FooterEntry { name: "Vote".to_string(), shortcut: 'V', highlight: false },
-                        FooterEntry { name: "Reveal".to_string(), shortcut: 'R', highlight: false },
-                        FooterEntry { name: "History".to_string(), shortcut: 'H', highlight: false },
-                        FooterEntry { name: "Name change".to_string(), shortcut: 'N', highlight: false },
-                        FooterEntry { name: "Chat".to_string(), shortcut: 'C', highlight: false },
-                        FooterEntry { name: "Quit".to_string(), shortcut: 'Q', highlight: false },
+                        FooterEntry {
+                            name: "Vote".to_string(),
+                            shortcut: 'V',
+                            highlight: false,
+                        },
+                        FooterEntry {
+                            name: "Reveal".to_string(),
+                            shortcut: 'R',
+                            highlight: false,
+                        },
+                        FooterEntry {
+                            name: "History".to_string(),
+                            shortcut: 'H',
+                            highlight: false,
+                        },
+                        FooterEntry {
+                            name: "Name change".to_string(),
+                            shortcut: 'N',
+                            highlight: false,
+                        },
+                        FooterEntry {
+                            name: "Chat".to_string(),
+                            shortcut: 'C',
+                            highlight: false,
+                        },
+                        FooterEntry {
+                            name: "Quit".to_string(),
+                            shortcut: 'Q',
+                            highlight: false,
+                        },
                     ]
                 } else {
                     vec![
-                        FooterEntry { name: "Restart".to_string(), shortcut: 'R', highlight: false },
-                        FooterEntry { name: "History".to_string(), shortcut: 'H', highlight: false },
-                        FooterEntry { name: "Name change".to_string(), shortcut: 'N', highlight: false },
-                        FooterEntry { name: "Chat".to_string(), shortcut: 'C', highlight: false },
-                        FooterEntry { name: "Quit".to_string(), shortcut: 'Q', highlight: false },
+                        FooterEntry {
+                            name: "Restart".to_string(),
+                            shortcut: 'R',
+                            highlight: false,
+                        },
+                        FooterEntry {
+                            name: "History".to_string(),
+                            shortcut: 'H',
+                            highlight: false,
+                        },
+                        FooterEntry {
+                            name: "Name change".to_string(),
+                            shortcut: 'N',
+                            highlight: false,
+                        },
+                        FooterEntry {
+                            name: "Chat".to_string(),
+                            shortcut: 'C',
+                            highlight: false,
+                        },
+                        FooterEntry {
+                            name: "Quit".to_string(),
+                            shortcut: 'Q',
+                            highlight: false,
+                        },
                     ]
                 };
 
                 if app.config.changelog_from.is_some() {
-                    entries.insert(entries.len() - 1, FooterEntry { name: "Changelog".to_string(), shortcut: 'U', highlight: !app.has_seen_changelog });
+                    entries.insert(
+                        entries.len() - 1,
+                        FooterEntry {
+                            name: "Changelog".to_string(),
+                            shortcut: 'U',
+                            highlight: !app.has_seen_changelog,
+                        },
+                    );
                 }
 
                 frame.render_widget(footer_entries(entries), rect);
@@ -632,7 +688,7 @@ pub(super) fn render_overview(app: &mut App, rect: Rect, frame: &mut Frame) {
     };
 
     let duration = if app.room().phase == GamePhase::Revealed && !app.history().is_empty() {
-        format_duration(&app.history()[app.history().len() - 1].length)
+        format_duration(&app.history_duration(app.history().len() - 1))
     } else {
         format_duration(&app.round_elapsed())
     };
@@ -694,21 +750,24 @@ pub fn format_vote(vote: &Vote, own_vote: &Option<VoteData>) -> Span<'static> {
 
 #[cfg(test)]
 mod tests {
-    use crate::app::tests::create_test_app;
     use crate::models::{GamePhase, LogLevel, LogSource, Vote, VoteData};
-    use crate::ui::tests::{send_input, send_input_with_modifiers, tick};
-    use crate::ui::{Page, UIAction, VotingPage};
-    use crate::web::client::tests::LocalMockPokerClient;
+    use crate::ui::tests::{
+        local_app, local_ui, send_input, send_input_with_modifiers, send_text, test_ui, tick,
+    };
+    use crate::ui::voting::InputMode;
+    use crate::ui::{Page, UIAction, UiPage, VotingPage};
+    use crate::web::client::tests::LocalTestTransport;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use insta::assert_snapshot;
-    use ratatui::{backend::TestBackend, Terminal};
-    use crate::ui::voting::InputMode;
+
+    fn input(page: &mut VotingPage, app: &mut crate::app::App, key: KeyCode) -> UIAction {
+        page.input(app, KeyEvent::new(key, KeyModifiers::empty()))
+            .unwrap()
+    }
 
     #[test]
     fn test_render_page() {
-        let mut page = VotingPage::new();
-        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
-        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        let (mut page, mut app, mut terminal) = local_ui(VotingPage::new(), (80, 20));
         tick(&mut terminal, &mut page, &mut app);
 
         assert_snapshot!(terminal.backend(), @r#"
@@ -737,11 +796,7 @@ mod tests {
 
     #[test]
     fn test_vote_reveal_restart() {
-        let mut page = VotingPage::new();
-        let client = LocalMockPokerClient::new("test");
-
-        let mut app = create_test_app(Box::new(client));
-        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        let (mut page, mut app, mut terminal) = local_ui(VotingPage::new(), (80, 20));
 
         // Get initial room state
         tick(&mut terminal, &mut page, &mut app);
@@ -780,9 +835,7 @@ mod tests {
 
     #[test]
     fn tui_dash_retracts_instead_of_playing_a_card() {
-        let mut page = VotingPage::new();
-        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
-        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        let (mut page, mut app, mut terminal) = local_ui(VotingPage::new(), (80, 20));
         tick(&mut terminal, &mut page, &mut app);
 
         send_input(KeyCode::Char('5'), &mut terminal, &mut page, &mut app);
@@ -801,15 +854,11 @@ mod tests {
 
     #[test]
     fn invalid_card_is_logged_without_terminating_input_path() {
-        let mut page = VotingPage::new();
-        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
-        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        let (mut page, mut app, mut terminal) = local_ui(VotingPage::new(), (80, 20));
         tick(&mut terminal, &mut page, &mut app);
 
         send_input(KeyCode::Char('v'), &mut terminal, &mut page, &mut app);
-        for character in "not-a-card".chars() {
-            send_input(KeyCode::Char(character), &mut terminal, &mut page, &mut app);
-        }
+        send_text("not-a-card", &mut terminal, &mut page, &mut app);
         send_input(KeyCode::Enter, &mut terminal, &mut page, &mut app);
 
         assert_eq!(page.input_mode, InputMode::Menu);
@@ -823,7 +872,7 @@ mod tests {
     #[test]
     fn stale_reset_confirmation_logs_invalid_state() {
         let mut page = VotingPage::new();
-        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
+        let mut app = local_app();
 
         let mut revealed = app.room().clone();
         revealed.phase = GamePhase::Revealed;
@@ -852,13 +901,84 @@ mod tests {
     }
 
     #[test]
-    fn test_reveal_confirm_cancel() {
+    fn native_input_modes_cover_navigation_and_every_auto_reveal_choice() {
         let mut page = VotingPage::new();
-        let mut client = LocalMockPokerClient::new("test");
-        client.add_user("other");
+        let mut app = local_app();
 
-        let mut app = create_test_app(Box::new(client));
-        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        assert!(matches!(
+            input(&mut page, &mut app, KeyCode::Char('u')),
+            UIAction::ChangeView(UiPage::Changelog)
+        ));
+        assert!(app.has_seen_changelog);
+        assert!(matches!(
+            input(&mut page, &mut app, KeyCode::Char('n')),
+            UIAction::Continue
+        ));
+        assert_eq!(page.input_mode, InputMode::Name);
+        input(&mut page, &mut app, KeyCode::Enter);
+        assert_eq!(page.input_mode, InputMode::Menu);
+
+        page.input_mode = InputMode::RevealConfirm;
+        input(&mut page, &mut app, KeyCode::Enter);
+        assert_eq!(page.input_mode, InputMode::Menu);
+        let mut room = app.room().clone();
+        room.phase = GamePhase::Revealed;
+        app.merge_update(room);
+        page.input_mode = InputMode::ResetConfirm;
+        input(&mut page, &mut app, KeyCode::Enter);
+        assert_eq!(page.input_mode, InputMode::Menu);
+
+        for mode in [InputMode::RevealConfirm, InputMode::ResetConfirm] {
+            for key in [KeyCode::Char('n'), KeyCode::Esc] {
+                page.input_mode = mode;
+                assert!(matches!(
+                    input(&mut page, &mut app, key),
+                    UIAction::Continue
+                ));
+                assert_eq!(page.input_mode, InputMode::Menu);
+            }
+            page.input_mode = mode;
+            assert!(matches!(
+                input(&mut page, &mut app, KeyCode::Char('q')),
+                UIAction::Quit
+            ));
+        }
+
+        for key in [
+            KeyCode::Char('y'),
+            KeyCode::Enter,
+            KeyCode::Char('r'),
+            KeyCode::Char(' '),
+        ] {
+            page.input_mode = InputMode::AutoReveal;
+            app.auto_reveal_at =
+                Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
+            assert!(matches!(
+                input(&mut page, &mut app, key),
+                UIAction::Continue
+            ));
+            assert_eq!(page.input_mode, InputMode::Menu);
+            assert!(app.auto_reveal_at.is_none());
+        }
+        for key in [KeyCode::Char('n'), KeyCode::Esc] {
+            page.input_mode = InputMode::AutoReveal;
+            app.auto_reveal_at = Some(std::time::Instant::now());
+            input(&mut page, &mut app, key);
+            assert_eq!(page.input_mode, InputMode::Menu);
+            assert!(app.auto_reveal_at.is_none());
+        }
+        page.input_mode = InputMode::AutoReveal;
+        assert!(matches!(
+            input(&mut page, &mut app, KeyCode::Char('q')),
+            UIAction::Quit
+        ));
+    }
+
+    #[test]
+    fn test_reveal_confirm_cancel() {
+        let client = LocalTestTransport::new("test");
+        client.add_user("other");
+        let (mut page, mut app, mut terminal) = test_ui(VotingPage::new(), client, (80, 20));
 
         // Get initial room state
         tick(&mut terminal, &mut page, &mut app);
@@ -885,12 +1005,9 @@ mod tests {
 
     #[test]
     fn test_spectators_voting_flow() {
-        let mut page = VotingPage::new();
-        let mut client = LocalMockPokerClient::new("test");
+        let client = LocalTestTransport::new("test");
         client.add_spectator("viewer");
-
-        let mut app = create_test_app(Box::new(client));
-        let mut terminal = Terminal::new(TestBackend::new(80, 25)).unwrap();
+        let (mut page, mut app, mut terminal) = test_ui(VotingPage::new(), client, (80, 25));
 
         // Get initial room state with spectator
         tick(&mut terminal, &mut page, &mut app);
@@ -908,9 +1025,7 @@ mod tests {
 
     #[test]
     fn test_chat_message() {
-        let mut page = VotingPage::new();
-        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
-        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        let (mut page, mut app, mut terminal) = local_ui(VotingPage::new(), (80, 20));
 
         // Get initial state
         tick(&mut terminal, &mut page, &mut app);
@@ -919,9 +1034,7 @@ mod tests {
         send_input(KeyCode::Char('c'), &mut terminal, &mut page, &mut app);
 
         // Type message
-        for c in "Hello!".chars() {
-            send_input(KeyCode::Char(c), &mut terminal, &mut page, &mut app);
-        }
+        send_text("Hello!", &mut terminal, &mut page, &mut app);
         assert_snapshot!("Before sending chat", terminal.backend());
 
         // Send message
@@ -937,18 +1050,19 @@ mod tests {
 
     #[test]
     fn test_input_cancellation() {
-        let mut page = VotingPage::new();
-        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
-        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        let (mut page, mut app, mut terminal) = local_ui(VotingPage::new(), (80, 20));
 
         // Get initial state
         tick(&mut terminal, &mut page, &mut app);
 
+        page.pasted(&mut app, "ignored".to_string());
+        assert_eq!(page.text_input.text(), "");
+
         // Test chat mode cancellation with Esc
         send_input(KeyCode::Char('c'), &mut terminal, &mut page, &mut app);
-        for c in "Test message".chars() {
-            send_input(KeyCode::Char(c), &mut terminal, &mut page, &mut app);
-        }
+        page.pasted(&mut app, "pasted\n".to_string());
+        assert_eq!(page.text_input.text(), "pasted");
+        send_text("Test message", &mut terminal, &mut page, &mut app);
         send_input(KeyCode::Esc, &mut terminal, &mut page, &mut app);
         assert_eq!(page.input_mode, InputMode::Menu);
         assert_eq!(page.text_input.text(), "");
@@ -968,9 +1082,7 @@ mod tests {
 
     #[test]
     fn test_quit_flow() {
-        let mut page = VotingPage::new();
-        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
-        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        let (mut page, mut app, mut terminal) = local_ui(VotingPage::new(), (80, 20));
 
         // Get initial state
         tick(&mut terminal, &mut page, &mut app);
@@ -987,7 +1099,10 @@ mod tests {
         assert_snapshot!("After canceling quit", terminal.backend());
 
         // Press 'q' again to confirm quit (this doesn't show a confirmation dialog)
-        let result = page.input(&mut app, KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty()));
+        let result = page.input(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty()),
+        );
         assert!(matches!(result, Ok(UIAction::Quit)));
     }
 }

@@ -12,11 +12,11 @@ use ratatui::prelude::*;
 use crate::app::{App, AppResult};
 use crate::config::Config;
 use crate::events::{Event, EventHandler, FocusChange};
+use crate::ui::changelog::ChangelogPage;
 use crate::ui::HistoryPage;
 use crate::ui::LogPage;
 use crate::ui::VotingPage;
 use crate::ui::{Page, UIAction, UiPage};
-use crate::ui::changelog::ChangelogPage;
 
 pub struct Tui<B: Backend> {
     terminal: Terminal<B>,
@@ -42,7 +42,10 @@ where
                 pages.insert(page, Box::new(HistoryPage::new()));
             }
             UiPage::Changelog => {
-                pages.insert(page, Box::new(ChangelogPage::new(config.changelog_from.clone())));
+                pages.insert(
+                    page,
+                    Box::new(ChangelogPage::new(config.changelog_from.clone())),
+                );
             }
         });
         Self {
@@ -140,22 +143,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::tests::create_test_app;
-    use crate::web::client::tests::LocalMockPokerClient;
+    use crate::ui::tests::local_app;
     use crossterm::event::{KeyCode, KeyModifiers};
     use insta::assert_snapshot;
     use ratatui::backend::TestBackend;
 
-    fn create_test_terminal() -> Terminal<TestBackend> {
-        Terminal::new(TestBackend::new(80, 24)).unwrap()
-    }
-
     fn create_test_tui() -> (Tui<TestBackend>, App) {
-        let terminal = create_test_terminal();
+        let terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         let events = EventHandler::new(100);
         let tui = Tui::new(terminal, events, Config::default());
-        let app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
-        (tui, app)
+        (tui, local_app())
     }
 
     /// Helper function to handle key press, assert current page, and draw app
@@ -165,11 +162,8 @@ mod tests {
         key_code: KeyCode,
         expected_page: UiPage,
     ) {
-        tui.handle_key(
-            KeyEvent::new(key_code, KeyModifiers::empty()),
-            app,
-        )
-        .unwrap();
+        tui.handle_key(KeyEvent::new(key_code, KeyModifiers::empty()), app)
+            .unwrap();
         assert_eq!(tui.current_page, expected_page);
         tui.draw(app).unwrap();
     }
@@ -198,7 +192,11 @@ mod tests {
 
         // Switch to log page with 'l'
         press_key_and_assert(&mut tui, &mut app, KeyCode::Char('l'), UiPage::Log);
-        assert!(tui.terminal.backend().to_string().contains("Toggle target selector"));
+        assert!(tui
+            .terminal
+            .backend()
+            .to_string()
+            .contains("Toggle target selector"));
 
         // Switch back to voting page with 'l'
         press_key_and_assert(&mut tui, &mut app, KeyCode::Char('l'), UiPage::Voting);

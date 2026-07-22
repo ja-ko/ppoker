@@ -134,9 +134,6 @@ pub struct LogEntry {
 pub struct HistoryEntry {
     pub round_number: u32,
     pub average: Option<f32>,
-    #[serde(rename = "lengthMs", serialize_with = "serialize_duration_ms")]
-    #[cfg_attr(feature = "typescript", tsify(type = "number"))]
-    pub length: Duration,
     pub votes: Vec<Player>,
     pub deck: Vec<String>,
     pub own_vote: Option<VoteData>,
@@ -199,49 +196,38 @@ impl Ord for Player {
 mod tests {
     use super::*;
 
+    fn player(name: &str, vote: Vote) -> Player {
+        Player {
+            name: name.to_string(),
+            vote,
+            is_you: false,
+            user_type: UserType::Player,
+        }
+    }
+
     #[test]
     fn test_player_ordering() {
         let players = vec![
-            Player {
-                name: "Alice".to_string(),
-                vote: Vote::Revealed(VoteData::Number(3)),
-                is_you: false,
-                user_type: UserType::Player,
-            },
-            Player {
-                name: "Bob".to_string(),
-                vote: Vote::Hidden,
-                is_you: false,
-                user_type: UserType::Player,
-            },
-            Player {
-                name: "Charlie".to_string(),
-                vote: Vote::Revealed(VoteData::Number(1)),
-                is_you: false,
-                user_type: UserType::Player,
-            },
-            Player {
-                name: "David".to_string(),
-                vote: Vote::Missing,
-                is_you: false,
-                user_type: UserType::Player,
-            },
-            Player {
-                name: "Eve".to_string(),
-                vote: Vote::Revealed(VoteData::Special("?".to_string())),
-                is_you: false,
-                user_type: UserType::Player,
-            },
+            player("Alice", Vote::Revealed(VoteData::Number(3))),
+            player("Bob", Vote::Hidden),
+            player("Charlie", Vote::Revealed(VoteData::Number(1))),
+            player("David", Vote::Missing),
+            player("Eve", Vote::Revealed(VoteData::Special("?".to_string()))),
         ];
 
         let mut sorted = players.clone();
         sorted.sort();
 
-        assert_eq!(sorted[0].name, "Charlie"); // 1
-        assert_eq!(sorted[1].name, "Alice"); // 3
-        assert_eq!(sorted[2].name, "Eve"); // Special
-        assert_eq!(sorted[3].name, "Bob"); // Hidden
-        assert_eq!(sorted[4].name, "David"); // Missing
+        assert_eq!(
+            sorted
+                .iter()
+                .map(|player| player.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Charlie", "Alice", "Eve", "Bob", "David"]
+        );
+        assert_eq!(Vote::Hidden.to_string(), "Hidden");
+        assert_eq!(GamePhase::Unknown.to_string(), "Unknown");
+        assert_eq!(sorted[0].cmp(&sorted[1]), Ordering::Less);
     }
 
     #[test]
@@ -249,7 +235,6 @@ mod tests {
         let entry = HistoryEntry {
             round_number: 2,
             average: None,
-            length: Duration::from_millis(2500),
             votes: vec![Player {
                 name: "Alice".to_string(),
                 vote: Vote::Revealed(VoteData::Number(5)),
@@ -265,7 +250,6 @@ mod tests {
             serde_json::json!({
                 "roundNumber": 2,
                 "average": null,
-                "lengthMs": 2500.0,
                 "votes": [{
                     "name": "Alice",
                     "vote": { "state": "revealed", "value": { "kind": "number", "value": 5 } },

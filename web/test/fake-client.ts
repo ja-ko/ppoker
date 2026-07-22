@@ -1,6 +1,9 @@
 import { vi } from "vitest";
-import type { ClientSnapshot, ConnectionStatus } from "../src/wasm-client.js";
-import type { PokerClientPort } from "../src/index.js";
+import type {
+  ClientSnapshot,
+  ConnectionStatus,
+  PokerClient,
+} from "../src/index.js";
 
 export function makeSnapshot(
   revision = 0,
@@ -16,7 +19,6 @@ export function makeSnapshot(
     localVote: null,
     log: [],
     roundNumber: 0,
-    roundStartedAtMs: null,
     history: [],
     average: null,
   };
@@ -57,12 +59,10 @@ export function makeRichSnapshot(revision = 3): ClientSnapshot {
       },
     ],
     roundNumber: 2,
-    roundStartedAtMs: 4,
     history: [
       {
         roundNumber: 1,
         average: 5,
-        lengthMs: 8,
         votes: [player],
         deck: ["3", "5"],
         ownVote: { kind: "number", value: 5 },
@@ -72,12 +72,28 @@ export function makeRichSnapshot(revision = 3): ClientSnapshot {
   };
 }
 
+export function captureError(operation: () => void): unknown {
+  try {
+    operation();
+  } catch (error: unknown) {
+    return error;
+  }
+  throw new Error("operation did not throw");
+}
+
 export function createFakeClient(initial = makeSnapshot()) {
   const state: { value: ClientSnapshot } = { value: initial };
+  const listeners = new Set<() => void>();
   const client = {
+    getSnapshot: vi.fn<() => ClientSnapshot>(() => state.value),
+    subscribe: vi.fn<(listener: () => void) => () => void>((listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    }),
     connect: vi.fn<() => void>(),
     poll: vi.fn<() => boolean>(() => false),
-    snapshot: vi.fn<() => ClientSnapshot>(() => state.value),
     vote: vi.fn<(value: string) => void>(),
     retractVote: vi.fn<() => void>(),
     rename: vi.fn<(name: string) => void>(),
@@ -85,6 +101,14 @@ export function createFakeClient(initial = makeSnapshot()) {
     reveal: vi.fn<() => void>(),
     startNewRound: vi.fn<() => void>(),
     close: vi.fn<() => void>(),
-  } satisfies PokerClientPort;
-  return { client, state };
+    [Symbol.dispose]: vi.fn<() => void>(),
+  } satisfies PokerClient;
+  const publish = (snapshot: ClientSnapshot): void => {
+    state.value = snapshot;
+    for (const listener of new Set(listeners)) {
+      listener();
+    }
+  };
+  const activeListenerCount = (): number => listeners.size;
+  return { activeListenerCount, client, publish };
 }

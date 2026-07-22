@@ -1,4 +1,4 @@
-name: Web
+name: Validation
 
 on:
   pull_request:
@@ -7,8 +7,9 @@ on:
     branches: [master]
 
 jobs:
-  validate:
-    runs-on: ubuntu-22.04
+  deterministic:
+    name: deterministic
+    runs-on: ubuntu-latest
     env:
       CARGO_TERM_COLOR: always
       CHROME_BIN: google-chrome
@@ -30,7 +31,7 @@ jobs:
       - name: Install frontend dependencies
         working-directory: web
         run: pnpm install --frozen-lockfile
-      - name: Check web and WASM
+      - name: Run deterministic web and WASM checks
         working-directory: web
         run: pnpm run check
       - name: Upload frontend coverage to Codecov
@@ -41,3 +42,39 @@ jobs:
           flags: frontend
           name: frontend
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  live-native:
+    name: live-native
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run native real-upstream participant test
+        run: cargo test --package ppoker --bin ppoker web::client::tests::real_upstream_accepts_native_participants -- --ignored --exact --nocapture
+
+  live-browser:
+    name: live-browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CARGO_TERM_COLOR: always
+      CHROME_BIN: google-chrome
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/package.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+      - name: Run browser real-upstream participant test
+        working-directory: web
+        run: pnpm run test:wasm:live

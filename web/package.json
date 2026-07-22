@@ -27,6 +27,8 @@
     "declarations": "tsc -p tsconfig.build.json --emitDeclarationOnly",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
+    "test:wasm": "node ./scripts/test-wasm.mjs",
+    "test:wasm:live": "node ./scripts/test-wasm.mjs --live",
     "build": "node ./scripts/build.mjs",
     "package:verify": "node ./scripts/verify-package.mjs",
     "check": "node ./scripts/check.mjs"
