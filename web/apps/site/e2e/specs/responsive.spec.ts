@@ -231,8 +231,16 @@ test.describe("reduced motion", () => {
       await page
         .locator(".participant-card--thinking")
         .first()
-        .evaluate((card) => getComputedStyle(card, "::before").animationName),
-    ).toBe("none");
+        .evaluate((card) => {
+          const style = getComputedStyle(card, "::before");
+          const transform = new DOMMatrix(style.transform);
+          return {
+            animationName: style.animationName,
+            x: transform.m41,
+            y: transform.m42,
+          };
+        }),
+    ).toEqual({ animationName: "none", x: 0, y: 0 });
 
     const sample = await samplePlayingToRevealed(page);
     expect(sample.frames.length).toBeGreaterThan(0);
