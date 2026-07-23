@@ -69,6 +69,25 @@ jobs:
       - name: Run web and WASM checks
         working-directory: web
         run: pnpm run check
+      - name: Build web workspace
+        working-directory: web
+        run: pnpm run build
+      - name: Install Playwright Chromium
+        working-directory: web
+        run: pnpm --filter @ppoker/site exec playwright install --with-deps chromium
+      - name: Run billboard end-to-end tests
+        working-directory: web
+        run: pnpm run test:e2e
+      - name: Upload Playwright failure artifacts
+        if: ${{ !cancelled() && failure() && hashFiles('web/apps/site/test-results/**') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          if-no-files-found: ignore
+          name: playwright-failure-artifacts
+          path: |
+            web/apps/site/test-results
+            web/apps/site/playwright-report
+          retention-days: 7
 
   build:
     name: Build

@@ -1,4 +1,8 @@
 node_modules
+apps/*/dist
+apps/*/node_modules
+apps/*/playwright-report
+apps/*/test-results
 packages/*/coverage
 packages/*/dist
 packages/*/node_modules
