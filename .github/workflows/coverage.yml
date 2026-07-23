@@ -1,0 +1,76 @@
+name: Coverage
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: taiki-e/install-action@nextest
+      - name: Generate Rust coverage
+        run: cargo llvm-cov --locked --all-features --workspace --lcov --output-path lcov.info nextest --profile ci
+      - name: Upload Rust coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          disable_search: true
+          files: lcov.info
+          flags: rust
+          name: rust
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/package.json
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@wasm-pack
+      - name: Install frontend dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: Generate WASM bindings
+        working-directory: web
+        run: pnpm run wasm:generate
+      - name: Generate web coverage
+        working-directory: web
+        run: pnpm run coverage
+      - name: Upload web coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          disable_search: true
+          files: web/coverage/lcov.info
+          flags: frontend
+          name: frontend
+          token: ${{ secrets.CODECOV_TOKEN }}

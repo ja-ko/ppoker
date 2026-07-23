@@ -181,54 +181,46 @@ impl App {
         }
     }
 
-    fn handle_session_update(
-        client: &Client,
-        update: ClientUpdate,
-        local_log: &mut Vec<LocalLogEntry>,
-        local_log_position: usize,
-        round_started_at: &mut Option<Instant>,
-        history_durations: &mut Vec<Option<Duration>>,
-        is_notified: &mut bool,
-        notify_vote_at: &mut Option<Instant>,
-        has_updates: &mut bool,
-        auto_reveal_at: &mut Option<Instant>,
-        disable_auto_reveal: bool,
-    ) {
+    fn handle_session_update(&mut self, update: ClientUpdate) {
         let ClientUpdate::Room(update) = update;
-        Self::merge_round_timing(&update, round_started_at, history_durations);
+        Self::merge_round_timing(
+            &update,
+            &mut self.round_started_at,
+            &mut self.history_durations,
+        );
 
         let room = &update.room;
         if let Some(old) = update.previous_room.as_ref() {
             if old.phase != room.phase {
                 if room.phase == GamePhase::Playing {
-                    *is_notified = false;
-                    *notify_vote_at = None;
+                    self.is_notified = false;
+                    self.notify_vote_at = None;
                 }
-                *has_updates = true;
+                self.has_updates = true;
             }
-            if !disable_auto_reveal && Self::confirms_last_missing_vote(old, room) {
+            if !self.config.disable_auto_reveal && Self::confirms_last_missing_vote(old, room) {
                 debug!("Starting auto-reveal timer.");
-                *auto_reveal_at = Some(Instant::now() + Duration::from_secs(3));
+                self.auto_reveal_at = Some(Instant::now() + Duration::from_secs(3));
             }
         }
 
         if Self::is_vote_last_missing(room) {
-            if !*is_notified && notify_vote_at.is_none() {
+            if !self.is_notified && self.notify_vote_at.is_none() {
                 Self::push_log_message(
-                    local_log,
-                    local_log_position,
-                    client.now(),
+                    &mut self.local_log,
+                    self.local_log_position,
+                    self.client.now(),
                     LogLevel::Info,
                     "Your vote is the last one missing.".to_string(),
                 );
-                *notify_vote_at = Some(Instant::now() + Duration::from_secs(8));
-                *has_updates = true;
+                self.notify_vote_at = Some(Instant::now() + Duration::from_secs(8));
+                self.has_updates = true;
             }
         } else {
-            *notify_vote_at = None;
+            self.notify_vote_at = None;
         }
 
-        if auto_reveal_at.is_some()
+        if self.auto_reveal_at.is_some()
             && (room.phase != GamePhase::Playing
                 || room
                     .players
@@ -236,7 +228,7 @@ impl App {
                     .any(|p| p.user_type != UserType::Spectator && p.vote == Vote::Missing))
         {
             debug!("Auto-reveal cancelled because of invalid state");
-            *auto_reveal_at = None;
+            self.auto_reveal_at = None;
         }
     }
 
@@ -312,33 +304,9 @@ impl App {
     pub fn update(&mut self) -> AppResult<()> {
         self.local_log_position = self.client.log().len();
         let outcome = self.client.poll()?;
-        {
-            let local_log_position = self.local_log_position;
-            let client = &self.client;
-            let local_log = &mut self.local_log;
-            let round_started_at = &mut self.round_started_at;
-            let history_durations = &mut self.history_durations;
-            let is_notified = &mut self.is_notified;
-            let notify_vote_at = &mut self.notify_vote_at;
-            let has_updates = &mut self.has_updates;
-            let auto_reveal_at = &mut self.auto_reveal_at;
-            let disable_auto_reveal = self.config.disable_auto_reveal;
-            for update in outcome.updates {
-                debug!("room update: {:?}", update);
-                Self::handle_session_update(
-                    client,
-                    update,
-                    local_log,
-                    local_log_position,
-                    round_started_at,
-                    history_durations,
-                    is_notified,
-                    notify_vote_at,
-                    has_updates,
-                    auto_reveal_at,
-                    disable_auto_reveal,
-                );
-            }
+        for update in outcome.updates {
+            debug!("room update: {:?}", update);
+            self.handle_session_update(update);
         }
         self.local_log_position = self.client.log().len();
 

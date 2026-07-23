@@ -22,10 +22,12 @@ impl Clock for TestClock {
 
 fn server(run: impl FnOnce(WebSocket<TcpStream>) + Send + 'static) -> (Config, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let mut config = Config::default();
-    config.server = format!("ws://{}", listener.local_addr().unwrap());
-    config.room = "native-production-path".to_string();
-    config.name = "Johnnie Waters".to_string();
+    let config = Config {
+        server: format!("ws://{}", listener.local_addr().unwrap()),
+        room: "native-production-path".to_string(),
+        name: "Johnnie Waters".to_string(),
+        ..Config::default()
+    };
     let thread = thread::spawn(move || {
         let (stream, _) = listener.accept().unwrap();
         run(accept(stream).unwrap());

@@ -10,5 +10,5 @@ runPnpm("format:check");
 runPnpm("package:verify");
 runPnpm("lint");
 runPnpm("typecheck");
-runPnpm("coverage");
+runPnpm("test");
 runPnpm("test:wasm");

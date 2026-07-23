@@ -1,13 +1,21 @@
-name: Live upstream
+name: Live
+
+permissions:
+  contents: read
 
 on:
   pull_request:
   push:
     branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   live-native:
-    name: live-native
+    name: Native
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -15,11 +23,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Run native real-upstream participant test
-        run: cargo test --package ppoker --bin ppoker web::client::tests::real_upstream_accepts_native_participants -- --ignored --exact --nocapture
+        run: cargo test --locked --package ppoker --bin ppoker web::client::tests::real_upstream_accepts_native_participants -- --ignored --exact --nocapture
 
   live-browser:
-    name: live-browser
+    name: Browser
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -36,8 +45,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-      - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@wasm-pack
       - name: Run browser real-upstream participant test
         working-directory: web
         run: pnpm run test:wasm:live

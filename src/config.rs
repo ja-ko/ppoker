@@ -8,7 +8,7 @@ use figment::Figment;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Parser)]
+#[derive(Default, Serialize, Parser)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
     /// Name to use for this session.
@@ -47,20 +47,6 @@ pub struct Cli {
     pub(crate) changelog_from: Option<String>,
 }
 
-impl Default for Cli {
-    fn default() -> Self {
-        Self {
-            name: None,
-            server: None,
-            room: None,
-            disable_auto_reveal: false,
-            disable_notifications: false,
-            skip_update_check: false,
-            changelog_from: None,
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
     pub name: String,
@@ -91,7 +77,7 @@ impl Default for Config {
 }
 
 fn create_projdirs() -> ProjectDirs {
-    return ProjectDirs::from("dev.jko", "", "ppoker").expect("Failed to get OS directories");
+    ProjectDirs::from("dev.jko", "", "ppoker").expect("Failed to get OS directories")
 }
 
 pub fn get_configdir() -> PathBuf {
@@ -100,7 +86,7 @@ pub fn get_configdir() -> PathBuf {
     if !dir.exists() {
         fs::create_dir_all(dir).expect("Failed to create config directory");
     }
-    return dir.to_owned();
+    dir.to_owned()
 }
 
 pub fn get_logdir() -> PathBuf {
@@ -108,7 +94,7 @@ pub fn get_logdir() -> PathBuf {
     if !dir.exists() {
         fs::create_dir_all(&dir).expect("Failed to create log directory");
     }
-    return dir.to_owned();
+    dir.to_owned()
 }
 
 fn parse_cli() -> Cli {
@@ -131,10 +117,10 @@ pub fn get_config() -> Config {
         .merge(Serialized::defaults(parse_cli()));
 
     let result = figment.extract();
-    return result.unwrap_or_else(|e| {
+    result.unwrap_or_else(|e| {
         error!("Failed to load config: {}", e);
         Config::default()
-    });
+    })
 }
 
 #[cfg(test)]

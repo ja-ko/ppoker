@@ -310,7 +310,7 @@ mod changelog_parser {
                     from,
                     until,
                     &mut sections,
-                    &mut current_version_str,
+                    &current_version_str,
                     current_section,
                 );
                 // Start a new section
@@ -327,7 +327,7 @@ mod changelog_parser {
             from,
             until,
             &mut sections,
-            &mut current_version_str,
+            &current_version_str,
             current_section,
         );
 
@@ -338,11 +338,11 @@ mod changelog_parser {
         current_version: &Version,
         target_version: &Version,
         sections: &mut Vec<ChangelogSection>,
-        current_version_str: &mut String,
+        current_version_str: &str,
         current_section: String,
     ) {
         if !current_section.is_empty() && !current_version_str.is_empty() {
-            if let Ok(version) = Version::parse(&current_version_str) {
+            if let Ok(version) = Version::parse(current_version_str) {
                 if version > *current_version && version <= *target_version {
                     sections.push(ChangelogSection {
                         version,

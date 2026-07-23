@@ -5,8 +5,8 @@ use std::process;
 
 use crate::config::Config;
 use log::{debug, error, info};
-use self_update::{cargo_crate_version, Extract};
 use self_update::update::{Release, ReleaseAsset, ReleaseUpdate};
+use self_update::{cargo_crate_version, Extract};
 use semver::Version;
 use snafu::Snafu;
 
@@ -32,7 +32,7 @@ pub enum UpdateError {
     #[snafu(display("The current release does not contain a binary for this target."))]
     NoCompatibleAssetFound,
     #[snafu(display("An unknown error occured during the update: {error}"))]
-    UpdateError { error: self_update::errors::Error },
+    Backend { error: self_update::errors::Error },
     #[snafu(display("An io error occured during the update: {error}"))]
     Io { error: std::io::Error },
     #[snafu(display("Failed to parse semver: {error}"))]
@@ -41,7 +41,7 @@ pub enum UpdateError {
 
 impl From<self_update::errors::Error> for UpdateError {
     fn from(value: self_update::errors::Error) -> Self {
-        UpdateError::UpdateError { error: value }
+        UpdateError::Backend { error: value }
     }
 }
 impl From<std::io::Error> for UpdateError {
@@ -166,7 +166,7 @@ impl UpdateOperations for DefaultUpdateOperations {
 
 #[cfg_attr(test, automock)]
 pub trait Restarter {
-    fn restart(&self, exe_path: &PathBuf);
+    fn restart(&self, exe_path: &Path);
 }
 
 struct DefaultRestarter;
@@ -178,11 +178,11 @@ impl Default for DefaultRestarter {
 }
 
 impl Restarter for DefaultRestarter {
-    fn restart(&self, exe_path: &PathBuf) {
+    fn restart(&self, exe_path: &Path) {
         println!("{}", exe_path.to_str().unwrap());
         Exec::cmd(exe_path)
             .arg("--changelog-from")
-            .arg(format!("{}", cargo_crate_version!()))
+            .arg(cargo_crate_version!())
             .detached()
             .start()
             .expect("Failed to start new binary");
@@ -198,8 +198,8 @@ pub fn self_update(config: &Config) -> Result<UpdateResult, UpdateError> {
         &mut stdout(),
         &mut BufReader::new(stdin()),
         &update,
-        &DefaultBinaryOperations::default(),
-        &DefaultRestarter::default(),
+        &DefaultBinaryOperations,
+        &DefaultRestarter,
     )
 }
 
@@ -237,7 +237,7 @@ fn self_update_impl<W: std::io::Write, R: std::io::BufRead>(
             latest_release.name,
             update.target().as_str()
         );
-        return Err(UpdateError::NoCompatibleAssetFound.into());
+        return Err(UpdateError::NoCompatibleAssetFound);
     };
 
     writeln!(stdout, "\nNew release found:")?;
@@ -270,7 +270,10 @@ fn self_update_impl<W: std::io::Write, R: std::io::BufRead>(
             return Err(UpdateError::UserCanceled);
         }
     } else {
-        writeln!(stdout, "\nAutomatic update enabled, proceeding with update...")?;
+        writeln!(
+            stdout,
+            "\nAutomatic update enabled, proceeding with update..."
+        )?;
         info!("Automatic update in progress");
     }
 
@@ -301,7 +304,6 @@ fn self_update_impl<W: std::io::Write, R: std::io::BufRead>(
 
     Ok(result)
 }
-
 
 #[cfg(test)]
 mod tests;

@@ -1,12 +1,24 @@
+codecov:
+  notify:
+    after_n_builds: 2
 coverage:
   range: 55..75
   round: down
   precision: 2
   status:
     project: off
-    patch: off
+    patch:
+      changed-lines:
+        target: 80%
+        threshold: 0%
+        only_pulls: true
+        if_not_found: failure
 comment: false
 flags:
+  rust:
+    paths:
+      - src/
+      - crates/
   frontend:
     paths:
       - web/src/

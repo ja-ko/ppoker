@@ -165,30 +165,30 @@ fn vote_rank(vote: &Vote) -> i32 {
 
 impl PartialOrd<Self> for Vote {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        return vote_rank(&self).partial_cmp(&vote_rank(&other));
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for Vote {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).expect("Unable to compare votes")
+        vote_rank(self).cmp(&vote_rank(other))
     }
 }
 
 impl PartialOrd<Self> for Player {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        let vote_order = self.vote.cmp(&other.vote);
-        if vote_order == Ordering::Equal {
-            Some(self.name.cmp(&other.name))
-        } else {
-            Some(vote_order)
-        }
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for Player {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).expect("Unable to compare players")
+        let vote_order = self.vote.cmp(&other.vote);
+        if vote_order == Ordering::Equal {
+            self.name.cmp(&other.name)
+        } else {
+            vote_order
+        }
     }
 }
 

@@ -34,7 +34,7 @@ fn test_parse_changelog_formatting() {
 
     let lines = page.format_changelog(markdown, 80);
 
-    assert!(lines.len() > 0, "Expected non-empty lines");
+    assert!(!lines.is_empty(), "Expected non-empty lines");
 
     let heading_line_index = lines
         .iter()

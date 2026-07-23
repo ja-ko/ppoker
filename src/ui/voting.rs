@@ -282,9 +282,9 @@ impl VotingPage {
     }
 
     pub fn change_mode(&mut self, mode: InputMode, default_text: String, app: &App) {
-        if mode == InputMode::Vote && app.room().phase == GamePhase::Playing {
-            self.start_input(mode, default_text)
-        } else if mode == InputMode::Name || mode == InputMode::Chat {
+        if matches!(mode, InputMode::Name | InputMode::Chat)
+            || (mode == InputMode::Vote && app.room().phase == GamePhase::Playing)
+        {
             self.start_input(mode, default_text)
         }
     }
@@ -591,11 +591,11 @@ impl VotingPage {
 }
 
 pub(super) fn render_own_vote(
-    players: &Vec<Player>,
+    players: &[Player],
     average_vote: f32,
     phase: GamePhase,
     own_vote: &Option<VoteData>,
-    deck: &Vec<String>,
+    deck: &[String],
     rect: Rect,
     frame: &mut Frame,
 ) {

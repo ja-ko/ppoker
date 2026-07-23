@@ -27,9 +27,9 @@ pnpm run check
 ```
 
 It runs formatting checks, linting, production package verification, TypeScript
-checks, Vitest with coverage, and deterministic Rust/WASM tests in headless
-Chrome. It does not run either ignored live-upstream proof. Native workspace
-tests are separate.
+checks, Vitest, and deterministic Rust/WASM tests in headless Chrome. It does
+not run either ignored live-upstream proof or the separate instrumented coverage
+run. Native workspace tests are separate.
 
 Run `pnpm run wasm:generate` after changing shared Rust models, the WASM facade,
 or generated TypeScript contracts when you need fresh bindings without a full
@@ -59,8 +59,8 @@ pnpm run test:wasm:live
 
 Both commands require network access and the live upstream server. They use
 unique rooms and bounded waits and retries. The workflow runs them as separate
-`live-native` and `live-browser` jobs; branch protection should mark both jobs as
-required checks.
+`Native` and `Browser` jobs; branch protection should mark both jobs as required
+checks.
 
 ## Package Contracts
 

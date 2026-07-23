@@ -1,10 +1,10 @@
-use std::io;
+use crossterm::execute;
+use crossterm::style::Print;
 #[cfg(not(test))]
 use log::error;
 #[cfg(not(test))]
 use notify_rust::{Notification, Timeout};
-use crossterm::{execute};
-use crossterm::style::Print;
+use std::io;
 
 #[cfg_attr(test, mockall::automock)]
 pub trait NotificationHandler {
@@ -27,7 +27,7 @@ pub struct LinuxNotificationHandler;
 impl NotificationHandler for LinuxNotificationHandler {
     fn notify(&self, summary: &str, body: &str) {
         use notify_rust::{Hint, Urgency};
-        
+
         if let Err(e) = Notification::new()
             .summary(summary)
             .body(body)

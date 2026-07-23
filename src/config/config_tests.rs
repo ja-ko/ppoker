@@ -33,8 +33,8 @@ fn test_get_config_from_toml() {
         assert_eq!(config.name, "NebulaNomad");
         assert_eq!(config.server, "wss://test.example.com/");
         assert_eq!(config.room, "test-room");
-        assert_eq!(config.skip_update_check, true);
-        assert_eq!(config.disable_notifications, false); // Default value not overridden
+        assert!(config.skip_update_check);
+        assert!(!config.disable_notifications); // Default value not overridden
     });
 }
 
