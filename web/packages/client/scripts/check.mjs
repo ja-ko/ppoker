@@ -14,6 +14,6 @@ function runPnpm(script, workspaceRoot = false) {
 runPnpm("format:check", true);
 runPnpm("package:verify");
 runPnpm("lint", true);
-runPnpm("typecheck");
-runPnpm("test");
+runPnpm("typecheck:workspace", true);
+runPnpm("test:workspace", true);
 runPnpm("test:wasm");
