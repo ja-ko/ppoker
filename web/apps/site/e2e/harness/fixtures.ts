@@ -7,11 +7,16 @@ import type {
 
 export const fixtureNames = [
   "playing",
+  "dense-playing",
+  "first-playing",
   "revealed",
+  "dense-revealed",
+  "sorted-revealed",
   "next-playing",
   "overflow",
   "connecting",
   "no-room",
+  "closed",
   "terminal-error",
 ] as const;
 
@@ -31,13 +36,27 @@ const names = [
   "Jules",
 ] as const;
 const revealedValues = [5, 3, 5, 8, 5, 3, 8, 5, "?", "Break"] as const;
+const denseNames = [...names, "Kai", "Lina"] as const;
+const denseRevealedValues = [
+  ...revealedValues,
+  13,
+  2,
+] as const satisfies readonly (number | string)[];
 
 export function fixtureSnapshot(name: SnapshotFixtureName): ClientSnapshot {
   switch (name) {
     case "playing":
       return playingSnapshot();
+    case "dense-playing":
+      return densePlayingSnapshot();
+    case "first-playing":
+      return firstPlayingSnapshot();
     case "revealed":
       return revealedSnapshot();
+    case "dense-revealed":
+      return denseRevealedSnapshot();
+    case "sorted-revealed":
+      return sortedRevealedSnapshot();
     case "next-playing":
       return nextPlayingSnapshot();
     case "overflow":
@@ -46,9 +65,11 @@ export function fixtureSnapshot(name: SnapshotFixtureName): ClientSnapshot {
       return baseSnapshot({ revision: 20, status: "connecting" });
     case "no-room":
       return baseSnapshot({ revision: 21, status: "open" });
+    case "closed":
+      return baseSnapshot({ revision: 22, status: "closed" });
     case "terminal-error":
       return baseSnapshot({
-        revision: 22,
+        revision: 23,
         status: "closed",
         terminalError: {
           code: "Transport",
@@ -56,6 +77,20 @@ export function fixtureSnapshot(name: SnapshotFixtureName): ClientSnapshot {
         },
       });
   }
+}
+
+function firstPlayingSnapshot(): ClientSnapshot {
+  return baseSnapshot({
+    revision: 1,
+    room: {
+      deck,
+      name: "First Round Room",
+      phase: "playing",
+      players: names.slice(0, 1).map((name) => player(name, missingVote())),
+    },
+    roundNumber: 1,
+    status: "open",
+  });
 }
 
 export function isSnapshotFixtureName(
@@ -79,6 +114,23 @@ function playingSnapshot(): ClientSnapshot {
   });
 }
 
+function densePlayingSnapshot(): ClientSnapshot {
+  return baseSnapshot({
+    history: completedHistory(8),
+    revision: 14,
+    room: {
+      deck,
+      name: "Dense E2E Room",
+      phase: "playing",
+      players: denseNames.map((name, index) =>
+        player(name, index < 7 ? hiddenVote() : missingVote()),
+      ),
+    },
+    roundNumber: 9,
+    status: "open",
+  });
+}
+
 function revealedSnapshot(): ClientSnapshot {
   return baseSnapshot({
     average: 5.3,
@@ -91,6 +143,68 @@ function revealedSnapshot(): ClientSnapshot {
       players: revealedPlayers(),
     },
     roundNumber: 9,
+    status: "open",
+  });
+}
+
+function denseRevealedSnapshot(): ClientSnapshot {
+  return baseSnapshot({
+    average: 5.8,
+    history: completedHistory(8),
+    revision: 15,
+    room: {
+      deck,
+      name: "Dense E2E Room",
+      phase: "revealed",
+      players: denseNames.map((name, index) => {
+        const value = denseRevealedValues[index];
+        if (value === undefined) {
+          throw new Error("Dense revealed fixture vote missing.");
+        }
+        return player(
+          name,
+          typeof value === "number"
+            ? revealedNumber(value)
+            : revealedSpecial(value),
+        );
+      }),
+    },
+    roundNumber: 9,
+    status: "open",
+  });
+}
+
+function sortedRevealedSnapshot(): ClientSnapshot {
+  const votes = [
+    player("Missing", missingVote()),
+    player("Same", revealedNumber(8)),
+    player("Unknown zebra", revealedSpecial("Zebra")),
+    player("Zoe", revealedNumber(3)),
+    player("Question", revealedSpecial("?")),
+    player("Same", revealedNumber(8)),
+    player("Unknown alpha", revealedSpecial("Alpha")),
+    player("Five", revealedNumber(5)),
+    player("Ada", revealedNumber(3)),
+    player("Break", revealedSpecial("Break")),
+  ];
+  const immutableFinal = {
+    average: 5.4,
+    deck: ["1", "Break", "?"],
+    ownVote: null,
+    roundNumber: 7,
+    votes,
+  } satisfies HistoryEntry;
+  return baseSnapshot({
+    average: 1,
+    history: [immutableFinal],
+    revision: 13,
+    room: {
+      deck: ["1", "?", "Break"],
+      name: "Sorted Reveal Room",
+      phase: "revealed",
+      players: [player("Mutable", revealedNumber(1))],
+    },
+    roundNumber: 7,
     status: "open",
   });
 }

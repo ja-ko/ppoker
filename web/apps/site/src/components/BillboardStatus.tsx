@@ -1,7 +1,7 @@
 import { BILLBOARD_TITLE_PLACEHOLDER } from "../config";
 import { BroadcastHeader } from "./BroadcastHeader";
 import { Panel } from "./ui/Panel";
-import { SectionLabel } from "./ui/SectionLabel";
+import { PanelHeader } from "./ui/PanelHeader";
 
 interface BillboardStatusProps {
   readonly announcementRole?: "alert" | "status";
@@ -38,7 +38,7 @@ export function BillboardStatus({
           className="status-panel"
           role={announcementRole}
         >
-          <SectionLabel>{eyebrow}</SectionLabel>
+          <PanelHeader>{eyebrow}</PanelHeader>
           <h2 id="billboard-status-title">{title}</h2>
           <p className="type-supporting">{detail}</p>
         </Panel>

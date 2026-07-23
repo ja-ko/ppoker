@@ -157,10 +157,9 @@ export function ParticipantGrid(props: ParticipantGridProps) {
   const visibleCount = detailedCount + (hasOverflow ? 1 : 0);
   const overflowCount = count - detailedCount;
   const rows = Math.max(1, Math.ceil(visibleCount / 5));
-  const columns = Math.max(1, Math.ceil(visibleCount / rows));
-  const mobileColumns = Math.max(1, Math.min(2, visibleCount));
+  const mobileColumns = 2;
   const style: ParticipantGridStyle = {
-    "--participant-columns": columns,
+    "--participant-columns": 5,
     "--participant-mobile-columns": mobileColumns,
     "--participant-mobile-rows": Math.max(
       1,
@@ -195,7 +194,7 @@ export function ParticipantGrid(props: ParticipantGridProps) {
 
   return (
     <motion.ol
-      className={`participant-grid participant-grid--${props.phase}`}
+      className={`participant-grid participant-grid--${props.phase}${rows >= 3 ? " participant-grid--dense" : ""}`}
       layout={layoutEnabled}
       style={style}
       transition={{ layout: motionTransition.layout }}

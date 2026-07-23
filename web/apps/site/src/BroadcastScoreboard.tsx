@@ -20,8 +20,8 @@ import { ParticipantGrid } from "./components/ParticipantGrid";
 import { RoundHistory } from "./components/RoundHistory";
 import { VoteDistribution } from "./components/VoteDistribution";
 import { Panel } from "./components/ui/Panel";
+import { PanelHeader } from "./components/ui/PanelHeader";
 import { PresenceText } from "./components/ui/PresenceText";
-import { SectionLabel } from "./components/ui/SectionLabel";
 import type {
   BroadcastScoreboardModel,
   PlayingBroadcast,
@@ -82,27 +82,10 @@ function ResponseTally({
   );
 }
 
-function PreviousRoundContent({
-  result,
-}: {
-  readonly result: RoundResult | undefined;
-}) {
-  if (result === undefined) {
-    return (
-      <div className="previous-round-empty">
-        <SectionLabel>Previous round</SectionLabel>
-        <h2 id="previous-round-empty-title">Awaiting first result</h2>
-        <p className="type-supporting">
-          The first completed round will appear here after reveal.
-        </p>
-      </div>
-    );
-  }
-
+function PreviousRoundContent({ result }: { readonly result: RoundResult }) {
   return (
     <>
       <div className="previous-round-summary">
-        <SectionLabel>Previous round / final</SectionLabel>
         <div className="previous-score">
           <div>
             <h2 id="previous-round-title">
@@ -147,7 +130,6 @@ function FinalTallyContent({ scoreboard }: BroadcastScoreboardProps) {
   return (
     <>
       <div className="result-copy">
-        <SectionLabel>{`Round ${scoreboard.round.toString()} / final tally`}</SectionLabel>
         <p className="result-kicker type-label">Team estimate</p>
         <div className="average-lockup">
           <AnimatePresence initial={false} mode="popLayout">
@@ -196,7 +178,6 @@ const ParticipantHeading = forwardRef<HTMLDivElement, BroadcastScoreboardProps>(
         ref={ref}
       >
         <div className="playing-title">
-          <SectionLabel>{`Round ${scoreboard.round.toString()} / live vote`}</SectionLabel>
           <div className="playing-title-line">
             <h2 id="playing-title">Cards in play</h2>
             <span className="phase-chip type-meta">
@@ -218,7 +199,6 @@ const ParticipantHeading = forwardRef<HTMLDivElement, BroadcastScoreboardProps>(
         ref={ref}
       >
         <div>
-          <SectionLabel>Starting lineup</SectionLabel>
           <h2 id="lineup-title">Participant cards</h2>
         </div>
         <p className="type-meta">
@@ -244,6 +224,11 @@ function ParticipantPanel({ scoreboard }: BroadcastScoreboardProps) {
       {...(layoutEnabled ? { layoutId: PARTICIPANT_PANEL_LAYOUT_ID } : {})}
       transition={{ layout: motionTransition.layout }}
     >
+      <PanelHeader>
+        {playing
+          ? `Round ${scoreboard.round.toString()} / live vote`
+          : "Starting lineup"}
+      </PanelHeader>
       <AnimatePresence initial={false} mode="popLayout">
         <ParticipantHeading key={scoreboard.phase} scoreboard={scoreboard} />
       </AnimatePresence>
@@ -265,7 +250,6 @@ function ParticipantPanel({ scoreboard }: BroadcastScoreboardProps) {
 
 function PhasePanel({ scoreboard }: BroadcastScoreboardProps) {
   const playing = scoreboard.phase === "playing";
-  const hasPreviousResult = playing && scoreboard.previousRound !== undefined;
   const finalMotion = useBroadcastPresence(phasePanelMotion.final);
   const layoutEnabled = useBroadcastLayout();
   const previousMotion = useBroadcastPresence(phasePanelMotion.previous);
@@ -273,23 +257,22 @@ function PhasePanel({ scoreboard }: BroadcastScoreboardProps) {
   return (
     <AnimatePresence initial={false} mode="popLayout">
       {playing ? (
-        <Panel
-          {...previousMotion}
-          accent="vermilion"
-          accentPlacement="top-right"
-          aria-labelledby={
-            hasPreviousResult
-              ? "previous-round-title"
-              : "previous-round-empty-title"
-          }
-          className={`phase-panel previous-round-panel${hasPreviousResult ? "" : " previous-round-panel--empty"}`}
-          data-motion-key="broadcast:previous-round-panel"
-          key="previous-round-panel"
-          layout={layoutEnabled}
-          transition={{ layout: motionTransition.layout }}
-        >
-          <PreviousRoundContent result={scoreboard.previousRound} />
-        </Panel>
+        scoreboard.previousRound === undefined ? null : (
+          <Panel
+            {...previousMotion}
+            accent="vermilion"
+            accentPlacement="top-right"
+            aria-labelledby="previous-round-title"
+            className="phase-panel previous-round-panel"
+            data-motion-key="broadcast:previous-round-panel"
+            key="previous-round-panel"
+            layout={layoutEnabled}
+            transition={{ layout: motionTransition.layout }}
+          >
+            <PanelHeader>Previous round / final</PanelHeader>
+            <PreviousRoundContent result={scoreboard.previousRound} />
+          </Panel>
+        )
       ) : (
         <Panel
           {...finalMotion}
@@ -302,6 +285,7 @@ function PhasePanel({ scoreboard }: BroadcastScoreboardProps) {
           layout={layoutEnabled}
           transition={{ layout: motionTransition.layout }}
         >
+          <PanelHeader>{`Round ${scoreboard.round.toString()} / final tally`}</PanelHeader>
           <FinalTallyContent scoreboard={scoreboard} />
         </Panel>
       )}

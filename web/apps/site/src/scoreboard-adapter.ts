@@ -61,7 +61,7 @@ export function deriveScoreboardModel(
   if (room.phase === "playing") {
     return {
       ...base,
-      participants: playingParticipants(roomPlayers),
+      participants: playingParticipants(room.players),
       phase: "playing",
       ...(newestHistory[0] === undefined
         ? {}
@@ -69,12 +69,11 @@ export function deriveScoreboardModel(
     };
   }
 
-  const finalPlayers = (featuredCurrent?.entry.votes ?? room.players).filter(
-    (player) => player.userType === "player",
-  );
+  const finalPlayers = featuredCurrent?.entry.votes ?? room.players;
+  const finalDeck = featuredCurrent?.entry.deck ?? room.deck;
   return {
     ...base,
-    participants: revealedParticipants(finalPlayers),
+    participants: revealedParticipants(finalPlayers, finalDeck),
     phase: "revealed",
     result:
       featuredCurrent === undefined
@@ -100,31 +99,93 @@ function playingParticipants(
 
 function revealedParticipants(
   players: readonly Player[],
+  deck: readonly string[],
 ): readonly RevealedParticipant[] {
-  return withViewIds(players).map(({ id, player }) => {
-    if (player.vote.state !== "revealed") {
-      return { id, name: player.name, special: true, vote: "-" };
+  const specialDeckOrder = new Map<string, number>();
+  deck.forEach((label, index) => {
+    const key = deckCardKey(label);
+    if (key.startsWith("special:") && !specialDeckOrder.has(key)) {
+      specialDeckOrder.set(key, index);
     }
-    const vote = player.vote.value;
-    return vote.kind === "special"
-      ? { id, name: player.name, special: true, vote: vote.value }
-      : { id, name: player.name, vote: vote.value.toString() };
   });
+
+  return withViewIds(players)
+    .toSorted((left, right) => {
+      const leftVote = left.player.vote;
+      const rightVote = right.player.vote;
+      const leftRank = voteSortRank(leftVote, specialDeckOrder);
+      const rightRank = voteSortRank(rightVote, specialDeckOrder);
+      if (leftRank.group !== rightRank.group) {
+        return leftRank.group - rightRank.group;
+      }
+      if (leftRank.order !== rightRank.order) {
+        return leftRank.order - rightRank.order;
+      }
+      const valueOrder = compareText(leftRank.value, rightRank.value);
+      if (valueOrder !== 0) {
+        return valueOrder;
+      }
+      const nameOrder = compareText(left.player.name, right.player.name);
+      return nameOrder === 0 ? left.sourceIndex - right.sourceIndex : nameOrder;
+    })
+    .map(({ id, player }) => {
+      if (player.vote.state !== "revealed") {
+        return { id, name: player.name, special: true, vote: "-" };
+      }
+      const vote = player.vote.value;
+      return vote.kind === "special"
+        ? { id, name: player.name, special: true, vote: vote.value }
+        : { id, name: player.name, vote: vote.value.toString() };
+    });
+}
+
+interface VoteSortRank {
+  readonly group: number;
+  readonly order: number;
+  readonly value: string;
+}
+
+function voteSortRank(
+  vote: Player["vote"],
+  specialDeckOrder: ReadonlyMap<string, number>,
+): VoteSortRank {
+  if (vote.state !== "revealed") {
+    return { group: 3, order: 0, value: "" };
+  }
+  if (vote.value.kind === "number") {
+    return { group: 0, order: vote.value.value, value: "" };
+  }
+  const deckOrder = specialDeckOrder.get(`special:${vote.value.value}`);
+  return deckOrder === undefined
+    ? { group: 2, order: 0, value: vote.value.value }
+    : { group: 1, order: deckOrder, value: vote.value.value };
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 // Core has no player IDs. Name plus duplicate occurrence is deterministic for
 // one ordered snapshot, but intentionally does not claim server identity.
-function withViewIds(
-  players: readonly Player[],
-): readonly { readonly id: string; readonly player: Player }[] {
+function withViewIds(players: readonly Player[]): readonly {
+  readonly id: string;
+  readonly player: Player;
+  readonly sourceIndex: number;
+}[] {
   const occurrences = new Map<string, number>();
-  return players.map((player) => {
+  return players.flatMap((player, sourceIndex) => {
+    if (player.userType !== "player") {
+      return [];
+    }
     const occurrence = (occurrences.get(player.name) ?? 0) + 1;
     occurrences.set(player.name, occurrence);
-    return {
-      id: `player:${encodeURIComponent(player.name)}:${occurrence.toString()}`,
-      player,
-    };
+    return [
+      {
+        id: `player:${encodeURIComponent(player.name)}:${occurrence.toString()}`,
+        player,
+        sourceIndex,
+      },
+    ];
   });
 }
 

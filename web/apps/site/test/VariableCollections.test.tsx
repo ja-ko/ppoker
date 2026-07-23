@@ -31,6 +31,47 @@ describe("variable scoreboard collections", () => {
     expect(compactLabel(label)).toBe(expected);
   });
 
+  it.each([
+    [1, 1],
+    [5, 1],
+    [6, 2],
+    [10, 2],
+    [11, 3],
+    [12, 3],
+  ] as const)(
+    "uses five desktop tracks and %s visible slots across %s rows",
+    (count, expectedRows) => {
+      const participants = Array.from(
+        { length: count },
+        (_, index): RevealedParticipant => ({
+          id: `geometry-${index.toString()}`,
+          name: `Participant ${(index + 1).toString()}`,
+          vote: "5",
+        }),
+      );
+      const view = render(
+        <ParticipantGrid participants={participants} phase="revealed" />,
+      );
+      const list = view.getByRole("list");
+      const mobileColumns = 2;
+
+      expect(view.getAllByRole("listitem")).toHaveLength(count);
+      expect(list.style.getPropertyValue("--participant-columns")).toBe("5");
+      expect(list.style.getPropertyValue("--participant-rows")).toBe(
+        expectedRows.toString(),
+      );
+      expect(list.style.getPropertyValue("--participant-mobile-columns")).toBe(
+        mobileColumns.toString(),
+      );
+      expect(list.style.getPropertyValue("--participant-mobile-rows")).toBe(
+        Math.ceil(count / mobileColumns).toString(),
+      );
+      expect(list.classList.contains("participant-grid--dense")).toBe(
+        expectedRows >= 3,
+      );
+    },
+  );
+
   it("renders more than ten participant cards using stable IDs", () => {
     const consoleError = vi
       .spyOn(console, "error")
@@ -52,7 +93,7 @@ describe("variable scoreboard collections", () => {
     const list = view.getByRole("list");
 
     expect(view.getAllByRole("listitem")).toHaveLength(12);
-    expect(list.style.getPropertyValue("--participant-columns")).toBe("4");
+    expect(list.style.getPropertyValue("--participant-columns")).toBe("5");
     expect(list.style.getPropertyValue("--participant-rows")).toBe("3");
     expect(list.style.getPropertyValue("--participant-mobile-columns")).toBe(
       "2",
@@ -82,8 +123,12 @@ describe("variable scoreboard collections", () => {
     expect(view.getByText("+7")).toBeDefined();
     expect(view.getByText("Participant 11")).toBeDefined();
     expect(view.queryByText("Participant 12")).toBeNull();
-    expect(list.style.getPropertyValue("--participant-columns")).toBe("4");
+    expect(list.style.getPropertyValue("--participant-columns")).toBe("5");
     expect(list.style.getPropertyValue("--participant-rows")).toBe("3");
+    expect(list.style.getPropertyValue("--participant-mobile-columns")).toBe(
+      "2",
+    );
+    expect(list.style.getPropertyValue("--participant-mobile-rows")).toBe("6");
   });
 
   it("renders a distribution whose option count differs from the fixture", () => {
@@ -133,5 +178,6 @@ describe("variable scoreboard collections", () => {
     expect(view.getByText("Round 3")).toBeDefined();
     expect(view.queryByText("Round 2")).toBeNull();
     expect(view.queryByText("Round 1")).toBeNull();
+    expect(view.container.querySelector(".history-rank")).toBeNull();
   });
 });
