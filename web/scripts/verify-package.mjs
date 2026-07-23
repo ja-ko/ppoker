@@ -114,7 +114,7 @@ try {
         "install",
         lockfileMode,
         "--ignore-scripts",
-        "--offline",
+        ...(lockfileMode === "--frozen-lockfile" ? ["--offline"] : []),
         "--store-dir",
         pnpmStore,
       ],
