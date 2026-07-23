@@ -7,8 +7,8 @@ function runPnpm(script) {
 }
 
 runPnpm("format:check");
-runPnpm("lint");
 runPnpm("package:verify");
+runPnpm("lint");
 runPnpm("typecheck");
 runPnpm("coverage");
 runPnpm("test:wasm");
