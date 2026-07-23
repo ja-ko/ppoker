@@ -10,7 +10,7 @@ import {
 } from "../animation";
 import type { HistoryEntry } from "../scoreboard-model";
 import { Panel } from "./ui/Panel";
-import { SectionLabel } from "./ui/SectionLabel";
+import { PanelHeader } from "./ui/PanelHeader";
 
 interface RoundHistoryProps {
   readonly history: readonly HistoryEntry[];
@@ -19,13 +19,12 @@ interface RoundHistoryProps {
 export const RECENT_HISTORY_LIMIT = 5;
 
 interface HistoryRowProps {
-  readonly index: number;
   readonly item: HistoryEntry;
   readonly layoutEnabled: boolean;
 }
 
 const HistoryRow = forwardRef<HTMLLIElement, HistoryRowProps>(
-  function HistoryRow({ index, item, layoutEnabled }, ref) {
+  function HistoryRow({ item, layoutEnabled }, ref) {
     const itemMotion = useBroadcastPresence(historyItemMotion);
     const isPresent = useIsPresent();
     const motionKey = historyMotionKey(item.id);
@@ -39,9 +38,6 @@ const HistoryRow = forwardRef<HTMLLIElement, HistoryRowProps>(
         ref={ref}
         transition={{ layout: motionTransition.layout }}
       >
-        <span aria-hidden="true" className="history-rank">
-          {String(index + 1).padStart(2, "0")}
-        </span>
         <div>
           <strong>Round {item.round}</strong>
           <time aria-label={`Observed ${item.age}`} className="type-supporting">
@@ -71,8 +67,8 @@ export function RoundHistory({ history }: RoundHistoryProps) {
       layout={layoutEnabled}
       transition={{ layout: motionTransition.layout }}
     >
+      <PanelHeader>Match log</PanelHeader>
       <div className="history-heading">
-        <SectionLabel>Match log</SectionLabel>
         <h2 id="history-title">Round history</h2>
       </div>
       {recentHistory.length === 0 ? (
@@ -87,9 +83,8 @@ export function RoundHistory({ history }: RoundHistoryProps) {
           transition={{ layout: motionTransition.layout }}
         >
           <AnimatePresence initial={false} mode="popLayout">
-            {recentHistory.map((item, index) => (
+            {recentHistory.map((item) => (
               <HistoryRow
-                index={index}
                 item={item}
                 key={item.id}
                 layoutEnabled={layoutEnabled}

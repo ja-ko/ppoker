@@ -43,6 +43,11 @@ describe("BroadcastScoreboard", () => {
     expect(
       roomAccess.querySelector(".qr-code")?.getAttribute("aria-hidden"),
     ).toBe("true");
+    expect(
+      [...view.container.querySelectorAll(".panel")].every((panel) =>
+        panel.firstElementChild?.classList.contains("panel-header"),
+      ),
+    ).toBe(true);
   });
 
   it("renders the revealed votes and final distribution", () => {
@@ -78,9 +83,9 @@ describe("BroadcastScoreboard", () => {
 
     expect(responseTrack.children).toHaveLength(3);
     expect(view.getAllByRole("listitem")).toHaveLength(3);
-    expect(
-      view.getByRole("heading", { name: "Awaiting first result" }),
-    ).toBeDefined();
+    expect(view.container.querySelector(".phase-panel")).toBeNull();
+    expect(view.queryByText("Awaiting first result")).toBeNull();
+    expect(view.getByRole("region", { name: "Round history" })).toBeDefined();
     expect(view.getByText("No completed rounds yet.")).toBeDefined();
     expect(view.queryByText("Final distribution")).toBeNull();
   });

@@ -170,6 +170,91 @@ export async function expectParticipantCardsContained(
   expect(outsideCards).toEqual([]);
 }
 
+export async function expectParticipantCardContentSeparated(
+  page: Page,
+): Promise<void> {
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        [
+          ...document.querySelectorAll<HTMLElement>(
+            ".participant-card:not(.participant-card--overflow)",
+          ),
+        ].flatMap((card) => {
+          const state = card.querySelector<HTMLElement>(
+            ".card-state, .participant-vote",
+          );
+          const name = card.querySelector<HTMLElement>(".participant-name");
+          if (state === null || name === null) {
+            return [
+              `${card.dataset["participantId"] ?? "unknown"}: content missing`,
+            ];
+          }
+          const stateBox = state.getBoundingClientRect();
+          const nameBox = name.getBoundingClientRect();
+          return stateBox.bottom <= nameBox.top + 0.5 &&
+            stateBox.width > 0 &&
+            stateBox.height > 0 &&
+            nameBox.width > 0 &&
+            nameBox.height > 0
+            ? []
+            : [
+                `${card.dataset["participantId"] ?? "unknown"}: state bottom ${stateBox.bottom.toFixed(2)}, name top ${nameBox.top.toFixed(2)}`,
+              ];
+        }),
+      ),
+    )
+    .toEqual([]);
+}
+
+export async function expectPanelHeadersInFlow(page: Page): Promise<void> {
+  const failures = await page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>(".panel")].flatMap((panel) => {
+      const header = panel.firstElementChild;
+      if (!(header instanceof HTMLElement)) {
+        return ["missing first child"];
+      }
+      if (!header.classList.contains("panel-header")) {
+        return [`${panel.className}: first child is not panel-header`];
+      }
+      const panelBox = panel.getBoundingClientRect();
+      const headerBox = header.getBoundingClientRect();
+      const overlappingSibling = [...panel.children]
+        .slice(1)
+        .filter(
+          (element): element is HTMLElement => element instanceof HTMLElement,
+        )
+        .find((element) => {
+          const style = getComputedStyle(element);
+          if (style.display === "none" || style.visibility === "hidden") {
+            return false;
+          }
+          return element.getBoundingClientRect().top < headerBox.bottom - 1;
+        });
+      const failures: string[] = [];
+      if (
+        headerBox.top < panelBox.top - 1 ||
+        headerBox.top > panelBox.bottom + 1
+      ) {
+        failures.push(`${panel.className}: header is outside panel`);
+      }
+      if (overlappingSibling !== undefined) {
+        failures.push(`${panel.className}: header overlaps panel content`);
+      }
+      if (
+        panel.classList.contains("phase-panel") &&
+        headerBox.width < panelBox.width - 4
+      ) {
+        failures.push(
+          `${panel.className}: compound header does not span panel`,
+        );
+      }
+      return failures;
+    }),
+  );
+  expect(failures).toEqual([]);
+}
+
 export async function samplePlayingToRevealed(
   page: Page,
 ): Promise<PhaseTransitionSample> {

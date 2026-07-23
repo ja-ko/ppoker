@@ -291,6 +291,55 @@ describe("snapshot scoreboard adapter", () => {
       ]);
     }
   });
+
+  it("sorts revealed votes after assigning stable IDs using the featured history deck", () => {
+    const immutableFinal = historyEntry(
+      7,
+      [
+        player("Missing", missingVote),
+        player("Same", revealedNumber(8)),
+        player("Unknown zebra", revealedSpecial("Zebra")),
+        player("Zoe", revealedNumber(3)),
+        player("Question", revealedSpecial("?")),
+        player("Observer", revealedNumber(1), "spectator"),
+        player("Same", revealedNumber(8)),
+        player("Unknown alpha", revealedSpecial("Alpha")),
+        player("Five", revealedNumber(5)),
+        player("Ada", revealedNumber(3)),
+        player("Break", revealedSpecial("Break")),
+      ],
+      ["1", "Break", "?"],
+    );
+    const snapshot = openSnapshot({
+      history: [immutableFinal],
+      room: {
+        deck: ["1", "?", "Break"],
+        name: "sorted",
+        phase: "revealed",
+        players: [player("Mutable", revealedNumber(1))],
+      },
+      roundNumber: 7,
+    });
+
+    const model = deriveScoreboardModel(snapshot, "sorted", timing);
+    expect(model?.phase).toBe("revealed");
+    if (model?.phase === "revealed") {
+      expect(
+        model.participants.map(({ id, name, vote }) => [id, name, vote]),
+      ).toEqual([
+        ["player:Ada:1", "Ada", "3"],
+        ["player:Zoe:1", "Zoe", "3"],
+        ["player:Five:1", "Five", "5"],
+        ["player:Same:1", "Same", "8"],
+        ["player:Same:2", "Same", "8"],
+        ["player:Break:1", "Break", "Break"],
+        ["player:Question:1", "Question", "?"],
+        ["player:Unknown%20alpha:1", "Unknown alpha", "Alpha"],
+        ["player:Unknown%20zebra:1", "Unknown zebra", "Zebra"],
+        ["player:Missing:1", "Missing", "-"],
+      ]);
+    }
+  });
 });
 
 const missingVote = { state: "missing" } as const satisfies Vote;

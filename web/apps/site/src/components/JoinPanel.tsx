@@ -1,6 +1,6 @@
 import { motionTransition, useBroadcastLayout } from "../animation";
 import { Panel } from "./ui/Panel";
-import { SectionLabel } from "./ui/SectionLabel";
+import { PanelHeader } from "./ui/PanelHeader";
 
 interface JoinPanelProps {
   readonly roomCode: string;
@@ -85,10 +85,11 @@ export function JoinPanel({ roomCode, roomName }: JoinPanelProps) {
       layout={layoutEnabled}
       transition={{ layout: motionTransition.layout }}
     >
-      <div className="join-topline">
-        <SectionLabel>Room access</SectionLabel>
-        <span className="open-badge type-meta">Preview</span>
-      </div>
+      <PanelHeader
+        trailing={<span className="open-badge type-meta">Preview</span>}
+      >
+        Room access
+      </PanelHeader>
       <div className="join-content">
         <PseudoQrPreview />
         <div className="room-code">

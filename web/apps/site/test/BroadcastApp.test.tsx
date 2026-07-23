@@ -17,6 +17,12 @@ describe("spectator broadcast app", () => {
     );
     expect(view.getByText("Connecting to room")).toBeDefined();
     expect(view.getAllByRole("status")).toHaveLength(1);
+    expect(view.container.querySelector(".scorebug")?.classList).toContain(
+      "scorebug--status",
+    );
+    expect(view.container.querySelector(".scorebug")?.children).toHaveLength(2);
+    expect(view.container.querySelector(".broadcast-meta")).toBeNull();
+    expect(view.container.querySelector(".live-flag")).toBeNull();
 
     act(() => {
       fake.publish(makeSnapshot({ revision: 2, status: "open" }));
@@ -69,6 +75,12 @@ describe("spectator broadcast app", () => {
       <BroadcastApp client={fake.client} connectError={null} room="planning" />,
     );
     expect(view.getByRole("heading", { name: "Cards in play" })).toBeDefined();
+    expect(
+      view.container
+        .querySelector(".scorebug")
+        ?.classList.contains("scorebug--status"),
+    ).toBe(false);
+    expect(view.container.querySelector(".scorebug")?.children).toHaveLength(4);
 
     act(() => {
       fake.publish(
@@ -103,6 +115,60 @@ describe("spectator broadcast app", () => {
     expect(fake.client[Symbol.dispose]).not.toHaveBeenCalled();
     view.unmount();
     expect(fake.client.close).not.toHaveBeenCalled();
+  });
+
+  it("replaces an established scoreboard with terminal and closed status headers", () => {
+    const fake = createFakeClient(
+      openSnapshot({
+        room: {
+          deck: ["1", "5"],
+          name: "Established room",
+          phase: "playing",
+          players: [player("Ada", { state: "hidden" })],
+        },
+        roundNumber: 4,
+      }),
+    );
+    const view = render(
+      <BroadcastApp client={fake.client} connectError={null} room="planning" />,
+    );
+
+    expect(view.getByRole("heading", { name: "Cards in play" })).toBeDefined();
+    expect(view.container.querySelector(".broadcast-meta")).not.toBeNull();
+    expect(view.container.querySelector(".live-flag")).not.toBeNull();
+
+    act(() => {
+      fake.publish(
+        makeSnapshot({
+          revision: 2,
+          status: "closed",
+          terminalError: { code: "Transport", message: "terminal fixture" },
+        }),
+      );
+    });
+    expect(view.getByRole("alert")).toBeDefined();
+    expect(view.getByText("Connection ended")).toBeDefined();
+    expect(view.queryByText("Cards in play")).toBeNull();
+    expect(view.container.querySelector(".broadcast-main")).toBeNull();
+    expect(view.container.querySelector(".broadcast-meta")).toBeNull();
+    expect(view.container.querySelector(".live-flag")).toBeNull();
+    expect(view.container.querySelector(".scorebug")?.classList).toContain(
+      "scorebug--status",
+    );
+    expect(view.container.querySelector(".scorebug")?.children).toHaveLength(2);
+    expect(
+      view.container.querySelector(".status-panel")?.firstElementChild
+        ?.classList,
+    ).toContain("panel-header");
+
+    act(() => {
+      fake.publish(makeSnapshot({ revision: 3, status: "closed" }));
+    });
+    expect(view.getByRole("alert")).toBeDefined();
+    expect(view.getByText("Connection closed")).toBeDefined();
+    expect(view.container.querySelector(".broadcast-meta")).toBeNull();
+    expect(view.container.querySelector(".live-flag")).toBeNull();
+    expect(fake.client.connect).not.toHaveBeenCalled();
   });
 
   it("renders a synchronous connection failure before a snapshot opens", () => {

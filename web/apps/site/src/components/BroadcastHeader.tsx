@@ -31,7 +31,9 @@ export function BroadcastHeader({
   const layoutEnabled = useBroadcastLayout();
 
   return (
-    <header className="scorebug">
+    <header
+      className={`scorebug${phase === "status" ? " scorebug--status" : ""}`}
+    >
       <div className="brand-block">
         <div aria-hidden="true" className="brand-mark">
           PP
@@ -55,33 +57,37 @@ export function BroadcastHeader({
         </motion.h1>
       </div>
 
-      <dl className="broadcast-meta">
-        <div>
-          <dt className="type-label">Phase</dt>
-          <AnimatePresence initial={false} mode="popLayout">
-            <PresenceText as="dd" key={phaseLabel}>
-              {phaseLabel}
-            </PresenceText>
-          </AnimatePresence>
-        </div>
-        <div>
-          <dt className="type-label">Round</dt>
-          <AnimatePresence initial={false} mode="popLayout">
-            <PresenceText as="dd" key={round ?? "none"}>
-              {round === null ? "--" : String(round).padStart(2, "0")}
-            </PresenceText>
-          </AnimatePresence>
-        </div>
-        <div>
-          <dt className="type-label">Observed</dt>
-          <dd>{observed}</dd>
-        </div>
-      </dl>
+      {phase === "status" ? null : (
+        <>
+          <dl className="broadcast-meta">
+            <div>
+              <dt className="type-label">Phase</dt>
+              <AnimatePresence initial={false} mode="popLayout">
+                <PresenceText as="dd" key={phaseLabel}>
+                  {phaseLabel}
+                </PresenceText>
+              </AnimatePresence>
+            </div>
+            <div>
+              <dt className="type-label">Round</dt>
+              <AnimatePresence initial={false} mode="popLayout">
+                <PresenceText as="dd" key={round ?? "none"}>
+                  {round === null ? "--" : String(round).padStart(2, "0")}
+                </PresenceText>
+              </AnimatePresence>
+            </div>
+            <div>
+              <dt className="type-label">Observed</dt>
+              <dd>{observed}</dd>
+            </div>
+          </dl>
 
-      <div className="live-flag type-label">
-        <span aria-hidden="true" />
-        {phase === "status" ? "Spectator" : "Live"}
-      </div>
+          <div className="live-flag type-label">
+            <span aria-hidden="true" />
+            Live
+          </div>
+        </>
+      )}
     </header>
   );
 }
