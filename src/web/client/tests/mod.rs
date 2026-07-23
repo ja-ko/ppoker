@@ -132,8 +132,7 @@ fn app_processes_post_startup_notification_and_auto_reveal_transitions_in_order(
         two_player_event(Vote::Missing, Vote::Hidden),
         two_player_event(Vote::Revealed(VoteData::Number(5)), Vote::Hidden),
     ]);
-    let mut config = Config::default();
-    config.disable_auto_reveal = false;
+    let config = Config::default();
     let mut app = App::from_client(config, client);
 
     app.update().unwrap();
@@ -530,9 +529,11 @@ fn real_upstream_accepts_native_participants() {
     let mut failures = vec![];
 
     for attempt in 1..=3 {
-        let mut config = Config::default();
-        config.room = format!("native-live-{unique}-{attempt}");
-        config.name = format!("native-live-participant-{unique}-{attempt}");
+        let config = Config {
+            room: format!("native-live-{unique}-{attempt}"),
+            name: format!("native-live-participant-{unique}-{attempt}"),
+            ..Config::default()
+        };
         let room_name = config.room.clone();
         let participant_prefix = config.name.clone();
         let (result_tx, result_rx) = mpsc::channel();

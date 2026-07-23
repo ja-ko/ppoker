@@ -29,6 +29,7 @@ jobs:
           bin: ppoker
           include: LICENSE,README.md
           leading-dir: true
+          locked: true
           # (optional) Target triple, default is host triple.
           target: ${{ matrix.target }}
           # (optional) On which platform to distribute the `.tar.gz` file.
@@ -39,7 +40,5 @@ jobs:
           # [default value: windows]
           # [possible values: all, unix, windows, none]
           zip: windows
-          # (optional) Build with the given set of features if any.
-          features: ${{ matrix.features || '' }}
           # (required) GitHub token for uploading assets to GitHub Releases.
           token: ${{ secrets.GITHUB_TOKEN }}

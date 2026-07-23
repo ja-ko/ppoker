@@ -44,8 +44,8 @@ impl Page for HistoryPage {
         self.render_footer(app, footer, frame);
     }
 
-    fn input(&mut self, _app: &mut App, event: KeyEvent) -> AppResult<UIAction> {
-        return Ok(match event.code {
+    fn input(&mut self, app: &mut App, event: KeyEvent) -> AppResult<UIAction> {
+        Ok(match event.code {
             KeyCode::Char('q') => UIAction::Quit,
             KeyCode::Esc => UIAction::ChangeView(UiPage::Voting),
             KeyCode::Char(c) if c == 'v' || c == '-' || c == 'h' || c.is_ascii_digit() => {
@@ -54,8 +54,8 @@ impl Page for HistoryPage {
             KeyCode::Down => {
                 if let Some(s) = self.history_state.selected() {
                     let mut new_index = s.saturating_add(1);
-                    if new_index >= _app.history().len() {
-                        new_index = _app.history().len().saturating_sub(1);
+                    if new_index >= app.history().len() {
+                        new_index = app.history().len().saturating_sub(1);
                     }
                     self.history_state.select(Some(new_index));
                 }
@@ -68,7 +68,7 @@ impl Page for HistoryPage {
                 UIAction::Continue
             }
             _ => UIAction::Continue,
-        });
+        })
     }
 }
 
@@ -94,7 +94,7 @@ impl HistoryPage {
                 frame,
             );
 
-            render_player_list(&current_entry, players, frame);
+            render_player_list(current_entry, players, frame);
         }
         self.render_history(app, history, frame);
     }

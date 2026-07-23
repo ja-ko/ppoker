@@ -113,7 +113,7 @@ impl TextInput {
     }
 
     pub fn paste(&mut self, text: &str) {
-        self.input_buffer.insert_str(self.cursor_position, &text);
+        self.input_buffer.insert_str(self.cursor_position, text);
         self.cursor_position += text.chars().map(|c| c.len_utf8()).sum::<usize>();
     }
 

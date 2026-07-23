@@ -47,7 +47,7 @@ fn setup_logging() -> AppResult<()> {
             .and_then(|metadata| FileTime::from_creation_time(&metadata))
     });
 
-    let delete_files = existing_files.len().checked_sub(MAX_LOGFILES).unwrap_or(0);
+    let delete_files = existing_files.len().saturating_sub(MAX_LOGFILES);
     if delete_files > 0 {
         let drain = existing_files.drain(..delete_files);
 

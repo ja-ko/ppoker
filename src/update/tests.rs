@@ -32,8 +32,7 @@ fn mock_update(current_version: &str, latest_version: &str) -> MockUpdateOperati
 
 #[test]
 fn test_self_update() {
-    let mut mock_config = Config::default();
-    mock_config.keep_backup_on_update = true;
+    let mock_config = Config::default();
 
     let mut output = Vec::new();
 

@@ -1,4 +1,5 @@
 /target
+/lcov.info
 /crates/ppoker-wasm/pkg/
 /web/node_modules/
 /web/dist/

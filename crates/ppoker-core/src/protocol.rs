@@ -171,7 +171,7 @@ fn parse_vote(user: &User) -> Vote {
     if user.card_value == "✅" {
         return Vote::Hidden;
     }
-    if user.card_value == "❌" || user.card_value == "" {
+    if user.card_value == "❌" || user.card_value.is_empty() {
         return Vote::Missing;
     }
 
@@ -179,16 +179,14 @@ fn parse_vote(user: &User) -> Vote {
         return Vote::Missing;
     }
 
-    let parsed = user.card_value.parse::<u8>();
-    return if parsed.is_err() {
-        Vote::Revealed(VoteData::Special(user.card_value.clone()))
-    } else {
-        Vote::Revealed(VoteData::Number(parsed.unwrap()))
-    };
+    match user.card_value.parse::<u8>() {
+        Ok(value) => Vote::Revealed(VoteData::Number(value)),
+        Err(_) => Vote::Revealed(VoteData::Special(user.card_value.clone())),
+    }
 }
 
 impl From<GamePhase> for AppGamePhase {
-    fn from(value: GamePhase) -> AppGamePhase {
+    fn from(value: GamePhase) -> Self {
         match value {
             GamePhase::CardsRevealed => AppGamePhase::Revealed,
             GamePhase::Playing => AppGamePhase::Playing,
@@ -201,7 +199,7 @@ impl From<GamePhase> for AppGamePhase {
 }
 
 impl From<UserType> for AppUserType {
-    fn from(value: UserType) -> AppUserType {
+    fn from(value: UserType) -> Self {
         match value {
             UserType::Spectator => AppUserType::Spectator,
             UserType::Participant => AppUserType::Player,
@@ -214,30 +212,30 @@ impl From<UserType> for AppUserType {
 }
 
 impl From<&User> for Player {
-    fn from(value: &User) -> Player {
-        let vote = if value.your_user && value.card_value.eq("") {
+    fn from(user: &User) -> Self {
+        let vote = if user.your_user && user.card_value.is_empty() {
             Vote::Missing
         } else {
-            parse_vote(value)
+            parse_vote(user)
         };
 
         Player {
             vote,
-            name: value.username.clone(),
-            is_you: value.your_user,
-            user_type: value.user_type.into(),
+            name: user.username.clone(),
+            is_you: user.your_user,
+            user_type: user.user_type.into(),
         }
     }
 }
 
 impl From<&Room> for AppRoom {
-    fn from(value: &Room) -> AppRoom {
-        let players = value.users.iter().map(|user| user.into()).collect();
+    fn from(room: &Room) -> Self {
+        let players = room.users.iter().map(|user| user.into()).collect();
 
         AppRoom {
-            name: value.room_id.clone(),
-            deck: value.deck.clone(),
-            phase: value.game_phase.into(),
+            name: room.room_id.clone(),
+            deck: room.deck.clone(),
+            phase: room.game_phase.into(),
             players,
         }
     }

@@ -120,7 +120,7 @@ fn footer_entries(entries: Vec<FooterEntry>) -> Paragraph<'static> {
                 let shortcut_char_start = pos;
                 let shortcut_char_end = char_indices
                     .find(|(idx, _)| *idx == pos)
-                    .and_then(|(_, c)| Some(pos + c.len_utf8()))
+                    .map(|(_, c)| pos + c.len_utf8())
                     .unwrap_or(pos + 1);
 
                 if shortcut_char_start > 0 {

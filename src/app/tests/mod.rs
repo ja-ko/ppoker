@@ -127,10 +127,12 @@ fn create_test_app_with_startup_events(
     transport: Box<dyn Transport>,
     events: impl IntoIterator<Item = TransportEvent>,
 ) -> App {
-    let mut config = Config::default();
-    config.server = "wss://mocked".to_owned();
-    config.name = "test".to_owned();
-    config.room = "test-room".to_owned();
+    let config = Config {
+        server: "wss://mocked".to_owned(),
+        name: "test".to_owned(),
+        room: "test-room".to_owned(),
+        ..Config::default()
+    };
     let client_updates = Rc::new(RefCell::new(InjectedTransportState {
         events: events.into_iter().collect(),
         ..InjectedTransportState::default()
