@@ -1,7 +1,8 @@
 # Web/WASM Maintainer Guide
 
 This directory contains the private TypeScript and React package built on the
-shared Rust client. Run pnpm commands from `web/` unless noted otherwise.
+shared Rust client. Run pnpm commands from the workspace root, `web/`, unless
+noted otherwise.
 
 ## Prerequisites
 
@@ -33,14 +34,15 @@ run. Native workspace tests are separate.
 
 Run `pnpm run wasm:generate` after changing shared Rust models, the WASM facade,
 or generated TypeScript contracts when you need fresh bindings without a full
-build. Generation deletes and recreates `src/generated/ppoker-wasm/` using
-`wasm-pack build --target web`.
+build. Generation deletes and recreates
+`packages/client/src/generated/ppoker-wasm/` using `wasm-pack build --target
+web`.
 
-`pnpm run build` cleans `dist/`, regenerates WASM, emits declarations, and builds
-both package entrypoints. `pnpm run package:verify` performs that build, packs
-and installs an offline isolated consumer, checks both public entrypoints, and
-loads the packaged WASM in Chromium. The aggregate check already runs package
-verification once.
+`pnpm run build` cleans `packages/client/dist/`, regenerates WASM, emits
+declarations, and builds both package entrypoints. `pnpm run package:verify`
+performs that build, packs and installs an offline isolated consumer, checks both
+public entrypoints, and loads the packaged WASM in Chromium. The aggregate check
+already runs package verification once.
 
 ## Live Upstream Checks
 
@@ -100,6 +102,7 @@ more than once.
 `PokerClientProvider` is non-owning. Mounting and unmounting only add or remove
 React subscriptions; they never connect, close, or dispose the supplied client.
 
-Generated bindings under `src/generated/ppoker-wasm/`, production output under
-`dist/`, coverage output, package archives, and `node_modules/` are disposable
-and ignored. Regenerate them; do not edit or commit them.
+Generated bindings under `packages/client/src/generated/ppoker-wasm/`,
+production output under `packages/client/dist/`, coverage output, package
+archives, and `node_modules/` are disposable and ignored. Regenerate them; do
+not edit or commit them.

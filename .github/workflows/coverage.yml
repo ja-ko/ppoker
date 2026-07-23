@@ -70,7 +70,7 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           disable_search: true
-          files: web/coverage/lcov.info
+          files: web/packages/client/coverage/lcov.info
           flags: frontend
           name: frontend
           token: ${{ secrets.CODECOV_TOKEN }}

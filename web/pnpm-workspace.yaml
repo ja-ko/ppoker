@@ -1,4 +1,4 @@
 packages:
-  - "."
+  - "packages/*"
 
 minimumReleaseAge: 7200

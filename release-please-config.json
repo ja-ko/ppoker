@@ -9,7 +9,7 @@
         "README.md",
         {
           "type": "json",
-          "path": "web/package.json",
+          "path": "web/packages/client/package.json",
           "jsonpath": "$.version"
         }
       ]

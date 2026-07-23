@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { packageRoot, runChecked, wasmPackInvocation } from "./subprocess.mjs";
 
-const repositoryRoot = join(packageRoot, "..");
+const repositoryRoot = join(packageRoot, "../../..");
 const wasmPack = wasmPackInvocation();
 const arguments_ = process.argv.slice(2);
 
