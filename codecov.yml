@@ -21,7 +21,7 @@ flags:
       - crates/
   frontend:
     paths:
-      - web/src/
+      - web/packages/client/src/
 ignore:
-  - web/src/generated/**
-  - web/dist/**
+  - web/packages/client/src/generated/**
+  - web/packages/client/dist/**

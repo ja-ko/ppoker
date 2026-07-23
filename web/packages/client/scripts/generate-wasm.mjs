@@ -11,7 +11,7 @@ await mkdir(dirname(output), { recursive: true });
 runChecked(wasmPack.command, [
   ...wasmPack.arguments,
   "build",
-  join(packageRoot, "../crates/ppoker-wasm"),
+  join(packageRoot, "../../../crates/ppoker-wasm"),
   "--target",
   "web",
   "--out-dir",
