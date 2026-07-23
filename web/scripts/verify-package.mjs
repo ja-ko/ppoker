@@ -261,8 +261,10 @@ try {
     room: "package smoke",
     name: "Browser",
     role: "participant",
-  }, { pollIntervalMs: 5 });
-  if ("free" in client) throw new Error("authored client exposed raw free");
+  });
+  if ("free" in client || "poll" in client) {
+    throw new Error("authored client exposed a raw lifecycle method");
+  }
   const initial = client.getSnapshot();
   client.connect();
   const socket = sockets[0];
@@ -290,7 +292,7 @@ try {
   const closed = client.getSnapshot();
   if (initial.status !== "disconnected" || open.status !== "open" ||
       closed.status !== "closed" || closed.revision !== open.revision + 1 ||
-      closed.terminalError !== null || client.poll() || wasmRequests !== 1 ||
+      closed.terminalError !== null || wasmRequests !== 1 ||
       socket.closeCount !== 1 || socket.readyState !== 3 ||
       [socket.onopen, socket.onmessage, socket.onerror, socket.onclose].some(Boolean)) {
     throw new Error("packaged connected lifecycle cleanup failed");
@@ -348,7 +350,7 @@ try {
   }
 
   console.log(
-    "verified isolated package runtime/types/manifest, no maps/raw free, React SSR/peer boundaries, and Chromium WASM connected cleanup",
+    "verified isolated package runtime/types/manifest, no maps/raw lifecycle methods, React SSR/peer boundaries, and Chromium WASM connected cleanup",
   );
 } finally {
   await fs.rm(temporaryRoot, { force: true, recursive: true });

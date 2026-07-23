@@ -93,7 +93,6 @@ export function createFakeClient(initial = makeSnapshot()) {
       };
     }),
     connect: vi.fn<() => void>(),
-    poll: vi.fn<() => boolean>(() => false),
     vote: vi.fn<(value: string) => void>(),
     retractVote: vi.fn<() => void>(),
     rename: vi.fn<(name: string) => void>(),

@@ -215,6 +215,64 @@ fn text_events_deliver_full_room_snapshots() {
 }
 
 #[test]
+fn transport_events_can_be_applied_directly_without_changing_poll_batches() {
+    let (mut direct, direct_state) = fake_client(vec![]);
+    let connecting_revision = direct.revision();
+
+    let opened = direct
+        .handle_transport_event(TransportEvent::Opened)
+        .unwrap();
+    assert!(opened.changed);
+    assert!(opened.updates.is_empty());
+    assert_eq!(direct.status(), ConnectionStatus::Open);
+    assert_eq!(direct.revision(), connecting_revision + 1);
+
+    let room = direct
+        .handle_transport_event(room_event("PLAYING", &[("Alice", "", true)]))
+        .unwrap();
+    assert!(room.changed);
+    assert_eq!(room.updates.len(), 1);
+    assert_eq!(
+        room_transition(&room.updates[0]).room.phase,
+        GamePhase::Playing
+    );
+
+    let revision = direct.revision();
+    let binary = direct
+        .handle_transport_event(TransportEvent::Binary { length: 3 })
+        .unwrap();
+    assert!(!binary.changed);
+    assert!(binary.updates.is_empty());
+    assert_eq!(direct.revision(), revision);
+
+    let error = direct
+        .handle_transport_event(TransportEvent::Error("network failed".to_string()))
+        .unwrap_err();
+    assert_eq!(error.code, ClientErrorCode::Transport);
+    assert_eq!(direct.status(), ConnectionStatus::Closed);
+    assert_eq!(direct.terminal_error(), Some(&error));
+    assert_eq!(direct_state.borrow().closes, 1);
+    let revision = direct.revision();
+
+    let late = direct
+        .handle_transport_event(TransportEvent::Opened)
+        .unwrap_err();
+    assert_eq!(late.code, ClientErrorCode::Closed);
+    assert_eq!(direct.status(), ConnectionStatus::Closed);
+    assert_eq!(direct.revision(), revision);
+
+    let (mut polled, _) = fake_client(vec![
+        TransportEvent::Opened,
+        room_event("PLAYING", &[("Alice", "", true)]),
+    ]);
+    let revision = polled.revision();
+    let outcome = polled.poll().unwrap();
+    assert!(outcome.changed);
+    assert_eq!(outcome.updates.len(), 1);
+    assert_eq!(polled.revision(), revision + 1);
+}
+
+#[test]
 fn poll_applies_all_available_room_snapshots_in_order() {
     let (mut client, _) = fake_client(vec![
         TransportEvent::Opened,

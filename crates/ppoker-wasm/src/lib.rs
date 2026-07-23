@@ -1,12 +1,16 @@
-#[cfg(any(test, target_arch = "wasm32"))]
-use std::rc::Rc;
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
 #[cfg(target_arch = "wasm32")]
 use std::time::Duration;
 
+#[cfg(target_arch = "wasm32")]
+use js_sys::Function;
 use js_sys::{Error as JsError, Reflect};
 #[cfg(any(test, target_arch = "wasm32"))]
 use ppoker_core::client::Clock;
-use ppoker_core::client::{Client, ClientError, ClientErrorCode, ConnectionStatus, Transport};
+use ppoker_core::client::{
+    Client, ClientError, ClientErrorCode, ConnectionStatus, Transport, TransportEvent,
+};
 #[cfg(any(test, target_arch = "wasm32"))]
 use ppoker_core::protocol::build_room_url;
 use ppoker_core::protocol::ConnectionRole;
@@ -16,8 +20,6 @@ use wasm_bindgen::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
 mod transport;
-#[cfg(any(test, target_arch = "wasm32"))]
-mod transport_queue;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize, Tsify)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -55,7 +57,9 @@ impl InvalidOptionsError {
     }
 }
 
-type TransportFactory = Box<dyn FnMut(&str) -> Result<Box<dyn Transport>, String>>;
+type EventSink = Rc<dyn Fn(TransportEvent)>;
+type ChangeNotifier = Rc<dyn Fn()>;
+type TransportFactory = Box<dyn FnMut(&str, EventSink) -> Result<Box<dyn Transport>, String>>;
 
 #[cfg(target_arch = "wasm32")]
 struct BrowserClock {
@@ -89,7 +93,7 @@ impl Clock for BrowserClock {
 #[wasm_bindgen]
 pub struct WasmPokerClient {
     room_url: String,
-    client: Client,
+    client: Rc<RefCell<Client>>,
     transport_factory: TransportFactory,
 }
 
@@ -113,10 +117,56 @@ impl WasmPokerClient {
 
         Ok(Self {
             room_url,
-            client: Client::new(options.name, clock),
+            client: Rc::new(RefCell::new(Client::new(options.name, clock))),
             transport_factory,
         })
     }
+}
+
+impl WasmPokerClient {
+    fn connect_with_notifier(&mut self, notifier: ChangeNotifier) -> Result<(), JsValue> {
+        match self.client.borrow().status() {
+            ConnectionStatus::Connecting | ConnectionStatus::Open => return Ok(()),
+            ConnectionStatus::Closed => {
+                return Err(client_error_to_js(ClientError::closed("Client is closed.")))
+            }
+            ConnectionStatus::Disconnected => {}
+        }
+
+        let events = event_sink(Rc::downgrade(&self.client), notifier);
+        let transport = match (self.transport_factory)(&self.room_url, events) {
+            Ok(transport) => transport,
+            Err(_reason) => {
+                let error = self
+                    .client
+                    .borrow_mut()
+                    .fail_transport("WebSocket connection could not be created.");
+                return Err(client_error_to_js(error));
+            }
+        };
+        self.client
+            .borrow_mut()
+            .connect(transport)
+            .map(|_| ())
+            .map_err(client_error_to_js)
+    }
+}
+
+fn event_sink(client: Weak<RefCell<Client>>, notifier: ChangeNotifier) -> EventSink {
+    Rc::new(move |event| {
+        let Some(client) = client.upgrade() else {
+            return;
+        };
+        let changed = {
+            let mut client = client.borrow_mut();
+            let revision = client.revision();
+            let _ = client.handle_transport_event(event);
+            client.revision() != revision
+        };
+        if changed {
+            notifier();
+        }
+    })
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -173,84 +223,85 @@ impl WasmPokerClient {
         Self::from_options(
             options,
             clock,
-            Box::new(|url| {
-                transport::BrowserTransport::connect(url)
+            Box::new(|url, events| {
+                transport::BrowserTransport::connect(url, events)
                     .map(|transport| Box::new(transport) as Box<dyn Transport>)
             }),
         )
         .map_err(invalid_options_to_js)
     }
 
-    pub fn connect(&mut self) -> Result<(), JsValue> {
-        match self.client.status() {
-            ConnectionStatus::Connecting | ConnectionStatus::Open => return Ok(()),
-            ConnectionStatus::Closed => {
-                return Err(client_error_to_js(ClientError::closed("Client is closed.")))
-            }
-            ConnectionStatus::Disconnected => {}
-        }
-
-        let transport = match (self.transport_factory)(&self.room_url) {
-            Ok(transport) => transport,
-            Err(_reason) => {
-                let error = self
-                    .client
-                    .fail_transport("WebSocket connection could not be created.");
-                return Err(client_error_to_js(error));
-            }
-        };
-        self.client
-            .connect(transport)
-            .map(|_| ())
-            .map_err(client_error_to_js)
+    #[cfg(target_arch = "wasm32")]
+    pub fn connect(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "() => void")] on_change: Function,
+    ) -> Result<(), JsValue> {
+        self.connect_with_notifier(Rc::new(move || {
+            let _ = on_change.call0(&JsValue::UNDEFINED);
+        }))
     }
 
-    pub fn poll(&mut self) -> bool {
-        if self.client.status() == ConnectionStatus::Closed {
-            return false;
-        }
-
-        let revision = self.client.revision();
-        match self.client.poll() {
-            Ok(outcome) => outcome.changed,
-            Err(_) => self.client.revision() != revision,
-        }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn connect(&mut self) -> Result<(), JsValue> {
+        self.connect_with_notifier(Rc::new(|| {}))
     }
 
     #[wasm_bindgen(unchecked_return_type = "ClientSnapshot")]
     pub fn snapshot(&self) -> Result<JsValue, JsValue> {
-        let snapshot = self.client.snapshot().map_err(client_error_to_js)?;
+        let snapshot = self
+            .client
+            .borrow()
+            .snapshot()
+            .map_err(client_error_to_js)?;
         serialize_js(&snapshot).map_err(client_error_to_js)
     }
 
     pub fn vote(&mut self, value: &str) -> Result<(), JsValue> {
-        self.client.vote(value).map_err(client_error_to_js)
+        self.client
+            .borrow_mut()
+            .vote(value)
+            .map_err(client_error_to_js)
     }
 
     #[wasm_bindgen(js_name = retractVote)]
     pub fn retract_vote(&mut self) -> Result<(), JsValue> {
-        self.client.retract_vote().map_err(client_error_to_js)
+        self.client
+            .borrow_mut()
+            .retract_vote()
+            .map_err(client_error_to_js)
     }
 
     pub fn rename(&mut self, name: String) -> Result<(), JsValue> {
-        self.client.rename(name).map_err(client_error_to_js)
+        self.client
+            .borrow_mut()
+            .rename(name)
+            .map_err(client_error_to_js)
     }
 
     pub fn chat(&mut self, message: String) -> Result<(), JsValue> {
-        self.client.chat(message).map_err(client_error_to_js)
+        self.client
+            .borrow_mut()
+            .chat(message)
+            .map_err(client_error_to_js)
     }
 
     pub fn reveal(&mut self) -> Result<(), JsValue> {
-        self.client.reveal().map_err(client_error_to_js)
+        self.client
+            .borrow_mut()
+            .reveal()
+            .map_err(client_error_to_js)
     }
 
     #[wasm_bindgen(js_name = startNewRound)]
     pub fn start_new_round(&mut self) -> Result<(), JsValue> {
-        self.client.restart().map_err(client_error_to_js)
+        self.client
+            .borrow_mut()
+            .restart()
+            .map_err(client_error_to_js)
     }
 
     pub fn close(&mut self) {
-        self.client.close();
+        self.client.borrow_mut().close();
     }
 }
 

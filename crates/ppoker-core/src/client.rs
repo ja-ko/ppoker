@@ -158,6 +158,12 @@ struct PublicState {
     terminal_error: Option<ClientError>,
 }
 
+struct TransportEventEffect {
+    state_changed: bool,
+    update: Option<ClientUpdate>,
+    error: Option<ClientError>,
+}
+
 pub struct Client {
     transport: Option<Box<dyn Transport>>,
     status: ConnectionStatus,
@@ -311,6 +317,24 @@ impl Client {
         self.poll_inner(true)
     }
 
+    pub fn handle_transport_event(&mut self, event: TransportEvent) -> ClientResult<PollOutcome> {
+        if self.status == ConnectionStatus::Closed {
+            return Err(ClientError::closed("Client is closed."));
+        }
+
+        let before = self.public_state();
+        let effect = self.apply_transport_event(event);
+        let changed = self.commit_operation(before, effect.state_changed);
+        if let Some(error) = effect.error {
+            Err(error)
+        } else {
+            Ok(PollOutcome {
+                changed,
+                updates: effect.update.into_iter().collect(),
+            })
+        }
+    }
+
     fn poll_inner(&mut self, stop_after_room: bool) -> ClientResult<PollOutcome> {
         let before = self.public_state();
         if let Some(error) = self.pending_error.take() {
@@ -324,48 +348,15 @@ impl Client {
                 Some(transport) => transport.poll_event(),
                 None => None,
             };
-            let error = match event {
-                Some(TransportEvent::Opened) => {
-                    self.status = ConnectionStatus::Open;
-                    None
-                }
-                Some(TransportEvent::Text(text)) => match decode_room_snapshot(&text) {
-                    Ok(snapshot) => {
-                        let (transition, changed) = self.merge_room_snapshot(snapshot);
-                        state_changed |= changed;
-                        updates.push(ClientUpdate::Room(transition));
-                        if stop_after_room {
-                            break;
-                        }
-                        None
-                    }
-                    Err(error) => {
-                        let error = ClientError::protocol(error.to_string());
-                        self.finish(Some(error.clone()));
-                        Some(error)
-                    }
-                },
-                Some(TransportEvent::Binary { length }) => {
-                    warn!(
-                        "Ignoring unsupported binary WebSocket message ({} bytes).",
-                        length
-                    );
-                    None
-                }
-                Some(TransportEvent::Closed) => {
-                    let error = ClientError::closed("Server closed connection.");
-                    self.finish(None);
-                    Some(error)
-                }
-                Some(TransportEvent::Error(message)) => {
-                    let error = ClientError::transport(message);
-                    self.finish(Some(error.clone()));
-                    Some(error)
-                }
-                None => break,
+            let Some(event) = event else {
+                break;
             };
+            let effect = self.apply_transport_event(event);
+            state_changed |= effect.state_changed;
+            let received_room = effect.update.is_some();
+            updates.extend(effect.update);
 
-            if let Some(error) = error {
+            if let Some(error) = effect.error {
                 if updates.is_empty() {
                     self.commit_operation(before, state_changed);
                     return Err(error);
@@ -373,10 +364,55 @@ impl Client {
                 self.pending_error = Some(error);
                 break;
             }
+            if stop_after_room && received_room {
+                break;
+            }
         }
 
         let changed = self.commit_operation(before, state_changed);
         Ok(PollOutcome { changed, updates })
+    }
+
+    fn apply_transport_event(&mut self, event: TransportEvent) -> TransportEventEffect {
+        let mut effect = TransportEventEffect {
+            state_changed: false,
+            update: None,
+            error: None,
+        };
+        match event {
+            TransportEvent::Opened => {
+                self.status = ConnectionStatus::Open;
+            }
+            TransportEvent::Text(text) => match decode_room_snapshot(&text) {
+                Ok(snapshot) => {
+                    let (transition, changed) = self.merge_room_snapshot(snapshot);
+                    effect.state_changed = changed;
+                    effect.update = Some(ClientUpdate::Room(transition));
+                }
+                Err(error) => {
+                    let error = ClientError::protocol(error.to_string());
+                    self.finish(Some(error.clone()));
+                    effect.error = Some(error);
+                }
+            },
+            TransportEvent::Binary { length } => {
+                warn!(
+                    "Ignoring unsupported binary WebSocket message ({} bytes).",
+                    length
+                );
+            }
+            TransportEvent::Closed => {
+                let error = ClientError::closed("Server closed connection.");
+                self.finish(None);
+                effect.error = Some(error);
+            }
+            TransportEvent::Error(message) => {
+                let error = ClientError::transport(message);
+                self.finish(Some(error.clone()));
+                effect.error = Some(error);
+            }
+        }
+        effect
     }
 
     fn merge_room_snapshot(&mut self, snapshot: RoomSnapshot) -> (RoomTransition, bool) {
