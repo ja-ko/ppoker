@@ -55,14 +55,6 @@ test.describe("scoreboard harness rendering", () => {
       columns: 5,
       rows: 2,
     });
-    await expect
-      .poll(() =>
-        page
-          .locator(".participant-card--thinking")
-          .first()
-          .evaluate((card) => getComputedStyle(card, "::before").animationName),
-      )
-      .not.toBe("none");
     await expect(page.getByRole("region", { name: "Round 08" })).toBeVisible();
     await expect(page.getByText("Observed just now").first()).toBeVisible();
     await expect(page.getByText(/Completed /)).toHaveCount(0);
@@ -72,6 +64,167 @@ test.describe("scoreboard harness rendering", () => {
     await expectMotionSettled(page, "playing");
     await expectPanelHeadersInFlow(page);
     await expectNoHorizontalOverflow(page);
+    await expectNoCommands(page);
+  });
+
+  test("animates THINKING stripes across a seamless two-period transform loop", async ({
+    page,
+  }) => {
+    await gotoFixture(page, "playing");
+    await expectMotionSettled(page, "playing");
+
+    const result = await page.evaluate(async () => {
+      const card = document.querySelector<HTMLElement>(
+        ".participant-card--thinking",
+      );
+      if (card === null) {
+        throw new Error("THINKING card missing.");
+      }
+      const pseudoStyle = getComputedStyle(card, "::before");
+      const animation = card
+        .getAnimations({ subtree: true })
+        .find(
+          (candidate) =>
+            candidate instanceof CSSAnimation &&
+            candidate.animationName === pseudoStyle.animationName,
+        );
+      if (
+        animation === undefined ||
+        !(animation.effect instanceof KeyframeEffect)
+      ) {
+        throw new Error("THINKING pseudo-element animation missing.");
+      }
+      const effect = animation.effect;
+      const vector = (transform: string) => {
+        const matrix = new DOMMatrix(transform);
+        return { x: matrix.m41, y: matrix.m42 };
+      };
+      const computedVector = () =>
+        vector(getComputedStyle(card, "::before").transform);
+      const nextFrame = () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      const transformKeyframes = effect
+        .getKeyframes()
+        .flatMap((frame) =>
+          typeof frame["transform"] === "string" ? [frame["transform"]] : [],
+        );
+      const firstKeyframe = transformKeyframes[0];
+      const lastKeyframe = transformKeyframes.at(-1);
+      if (firstKeyframe === undefined || lastKeyframe === undefined) {
+        throw new Error("THINKING transform keyframes missing.");
+      }
+      const duration = effect.getComputedTiming().duration;
+      if (typeof duration !== "number") {
+        throw new Error("THINKING animation duration is not numeric.");
+      }
+
+      animation.pause();
+      animation.currentTime = 0;
+      await nextFrame();
+      const atStart = computedVector();
+      animation.currentTime = duration - 0.01;
+      await nextFrame();
+      const nearEnd = computedVector();
+
+      animation.currentTime = 1_000;
+      animation.play();
+      const samples: { readonly x: number; readonly y: number }[] = [];
+      for (let index = 0; index < 24; index += 1) {
+        await nextFrame();
+        samples.push(computedVector());
+      }
+      animation.pause();
+
+      const cardStyle = getComputedStyle(card);
+      const state = card.querySelector<HTMLElement>(".card-state");
+      return {
+        animation: {
+          duration: pseudoStyle.animationDuration,
+          iterationCount: pseudoStyle.animationIterationCount,
+          name: pseudoStyle.animationName,
+          timing: pseudoStyle.animationTimingFunction,
+        },
+        atStart,
+        keyframes: {
+          end: vector(lastKeyframe),
+          start: vector(firstKeyframe),
+        },
+        layer: {
+          backgroundImage: pseudoStyle.backgroundImage,
+          bottom: Number.parseFloat(pseudoStyle.bottom),
+          left: Number.parseFloat(pseudoStyle.left),
+          overflow: cardStyle.overflow,
+          pointerEvents: pseudoStyle.pointerEvents,
+          right: Number.parseFloat(pseudoStyle.right),
+          stateZIndex: state === null ? null : getComputedStyle(state).zIndex,
+          top: Number.parseFloat(pseudoStyle.top),
+          willChange: pseudoStyle.willChange,
+          zIndex: pseudoStyle.zIndex,
+        },
+        nearEnd,
+        samples,
+      };
+    });
+
+    expect(result.animation).toEqual({
+      duration: "8s",
+      iterationCount: "infinite",
+      name: "thinking-pattern-scroll",
+      timing: "linear",
+    });
+    expect(result.keyframes.start).toEqual({ x: 0, y: 0 });
+    expect(result.keyframes.end).toEqual({ x: 24, y: 18 });
+    const endpointTravel = Math.hypot(
+      result.keyframes.end.x - result.keyframes.start.x,
+      result.keyframes.end.y - result.keyframes.start.y,
+    );
+    expect(endpointTravel).toBe(30);
+    expect(endpointTravel / 15).toBe(2);
+    expect(result.atStart.x).toBeCloseTo(0, 3);
+    expect(result.atStart.y).toBeCloseTo(0, 3);
+    expect(result.nearEnd.x).toBeCloseTo(24, 2);
+    expect(result.nearEnd.y).toBeCloseTo(18, 2);
+    expect(result.layer).toMatchObject({
+      bottom: -30,
+      left: -30,
+      overflow: "hidden",
+      pointerEvents: "none",
+      right: -30,
+      stateZIndex: "1",
+      top: -30,
+      willChange: "transform",
+      zIndex: "0",
+    });
+    expect(-result.layer.left - result.keyframes.end.x).toBe(6);
+    expect(-result.layer.top - result.keyframes.end.y).toBe(12);
+    expect(result.layer.backgroundImage).toMatch(/-53\.1301\d*deg/u);
+    expect(
+      [...result.layer.backgroundImage.matchAll(/ (\d+)px/gu)].map((match) =>
+        Number(match[1]),
+      ),
+    ).toEqual([0, 14, 14, 15]);
+    expect(result.samples).toHaveLength(24);
+    const firstSample = result.samples[0];
+    const lastSample = result.samples.at(-1);
+    if (firstSample === undefined || lastSample === undefined) {
+      throw new Error("THINKING animation samples missing.");
+    }
+    expect(lastSample.x - firstSample.x).toBeGreaterThan(0.5);
+    expect(lastSample.y - firstSample.y).toBeGreaterThan(0.35);
+    expect(
+      result.samples.slice(1).every((sample, index) => {
+        const previous = result.samples[index];
+        return (
+          previous !== undefined &&
+          sample.x >= previous.x - 0.001 &&
+          sample.y >= previous.y - 0.001
+        );
+      }),
+    ).toBe(true);
     await expectNoCommands(page);
   });
 

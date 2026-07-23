@@ -862,29 +862,38 @@ body {
 }
 
 .participant-grid--playing .participant-card--thinking {
+  overflow: hidden;
   border-top-color: var(--color-ice);
 }
 
 .participant-card--thinking::before {
   position: absolute;
-  inset: 0;
+  z-index: 0;
+  inset: -30px;
+  pointer-events: none;
   content: "";
   background: repeating-linear-gradient(
-    -55deg,
+    -53.130102deg,
     transparent 0 14px,
     rgb(198 239 255 / 0.035) 14px 15px
   );
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
 }
 
 @keyframes thinking-pattern-scroll {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+
   to {
-    background-position: 17.207px -24.575px;
+    transform: translate3d(24px, 18px, 0);
   }
 }
 
 @media (prefers-reduced-motion: no-preference) {
   .participant-card--thinking::before {
-    animation: thinking-pattern-scroll 18s linear infinite;
+    animation: thinking-pattern-scroll 8s linear infinite;
   }
 }
 
