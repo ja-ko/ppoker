@@ -238,6 +238,13 @@ fn transport_events_can_be_applied_directly_without_changing_poll_batches() {
     );
 
     let revision = direct.revision();
+    let unchanged_room = direct
+        .handle_transport_event(room_event("PLAYING", &[("Alice", "", true)]))
+        .unwrap();
+    assert!(!unchanged_room.changed);
+    assert_eq!(unchanged_room.updates.len(), 1);
+    assert_eq!(direct.revision(), revision);
+
     let binary = direct
         .handle_transport_event(TransportEvent::Binary { length: 3 })
         .unwrap();
@@ -322,6 +329,28 @@ fn poll_next_room_leaves_later_snapshots_and_terminal_events_queued() {
     let error = client.poll().unwrap_err();
     assert_eq!(error.code, ClientErrorCode::Transport);
     assert_eq!(error.message, "after rooms");
+}
+
+#[test]
+fn unchanged_room_snapshot_remains_an_ordered_poll_boundary() {
+    let alice = &[("Alice", "", true)];
+    let (mut client, state) =
+        fake_client(vec![TransportEvent::Opened, room_event("PLAYING", alice)]);
+    client.poll().unwrap();
+    let revision = client.revision();
+    enqueue(&state, room_event("PLAYING", alice));
+    enqueue(&state, room_event("PLAYING", &[("Bob", "", false)]));
+
+    let unchanged = client.poll_next_room().unwrap();
+    assert!(!unchanged.changed);
+    assert_eq!(unchanged.updates.len(), 1);
+    assert_eq!(client.revision(), revision);
+    assert_eq!(client.room().unwrap().players[0].name, "Alice");
+
+    let changed = client.poll().unwrap();
+    assert!(changed.changed);
+    assert_eq!(changed.updates.len(), 1);
+    assert_eq!(client.room().unwrap().players[0].name, "Bob");
 }
 
 #[test]

@@ -158,10 +158,12 @@ struct PublicState {
     terminal_error: Option<ClientError>,
 }
 
-struct TransportEventEffect {
-    state_changed: bool,
-    update: Option<ClientUpdate>,
-    error: Option<ClientError>,
+enum TransportEventEffect {
+    NoClientUpdate,
+    ClientUpdate {
+        snapshot_changed: bool,
+        update: ClientUpdate,
+    },
 }
 
 pub struct Client {
@@ -323,16 +325,19 @@ impl Client {
         }
 
         let before = self.public_state();
-        let effect = self.apply_transport_event(event);
-        let changed = self.commit_operation(before, effect.state_changed);
-        if let Some(error) = effect.error {
-            Err(error)
-        } else {
-            Ok(PollOutcome {
-                changed,
-                updates: effect.update.into_iter().collect(),
-            })
-        }
+        let (snapshot_changed, updates) = match self.apply_transport_event(event) {
+            Ok(TransportEventEffect::NoClientUpdate) => (false, vec![]),
+            Ok(TransportEventEffect::ClientUpdate {
+                snapshot_changed,
+                update,
+            }) => (snapshot_changed, vec![update]),
+            Err(error) => {
+                self.commit_operation(before, false);
+                return Err(error);
+            }
+        };
+        let changed = self.commit_operation(before, snapshot_changed);
+        Ok(PollOutcome { changed, updates })
     }
 
     fn poll_inner(&mut self, stop_after_room: bool) -> ClientResult<PollOutcome> {
@@ -341,7 +346,7 @@ impl Client {
             return Err(error);
         }
 
-        let mut state_changed = false;
+        let mut snapshot_changed = false;
         let mut updates = vec![];
         loop {
             let event = match self.transport.as_mut() {
@@ -351,48 +356,54 @@ impl Client {
             let Some(event) = event else {
                 break;
             };
-            let effect = self.apply_transport_event(event);
-            state_changed |= effect.state_changed;
-            let received_room = effect.update.is_some();
-            updates.extend(effect.update);
-
-            if let Some(error) = effect.error {
-                if updates.is_empty() {
-                    self.commit_operation(before, state_changed);
-                    return Err(error);
+            match self.apply_transport_event(event) {
+                Ok(TransportEventEffect::NoClientUpdate) => {}
+                Ok(TransportEventEffect::ClientUpdate {
+                    snapshot_changed: event_changed,
+                    update,
+                }) => {
+                    snapshot_changed |= event_changed;
+                    updates.push(update);
+                    if stop_after_room {
+                        break;
+                    }
                 }
-                self.pending_error = Some(error);
-                break;
-            }
-            if stop_after_room && received_room {
-                break;
+                Err(error) => {
+                    if updates.is_empty() {
+                        self.commit_operation(before, snapshot_changed);
+                        return Err(error);
+                    }
+                    self.pending_error = Some(error);
+                    break;
+                }
             }
         }
 
-        let changed = self.commit_operation(before, state_changed);
+        let changed = self.commit_operation(before, snapshot_changed);
         Ok(PollOutcome { changed, updates })
     }
 
-    fn apply_transport_event(&mut self, event: TransportEvent) -> TransportEventEffect {
-        let mut effect = TransportEventEffect {
-            state_changed: false,
-            update: None,
-            error: None,
-        };
+    fn apply_transport_event(
+        &mut self,
+        event: TransportEvent,
+    ) -> ClientResult<TransportEventEffect> {
         match event {
             TransportEvent::Opened => {
                 self.status = ConnectionStatus::Open;
+                Ok(TransportEventEffect::NoClientUpdate)
             }
             TransportEvent::Text(text) => match decode_room_snapshot(&text) {
                 Ok(snapshot) => {
                     let (transition, changed) = self.merge_room_snapshot(snapshot);
-                    effect.state_changed = changed;
-                    effect.update = Some(ClientUpdate::Room(transition));
+                    Ok(TransportEventEffect::ClientUpdate {
+                        snapshot_changed: changed,
+                        update: ClientUpdate::Room(transition),
+                    })
                 }
                 Err(error) => {
                     let error = ClientError::protocol(error.to_string());
                     self.finish(Some(error.clone()));
-                    effect.error = Some(error);
+                    Err(error)
                 }
             },
             TransportEvent::Binary { length } => {
@@ -400,19 +411,19 @@ impl Client {
                     "Ignoring unsupported binary WebSocket message ({} bytes).",
                     length
                 );
+                Ok(TransportEventEffect::NoClientUpdate)
             }
             TransportEvent::Closed => {
                 let error = ClientError::closed("Server closed connection.");
                 self.finish(None);
-                effect.error = Some(error);
+                Err(error)
             }
             TransportEvent::Error(message) => {
                 let error = ClientError::transport(message);
                 self.finish(Some(error.clone()));
-                effect.error = Some(error);
+                Err(error)
             }
         }
-        effect
     }
 
     fn merge_room_snapshot(&mut self, snapshot: RoomSnapshot) -> (RoomTransition, bool) {
