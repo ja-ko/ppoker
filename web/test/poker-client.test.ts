@@ -9,8 +9,8 @@ import { captureError, makeRichSnapshot, makeSnapshot } from "./fake-client.js";
 
 interface RawClient {
   snapshotValue: ClientSnapshot;
-  connect: ReturnType<typeof vi.fn<() => void>>;
-  poll: ReturnType<typeof vi.fn<() => boolean>>;
+  onChange: (() => void) | undefined;
+  connect: ReturnType<typeof vi.fn<(onChange: () => void) => void>>;
   snapshot: ReturnType<typeof vi.fn<() => ClientSnapshot>>;
   vote: ReturnType<typeof vi.fn<(value: string) => void>>;
   retractVote: ReturnType<typeof vi.fn<() => void>>;
@@ -33,8 +33,10 @@ vi.mock("../src/generated/ppoker-wasm/ppoker_wasm.js", () => ({
   default: generated.initialize,
   WasmPokerClient: class implements RawClient {
     snapshotValue: ClientSnapshot;
-    connect = vi.fn<() => void>();
-    poll = vi.fn<() => boolean>(() => false);
+    onChange: (() => void) | undefined;
+    connect = vi.fn<(onChange: () => void) => void>((onChange) => {
+      this.onChange = onChange;
+    });
     snapshot = vi.fn<() => ClientSnapshot>(() => this.snapshotValue);
     vote = vi.fn<(value: string) => void>();
     retractVote = vi.fn<() => void>();
@@ -111,13 +113,18 @@ function setRawSnapshot(
   raw.snapshotValue = makeSnapshot(revision, status);
 }
 
-function queuePoll(
+async function publishRaw(
   raw: RawClient,
   revision: number,
   status: ClientSnapshot["status"] = "open",
-): void {
+): Promise<void> {
   setRawSnapshot(raw, revision, status);
-  raw.poll.mockReturnValueOnce(true);
+  await signalRaw(raw);
+}
+
+async function signalRaw(raw: RawClient): Promise<void> {
+  raw.onChange?.();
+  await Promise.resolve();
 }
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -139,7 +146,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  vi.useRealTimers();
 });
 
 describe("PokerClient creation", () => {
@@ -234,39 +240,6 @@ describe("PokerClient creation", () => {
     }
   });
 
-  it("validates polling before initialization or construction", async () => {
-    const { createPokerClient } = await loadApi();
-    const invalidValues: unknown[] = [
-      0,
-      -1,
-      0.5,
-      Number.NaN,
-      Number.POSITIVE_INFINITY,
-      2_147_483_648,
-      Number.MAX_SAFE_INTEGER + 1,
-      "50",
-      null,
-    ];
-
-    for (const pollIntervalMs of invalidValues) {
-      await expect(
-        Reflect.apply(createPokerClient, undefined, [
-          options,
-          { pollIntervalMs },
-        ]),
-      ).rejects.toThrow(
-        "pollIntervalMs must be a positive safe integer no greater than 2147483647.",
-      );
-    }
-    expect(generated.initialize).not.toHaveBeenCalled();
-    expect(generated.instances).toHaveLength(0);
-
-    const client = await createPokerClient(options, {
-      pollIntervalMs: 2_147_483_647,
-    });
-    client.close();
-  });
-
   it("frees a generated client when its initial snapshot cannot be cached", async () => {
     const traversalError = new Error("snapshot traversal failed");
     const snapshot = makeSnapshot();
@@ -285,16 +258,15 @@ describe("PokerClient creation", () => {
 });
 
 describe("PokerClient snapshots", () => {
-  it("caches the initial snapshot without polling, connecting, or timers", async () => {
-    vi.useFakeTimers();
+  it("caches the initial snapshot without connecting or timers", async () => {
+    const setInterval = vi.spyOn(globalThis, "setInterval");
     const { client, raw } = await createTestClient(makeSnapshot(4, "open"));
 
     expect(client.getSnapshot()).toBe(client.getSnapshot());
     expect(client.getSnapshot().revision).toBe(4);
     expect(raw.snapshot).toHaveBeenCalledOnce();
-    expect(raw.poll).not.toHaveBeenCalled();
     expect(raw.connect).not.toHaveBeenCalled();
-    expect(vi.getTimerCount()).toBe(0);
+    expect(setInterval).not.toHaveBeenCalled();
     client.close();
   });
 
@@ -345,8 +317,10 @@ describe("PokerClient snapshots", () => {
     client.subscribe(listener);
 
     expect(initialReads).toHaveBeenCalledOnce();
-    expect(client.poll()).toBe(false);
     expect(raw.snapshot).toHaveBeenCalledOnce();
+    client.connect();
+    expect(initialReads).toHaveBeenCalledTimes(2);
+    expect(raw.snapshot).toHaveBeenCalledTimes(2);
 
     const changed = makeSnapshot(1, "open");
     const changedLog = changed.log;
@@ -356,14 +330,12 @@ describe("PokerClient snapshots", () => {
       get: changedReads,
     });
     raw.snapshotValue = changed;
-    raw.poll.mockReturnValueOnce(true);
-    expect(client.poll()).toBe(true);
+    await signalRaw(raw);
     expect(changedReads).toHaveBeenCalledOnce();
     expect(client.getSnapshot()).toBe(changed);
     expect(listener).toHaveBeenCalledOnce();
 
-    queuePoll(raw, 1);
-    expect(client.poll()).toBe(false);
+    await publishRaw(raw, 1);
     expect(client.getSnapshot()).toBe(changed);
     expect(listener).toHaveBeenCalledOnce();
     client.close();
@@ -372,7 +344,6 @@ describe("PokerClient snapshots", () => {
 
 describe("PokerClient operations and failures", () => {
   it("delegates every operation and refreshes each revision", async () => {
-    vi.useFakeTimers();
     const { client, raw } = await createTestClient();
     const listener = vi.fn();
     client.subscribe(listener);
@@ -385,7 +356,11 @@ describe("PokerClient operations and failures", () => {
 
     for (const operation of OPERATIONS) {
       invoke(client, operation);
-      expect(raw[operation[0]]).toHaveBeenCalledWith(...operation.slice(1));
+      if (operation[0] === "connect") {
+        expect(raw.connect).toHaveBeenCalledWith(expect.any(Function));
+      } else {
+        expect(raw[operation[0]]).toHaveBeenCalledWith(...operation.slice(1));
+      }
     }
     expect(raw.snapshot).toHaveBeenCalledTimes(OPERATIONS.length + 1);
     expect(client.getSnapshot().revision).toBe(OPERATIONS.length);
@@ -462,75 +437,35 @@ describe("PokerClient operations and failures", () => {
     other.client.close();
     client.close();
   });
-
-  it("propagates explicit poll and snapshot failures and stops timers", async () => {
-    vi.useFakeTimers();
-    const { client, raw } = await createTestClient(makeSnapshot(1, "open"));
-    raw.connect.mockImplementationOnce(() => {
-      setRawSnapshot(raw, 2, "connecting");
-    });
-    client.connect();
-    const initial = client.getSnapshot();
-    const pollError = new Error("transport closed while polling");
-    raw.poll.mockImplementationOnce(() => {
-      throw pollError;
-    });
-
-    expect(captureError(client.poll.bind(client))).toBe(pollError);
-    expect(client.getSnapshot()).toBe(initial);
-    expect(vi.getTimerCount()).toBe(0);
-
-    client.connect();
-    const snapshotError = new Error("snapshot unavailable");
-    raw.poll.mockReturnValueOnce(true);
-    raw.snapshot.mockImplementationOnce(() => {
-      throw snapshotError;
-    });
-    expect(captureError(client.poll.bind(client))).toBe(snapshotError);
-    expect(client.getSnapshot()).toBe(initial);
-    expect(vi.getTimerCount()).toBe(0);
-    client.close();
-  });
 });
 
-describe("PokerClient polling and subscriptions", () => {
-  it("starts one interval on connect and drains with zero subscribers", async () => {
-    vi.useFakeTimers();
-    const { client, raw } = await createTestClient(makeSnapshot(), {
-      pollIntervalMs: 20,
-    });
+describe("PokerClient transport notifications and subscriptions", () => {
+  it("connects without timers and refreshes with zero subscribers", async () => {
+    const setInterval = vi.spyOn(globalThis, "setInterval");
+    const { client, raw } = await createTestClient();
 
     client.connect();
     client.connect();
-    expect(vi.getTimerCount()).toBe(1);
-    vi.advanceTimersByTime(60);
-    expect(raw.poll).toHaveBeenCalledTimes(3);
-    expect(vi.getTimerCount()).toBe(1);
+    expect(raw.connect).toHaveBeenCalledTimes(2);
+    expect(raw.connect.mock.calls[0]?.[0]).toBe(raw.connect.mock.calls[1]?.[0]);
+    await publishRaw(raw, 1);
+    expect(client.getSnapshot().revision).toBe(1);
+    expect(setInterval).not.toHaveBeenCalled();
     client.close();
-    expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("stops before notifying a remotely closed snapshot", async () => {
-    vi.useFakeTimers();
-    const { client, raw } = await createTestClient(makeSnapshot(1, "open"), {
-      pollIntervalMs: 10,
-    });
-    const timerCounts: number[] = [];
-    client.subscribe(() => timerCounts.push(vi.getTimerCount()));
-    raw.poll.mockImplementationOnce(() => {
-      setRawSnapshot(raw, 2, "closed");
-      return true;
-    });
+  it("coalesces transport notifications into one snapshot refresh", async () => {
+    const { client, raw } = await createTestClient();
     client.connect();
+    setRawSnapshot(raw, 2);
 
-    vi.advanceTimersByTime(10);
-    expect(client.getSnapshot()).toMatchObject({
-      revision: 2,
-      status: "closed",
-    });
-    expect(timerCounts).toEqual([0]);
-    vi.advanceTimersByTime(30);
-    expect(raw.poll).toHaveBeenCalledOnce();
+    raw.onChange?.();
+    raw.onChange?.();
+    expect(client.getSnapshot().revision).toBe(0);
+    await Promise.resolve();
+
+    expect(client.getSnapshot().revision).toBe(2);
+    expect(raw.snapshot).toHaveBeenCalledTimes(3);
     client.close();
   });
 
@@ -539,15 +474,14 @@ describe("PokerClient polling and subscriptions", () => {
     const listener = vi.fn();
     const firstUnsubscribe = client.subscribe(listener);
     const secondUnsubscribe = client.subscribe(listener);
+    client.connect();
 
-    queuePoll(raw, 1);
-    client.poll();
+    await publishRaw(raw, 1);
     expect(listener).toHaveBeenCalledTimes(2);
 
     firstUnsubscribe();
     firstUnsubscribe();
-    queuePoll(raw, 2);
-    client.poll();
+    await publishRaw(raw, 2);
     expect(listener).toHaveBeenCalledTimes(3);
     secondUnsubscribe();
     client.close();
@@ -576,14 +510,10 @@ describe("PokerClient polling and subscriptions", () => {
     client.close();
   });
 
-  it("continues listeners after failures and ignores them during timer ticks", async () => {
-    vi.useFakeTimers();
-    const { client, raw } = await createTestClient(undefined, {
-      pollIntervalMs: 10,
-    });
-    const firstError = new Error("first listener failed");
+  it("continues listeners and contains failures during deferred notifications", async () => {
+    const { client, raw } = await createTestClient();
     const first = vi.fn(() => {
-      throw firstError;
+      throw new Error("first listener failed");
     });
     const second = vi.fn(() => {
       throw new Error("second listener failed");
@@ -594,9 +524,11 @@ describe("PokerClient polling and subscriptions", () => {
       client.subscribe(second),
       client.subscribe(third),
     ];
-    queuePoll(raw, 1);
+    client.connect();
+    setRawSnapshot(raw, 1);
+    expect(() => raw.onChange?.()).not.toThrow();
+    await Promise.resolve();
 
-    expect(captureError(client.poll.bind(client))).toBe(firstError);
     expect(first).toHaveBeenCalledOnce();
     expect(second).toHaveBeenCalledOnce();
     expect(third).toHaveBeenCalledOnce();
@@ -604,19 +536,6 @@ describe("PokerClient polling and subscriptions", () => {
       unsubscribe();
     });
 
-    const timerListener = vi.fn(() => {
-      throw new Error("timer listener failed");
-    });
-    const unsubscribeTimer = client.subscribe(timerListener);
-    raw.poll.mockImplementation(() => {
-      raw.snapshotValue = makeSnapshot(raw.snapshotValue.revision + 1, "open");
-      return true;
-    });
-    client.connect();
-    expect(() => vi.advanceTimersByTime(20)).not.toThrow();
-    expect(timerListener).toHaveBeenCalledTimes(2);
-    expect(vi.getTimerCount()).toBe(1);
-    unsubscribeTimer();
     client.close();
   });
 
@@ -630,70 +549,36 @@ describe("PokerClient polling and subscriptions", () => {
       unsubscribeRemoved();
     });
     unsubscribeRemoved = client.subscribe(removed);
-    queuePoll(raw, 1);
-
-    client.poll();
+    client.connect();
+    await publishRaw(raw, 1);
     expect(removed).toHaveBeenCalledOnce();
     expect(late).not.toHaveBeenCalled();
-    queuePoll(raw, 2);
-    client.poll();
+    await publishRaw(raw, 2);
     expect(late).toHaveBeenCalledOnce();
     client.close();
   });
 
-  it("stops ticks after timer-driven poll and snapshot failures", async () => {
-    vi.useFakeTimers();
-    for (const failureSource of ["poll", "snapshot"] as const) {
-      const { client, raw } = await createTestClient(makeSnapshot(1, "open"), {
-        pollIntervalMs: 10,
-      });
-      client.connect();
-      if (failureSource === "poll") {
-        raw.poll.mockImplementationOnce(() => {
-          throw new Error("asynchronous poll failure");
-        });
-      } else {
-        raw.poll.mockReturnValueOnce(true);
-        raw.snapshot.mockImplementationOnce(() => {
-          throw new Error("asynchronous snapshot failure");
-        });
-      }
-
-      expect(() => vi.advanceTimersByTime(10)).not.toThrow();
-      expect(vi.getTimerCount()).toBe(0);
-      vi.advanceTimersByTime(30);
-      expect(raw.poll).toHaveBeenCalledOnce();
-      client.close();
-    }
-  });
-
-  it("propagates timer registration failure after refreshing connect", async () => {
-    vi.useFakeTimers();
+  it("recovers after a deferred snapshot failure", async () => {
     const { client, raw } = await createTestClient();
-    const timerError = new Error("host timer registration failed");
-    vi.spyOn(globalThis, "setInterval").mockImplementationOnce(() => {
-      throw timerError;
+    client.connect();
+    raw.snapshot.mockImplementationOnce(() => {
+      throw new Error("snapshot unavailable");
     });
-    raw.connect.mockImplementationOnce(() => {
-      setRawSnapshot(raw, 1, "connecting");
-    });
+    setRawSnapshot(raw, 1);
 
-    expect(captureError(client.connect.bind(client))).toBe(timerError);
-    expect(client.getSnapshot()).toMatchObject({
-      revision: 1,
-      status: "connecting",
-    });
-    expect(vi.getTimerCount()).toBe(0);
+    expect(() => raw.onChange?.()).not.toThrow();
+    await Promise.resolve();
+    expect(client.getSnapshot().revision).toBe(0);
+
+    await publishRaw(raw, 2);
+    expect(client.getSnapshot().revision).toBe(2);
     client.close();
   });
 });
 
 describe("PokerClient close", () => {
   it("publishes once, frees once, becomes terminal, and rejects every operation", async () => {
-    vi.useFakeTimers();
-    const { client, raw } = await createTestClient(makeSnapshot(2, "open"), {
-      pollIntervalMs: 10,
-    });
+    const { client, raw } = await createTestClient(makeSnapshot(2, "open"));
     const listener = vi.fn();
     client.subscribe(listener);
     client.connect();
@@ -703,13 +588,11 @@ describe("PokerClient close", () => {
     client.close();
     client[Symbol.dispose]();
 
-    expect(vi.getTimerCount()).toBe(0);
     expect(raw.close).toHaveBeenCalledOnce();
     expect(raw.free).toHaveBeenCalledOnce();
     expect(listener).toHaveBeenCalledOnce();
     expect(finalSnapshot).toMatchObject({ revision: 3, status: "closed" });
     expect(client.getSnapshot()).toBe(finalSnapshot);
-    expect(client.poll()).toBe(false);
     for (const operation of OPERATIONS) {
       expect(invoke.bind(undefined, client, operation)).toThrow(
         expect.objectContaining({
@@ -760,7 +643,6 @@ describe("PokerClient close", () => {
   });
 
   it("uses copied-listener semantics when closed while notifying", async () => {
-    vi.useFakeTimers();
     const { client, raw } = await createTestClient();
     raw.connect.mockImplementation(() => {
       setRawSnapshot(raw, 1);
@@ -778,23 +660,22 @@ describe("PokerClient close", () => {
     expect(firstRevisions).toEqual([1, 2]);
     expect(secondRevisions).toEqual([2, 2]);
     expect(raw.close).toHaveBeenCalledOnce();
-    expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("stops its interval when closed inside a poll tick", async () => {
-    vi.useFakeTimers();
-    const { client, raw } = await createTestClient(makeSnapshot(), {
-      pollIntervalMs: 10,
-    });
-    raw.poll.mockImplementationOnce(() => {
-      client.close();
-      return true;
-    });
+  it("ignores a transport refresh already scheduled when closed", async () => {
+    const { client, raw } = await createTestClient();
     client.connect();
+    const onChange = raw.onChange;
+    setRawSnapshot(raw, 1);
+    onChange?.();
 
-    expect(() => vi.advanceTimersByTime(10)).not.toThrow();
-    expect(raw.poll).toHaveBeenCalledOnce();
+    client.close();
+    const snapshotCalls = raw.snapshot.mock.calls.length;
+    await Promise.resolve();
+    onChange?.();
+    await Promise.resolve();
+
     expect(raw.close).toHaveBeenCalledOnce();
-    expect(vi.getTimerCount()).toBe(0);
+    expect(raw.snapshot).toHaveBeenCalledTimes(snapshotCalls);
   });
 });

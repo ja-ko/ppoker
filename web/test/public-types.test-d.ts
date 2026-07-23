@@ -115,7 +115,6 @@ void [
 const createdClient: Promise<PokerClient> = createPokerClient(
   generatedOptionsAsPublic,
   {
-    pollIntervalMs: 25,
     wasm: new DataView(new ArrayBuffer(8)),
   } satisfies PokerClientConfig,
 );
@@ -145,6 +144,8 @@ void [
 export type TypeContracts = Assert<
   [
     Missing<PokerClient, "free">,
+    Missing<PokerClient, "poll">,
+    Missing<PokerClientConfig, "pollIntervalMs">,
     Missing<HistoryEntry, "lengthMs">,
     Missing<Generated.HistoryEntry, "lengthMs">,
     Missing<ClientSnapshot, "roundStartedAtMs">,

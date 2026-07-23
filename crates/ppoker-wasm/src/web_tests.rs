@@ -1,11 +1,15 @@
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
 use js_sys::{Array, Function, Object, Promise, Reflect};
 use ppoker_core::client::{Transport, TransportEvent};
+use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use wasm_bindgen_test::*;
 
 use super::*;
-use crate::transport_queue::{MAX_QUEUED_EVENTS, MAX_QUEUED_TEXT_BYTES, QUEUE_OVERFLOW_ERROR};
+use crate::transport::{MAX_TEXT_MESSAGE_BYTES, MESSAGE_TOO_LARGE_ERROR};
 
 wasm_bindgen_test_configure!(run_in_browser);
 
@@ -69,6 +73,14 @@ fn options(role: ConnectionRole) -> ClientOptions {
 
 fn construct(options: ClientOptions) -> WasmPokerClient {
     WasmPokerClient::new(serde_wasm_bindgen::to_value(&options).unwrap()).unwrap()
+}
+
+fn noop() -> Function {
+    Function::new_no_args("")
+}
+
+fn connect(client: &mut WasmPokerClient) {
+    client.connect(noop()).unwrap();
 }
 
 fn property(value: &JsValue, name: &str) -> JsValue {
@@ -261,7 +273,7 @@ async fn connect_live(
         WasmPokerClient::new(options).map_err(|error| fatal_failure("live client setup", error))?;
     let result = async {
         client
-            .connect()
+            .connect(noop())
             .map_err(|error| operational_failure("connect", error))?;
         let performance = web_sys::window()
             .and_then(|window| window.performance())
@@ -271,7 +283,6 @@ async fn connect_live(
         let deadline = performance.now() + 4_000.0;
 
         loop {
-            client.poll();
             let snapshot = client
                 .snapshot()
                 .map_err(|error| fatal_failure("snapshot serialization", error))?;
@@ -318,6 +329,10 @@ fn live_attempt_retries_only_transport_failures() {
 fn javascript_abi_is_lazy_typed_and_exposes_every_command() {
     let _guard = FakeWebSocketGuard::install();
     let mut client = construct(options(ConnectionRole::Participant));
+    let changes = Rc::new(Cell::new(0));
+    let callback_changes = changes.clone();
+    let on_change: Closure<dyn FnMut()> =
+        Closure::new(move || callback_changes.set(callback_changes.get() + 1));
 
     assert_eq!(sockets().length(), 0);
     let initial = client.snapshot().unwrap();
@@ -327,8 +342,10 @@ fn javascript_abi_is_lazy_typed_and_exposes_every_command() {
         assert!(property(&initial, name).is_null());
     }
 
-    client.connect().unwrap();
-    client.connect().unwrap();
+    client
+        .connect(on_change.as_ref().unchecked_ref::<Function>().clone())
+        .unwrap();
+    connect(&mut client);
     let socket = socket(0);
     assert_eq!(sockets().length(), 1);
     let connecting = client.snapshot().unwrap();
@@ -337,11 +354,11 @@ fn javascript_abi_is_lazy_typed_and_exposes_every_command() {
     assert!(property(&connecting, "room").is_null());
     invoke_event(&socket, "onopen");
     invoke_room(&socket, "typed room", "PLAYING", "");
-    assert!(client.poll());
     let open = client.snapshot().unwrap();
-    assert_number(&open, "revision", 2.0);
+    assert_number(&open, "revision", 3.0);
     assert_string(&open, "status", "open");
     assert_string(&property(&open, "room"), "phase", "playing");
+    assert_eq!(changes.get(), 2);
 
     client.vote("5").unwrap();
     client.retract_vote().unwrap();
@@ -349,7 +366,7 @@ fn javascript_abi_is_lazy_typed_and_exposes_every_command() {
     client.chat("hello".to_string()).unwrap();
     client.reveal().unwrap();
     invoke_room(&socket, "typed room", "CARDS_REVEALED", "5");
-    assert!(client.poll());
+    assert_eq!(changes.get(), 3);
     client.start_new_round().unwrap();
     let sent = Array::from(&property(&socket, "sent"));
     for (index, expected) in [
@@ -374,11 +391,10 @@ fn javascript_abi_is_lazy_typed_and_exposes_every_command() {
     assert_number(&socket, "closeCount", 1.0);
     assert_callbacks_cleared(&socket);
     let closed = client.snapshot().unwrap();
-    assert_number(&closed, "revision", 4.0);
+    assert_number(&closed, "revision", 5.0);
     assert_string(&closed, "status", "closed");
     assert!(property(&closed, "terminalError").is_null());
-    assert!(!client.poll());
-    assert_js_error(client.connect().unwrap_err(), "Closed");
+    assert_js_error(client.connect(noop()).unwrap_err(), "Closed");
     assert_js_error(client.vote("5").unwrap_err(), "Closed");
     assert_js_error(client.chat("late".to_string()).unwrap_err(), "Closed");
     assert_sent_count(&socket, 6);
@@ -439,7 +455,7 @@ fn role_urls_accept_embedded_dots_and_reject_exact_dot_rooms_without_sockets() {
         client_options.room = room.to_string();
         client_options.name = name.to_string();
         let mut client = construct(client_options);
-        client.connect().unwrap();
+        connect(&mut client);
         assert_string(&socket(index), "url", expected);
         client.close();
     }
@@ -460,7 +476,7 @@ fn websocket_constructor_failures_are_structured_and_socket_free() {
     )
     .expect("throwing WebSocket should install");
 
-    let error = client.connect().unwrap_err();
+    let error = client.connect(noop()).unwrap_err();
     assert_js_error(error.clone(), "Transport");
     assert_string(
         &error,
@@ -470,8 +486,7 @@ fn websocket_constructor_failures_are_structured_and_socket_free() {
     assert_eq!(sockets().length(), 0);
     let snapshot = client.snapshot().unwrap();
     assert_terminal(&snapshot, "Transport");
-    assert!(!client.poll());
-    assert_js_error(client.connect().unwrap_err(), "Closed");
+    assert_js_error(client.connect(noop()).unwrap_err(), "Closed");
 }
 
 #[wasm_bindgen_test]
@@ -479,128 +494,79 @@ fn public_client_terminal_matrix_covers_callbacks_and_malformed_text() {
     let _guard = FakeWebSocketGuard::install();
 
     for (index, terminal, expected_code) in [
-        (0, "onerror", "Transport"),
-        (1, "onclose", "Transport"),
-        (2, "malformed", "Protocol"),
+        (0, "onerror", Some("Transport")),
+        (1, "onclose", None),
+        (2, "malformed", Some("Protocol")),
     ] {
         let mut client = construct(options(ConnectionRole::Participant));
-        client.connect().unwrap();
+        connect(&mut client);
         let socket = socket(index);
         invoke_event(&socket, "onopen");
         invoke_room(&socket, "typed room", "PLAYING", "");
-        assert!(client.poll());
 
-        let command_code = if terminal == "malformed" {
+        if terminal == "malformed" {
             invoke_message(&socket, "not json");
-            assert!(client.poll());
-            "Closed"
         } else {
             invoke_event(&socket, terminal);
-            "Transport"
-        };
-        assert_js_error(client.vote("5").unwrap_err(), command_code);
+        }
+        assert_js_error(client.vote("5").unwrap_err(), "Closed");
         assert_sent_count(&socket, 0);
 
         let snapshot = client.snapshot().unwrap();
-        assert_terminal(&snapshot, expected_code);
+        assert_string(&snapshot, "status", "closed");
+        if let Some(expected_code) = expected_code {
+            assert_string(&property(&snapshot, "terminalError"), "code", expected_code);
+        } else {
+            assert!(property(&snapshot, "terminalError").is_null());
+        }
         assert_number(&socket, "closeCount", 1.0);
         assert_callbacks_cleared(&socket);
-        assert!(!client.poll());
     }
 }
 
 #[wasm_bindgen_test]
-fn browser_transport_maps_callbacks_fifo_and_cleans_up_terminally() {
+fn browser_transport_forwards_callbacks_immediately_and_cleans_up_once() {
     let _guard = FakeWebSocketGuard::install();
-
-    for (index, callback) in ["onclose", "onerror"].into_iter().enumerate() {
-        let mut transport = super::transport::BrowserTransport::connect(
-            "wss://example.test/rooms/callbacks?user=test&userType=PARTICIPANT",
-        )
-        .unwrap();
-        let socket = socket(index as u32);
-        assert_string(&socket, "binaryType", "arraybuffer");
-        for callback in ["onopen", "onmessage", "onerror", "onclose"] {
-            assert!(property(&socket, callback).is_function());
-        }
-        assert!(transport.send_text("connecting".to_string()).is_err());
-        assert_sent_count(&socket, 0);
-        invoke_event(&socket, "onopen");
-        transport.send_text("open".to_string()).unwrap();
-        assert_sent_count(&socket, 1);
-        invoke_message(&socket, "text");
-        let bytes = js_sys::Uint8Array::new_with_length(3);
-        invoke(&socket, "onmessage", &message(bytes.buffer().into()));
-        invoke(&socket, "onmessage", &message(Object::new().into()));
-
-        set_property(&socket, "readyState", &JsValue::from_f64(2.0));
-        assert!(transport.send_text("closing".to_string()).is_err());
-        assert_sent_count(&socket, 1);
-        set_property(&socket, "readyState", &JsValue::from_f64(1.0));
-
-        invoke_event(&socket, callback);
-        invoke_message(&socket, "late");
-        assert!(transport.send_text("terminal".to_string()).is_err());
-        assert_sent_count(&socket, 1);
-        for expected in [
+    let received = Rc::new(RefCell::new(vec![]));
+    let sink_received = received.clone();
+    let mut transport = super::transport::BrowserTransport::connect(
+        "wss://example.test/rooms/callbacks?user=test&userType=PARTICIPANT",
+        Rc::new(move |event| sink_received.borrow_mut().push(event)),
+    )
+    .unwrap();
+    let socket = socket(0);
+    assert_string(&socket, "binaryType", "arraybuffer");
+    for callback in ["onopen", "onmessage", "onerror", "onclose"] {
+        assert!(property(&socket, callback).is_function());
+    }
+    assert!(transport.send_text("connecting".to_string()).is_err());
+    invoke_event(&socket, "onopen");
+    transport.send_text("open".to_string()).unwrap();
+    invoke_message(&socket, "text");
+    let bytes = js_sys::Uint8Array::new_with_length(3);
+    invoke(&socket, "onmessage", &message(bytes.buffer().into()));
+    invoke(&socket, "onmessage", &message(Object::new().into()));
+    assert_eq!(
+        received.borrow().as_slice(),
+        [
             TransportEvent::Opened,
             TransportEvent::Text("text".to_string()),
             TransportEvent::Binary { length: 3 },
             TransportEvent::Binary { length: 0 },
-        ] {
-            assert_eq!(transport.poll_event(), Some(expected));
-        }
-        let terminal = transport.poll_event().unwrap();
-        assert!(matches!(
-            (callback, terminal),
-            ("onclose", TransportEvent::Closed) | ("onerror", TransportEvent::Error(_))
-        ));
-        assert_eq!(transport.poll_event(), None);
-
-        transport.close();
-        transport.close();
-        assert!(transport.send_text("cleaned up".to_string()).is_err());
-        assert_sent_count(&socket, 1);
-        assert_number(&socket, "closeCount", 1.0);
-        assert_callbacks_cleared(&socket);
-    }
-}
-
-#[wasm_bindgen_test]
-fn browser_transport_bounds_event_flood_and_cleans_up_once() {
-    let _guard = FakeWebSocketGuard::install();
-    let mut transport = super::transport::BrowserTransport::connect(
-        "wss://example.test/rooms/flood?user=test&userType=PARTICIPANT",
-    )
-    .unwrap();
-    let socket = socket(0);
-    let bytes = js_sys::Uint8Array::new_with_length(3);
-    let binary_message = message(bytes.buffer().into());
-
-    for _ in 0..MAX_QUEUED_EVENTS {
-        invoke(&socket, "onmessage", &binary_message);
-    }
-    assert_number(&socket, "closeCount", 0.0);
-
-    invoke(&socket, "onmessage", &binary_message);
-    assert_number(&socket, "closeCount", 1.0);
-    for _ in 0..16 {
-        invoke_message(&socket, "late payload");
-        invoke_event(&socket, "onopen");
-    }
-    assert_number(&socket, "closeCount", 1.0);
-
-    assert!((0..MAX_QUEUED_EVENTS).all(|_| matches!(
-        transport.poll_event(),
-        Some(TransportEvent::Binary { length: 3 })
-    )));
-    assert_eq!(
-        transport.poll_event(),
-        Some(TransportEvent::Error(QUEUE_OVERFLOW_ERROR.to_string()))
+        ]
     );
-    assert_eq!(transport.poll_event(), None);
 
+    let late_message = property(&socket, "onmessage")
+        .dyn_into::<Function>()
+        .unwrap();
     transport.close();
+    transport.close();
+    late_message
+        .call1(&socket, &message(JsValue::from_str("late")))
+        .unwrap();
+    assert_eq!(received.borrow().len(), 4);
+    assert!(transport.send_text("cleaned up".to_string()).is_err());
+    assert_sent_count(&socket, 1);
     assert_number(&socket, "closeCount", 1.0);
     assert_callbacks_cleared(&socket);
 }
@@ -609,17 +575,28 @@ fn browser_transport_bounds_event_flood_and_cleans_up_once() {
 fn oversized_text_commits_prior_public_state_and_ignores_late_rooms() {
     let _guard = FakeWebSocketGuard::install();
     let mut client = construct(options(ConnectionRole::Participant));
-    client.connect().unwrap();
+    connect(&mut client);
     let socket = socket(0);
 
     invoke_event(&socket, "onopen");
     invoke_room(&socket, "first room", "PLAYING", "");
     invoke_room(&socket, "second room", "CARDS_REVEALED", "3");
-    invoke_message(&socket, "x".repeat(MAX_QUEUED_TEXT_BYTES + 1));
+    let late_message = property(&socket, "onmessage")
+        .dyn_into::<Function>()
+        .unwrap();
+    invoke_message(&socket, "x".repeat(MAX_TEXT_MESSAGE_BYTES + 1));
     assert_number(&socket, "closeCount", 1.0);
-    invoke_room(&socket, "late room", "PLAYING", "");
+    late_message
+        .call1(
+            &socket,
+            &message(JsValue::from_str(&room_payload_with(
+                "late room",
+                "PLAYING",
+                "",
+            ))),
+        )
+        .unwrap();
 
-    assert!(client.poll());
     let snapshot = client.snapshot().unwrap();
     assert_terminal(&snapshot, "Transport");
     assert_string(&property(&snapshot, "room"), "name", "second room");
@@ -629,13 +606,12 @@ fn oversized_text_commits_prior_public_state_and_ignores_late_rooms() {
     assert_string(
         &property(&snapshot, "terminalError"),
         "message",
-        QUEUE_OVERFLOW_ERROR,
+        MESSAGE_TOO_LARGE_ERROR,
     );
     assert_number(&socket, "closeCount", 1.0);
     assert_callbacks_cleared(&socket);
 
     let revision = property(&snapshot, "revision").as_f64();
-    assert!(!client.poll());
     let unchanged = client.snapshot().unwrap();
     assert_eq!(property(&unchanged, "revision").as_f64(), revision);
     assert_string(&property(&unchanged, "room"), "name", "second room");

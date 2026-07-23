@@ -85,11 +85,12 @@ client.connect();
 client.close();
 ```
 
-The client owns its generated WASM instance, immutable cached snapshot, polling,
-subscriptions, commands, and lifecycle. Polling starts on `connect()`, runs even
-without subscribers, and stops on close or a terminal failure. `poll()` remains
-available for an immediate drain; callers do not need a second polling loop. The
-creator must eventually call `close()` or `[Symbol.dispose]()`.
+The client owns its generated WASM instance, immutable cached snapshot,
+subscriptions, commands, and lifecycle. Rust-owned WebSocket callbacks apply
+incoming events directly to the shared core client and signal the authored
+client to refresh its snapshot in a coalesced microtask. This remains active
+without subscribers and requires no polling loop. The creator must eventually
+call `close()` or `[Symbol.dispose]()`.
 
 Subscriptions signal that the latest cached snapshot should be read with
 `getSnapshot()`; they are not a lossless stream of revisions. Reentrant commands

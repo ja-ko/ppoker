@@ -55,7 +55,6 @@ export type PpokerWasmInitInput =
   ArrayBuffer | ArrayBufferView<ArrayBuffer> | Response | WebAssembly.Module;
 
 export interface PokerClientConfig {
-  readonly pollIntervalMs?: number;
   readonly wasm?: PpokerWasmInitInput;
 }
 
@@ -68,7 +67,6 @@ export interface PokerClient {
   readonly getSnapshot: () => ClientSnapshot;
   readonly subscribe: (listener: () => void) => () => void;
   connect(): void;
-  poll(): boolean;
   vote(value: string): void;
   retractVote(): void;
   rename(name: string): void;
@@ -80,10 +78,6 @@ export interface PokerClient {
 }
 
 const CLOSED_MESSAGE = "Client is closed.";
-const DEFAULT_POLL_INTERVAL_MS = 50;
-const MAX_POLL_INTERVAL_MS = 2_147_483_647;
-const POLL_INTERVAL_ERROR =
-  "pollIntervalMs must be a positive safe integer no greater than 2147483647.";
 
 let initialization: Promise<void> | undefined;
 
@@ -91,12 +85,11 @@ export async function createPokerClient(
   options: ClientOptions,
   config: PokerClientConfig = {},
 ): Promise<PokerClient> {
-  const pollIntervalMs = validatePollInterval(config.pollIntervalMs);
   await initializePpokerWasm(config.wasm);
 
   const generatedClient = new GeneratedWasmPokerClient(options);
   try {
-    return new AuthoredPokerClient(generatedClient, pollIntervalMs);
+    return new AuthoredPokerClient(generatedClient);
   } catch (error: unknown) {
     generatedClient.free();
     throw error;
@@ -105,15 +98,21 @@ export async function createPokerClient(
 
 class AuthoredPokerClient implements PokerClient {
   readonly #listeners = new Set<() => void>();
-  readonly #pollIntervalMs: number;
+  readonly #onTransportChange: () => void;
   #client: GeneratedWasmPokerClient | undefined;
-  #interval: ReturnType<typeof setInterval> | undefined;
+  #refreshScheduled = false;
   #snapshot: ClientSnapshot;
 
-  constructor(client: GeneratedWasmPokerClient, pollIntervalMs: number) {
+  constructor(client: GeneratedWasmPokerClient) {
     this.#client = client;
-    this.#pollIntervalMs = pollIntervalMs;
     this.#snapshot = freezeSnapshot(client.snapshot());
+    const target = new WeakRef(this);
+    this.#onTransportChange = (): void => {
+      const client = target.deref();
+      if (client !== undefined) {
+        client.#scheduleRefresh();
+      }
+    };
   }
 
   readonly getSnapshot = (): ClientSnapshot => this.#snapshot;
@@ -134,28 +133,11 @@ class AuthoredPokerClient implements PokerClient {
   connect(): void {
     const client = this.#openClient();
     try {
-      client.connect();
-      this.#startPolling();
+      client.connect(this.#onTransportChange);
     } catch (error: unknown) {
       this.#refreshAfterFailure(error);
     }
     this.#refresh();
-  }
-
-  poll(): boolean {
-    const client = this.#client;
-    if (client === undefined) {
-      return false;
-    }
-
-    let changed: boolean;
-    try {
-      changed = client.poll();
-    } catch (error: unknown) {
-      this.#stopPolling();
-      throw error;
-    }
-    return changed ? this.#refresh() : false;
   }
 
   vote(value: string): void {
@@ -201,7 +183,7 @@ class AuthoredPokerClient implements PokerClient {
     }
 
     this.#client = undefined;
-    this.#stopPolling();
+    this.#refreshScheduled = false;
     let operationError: unknown;
     let failed = false;
     try {
@@ -259,14 +241,22 @@ class AuthoredPokerClient implements PokerClient {
     return this.#client;
   }
 
-  #pollFromInterval = (): void => {
+  #refreshFromTransport = (): void => {
+    this.#refreshScheduled = false;
     try {
-      this.poll();
+      this.#refresh();
     } catch {
-      // Raw poll and snapshot failures stop polling at their source. Listener
-      // failures have no asynchronous recipient and do not affect transport.
+      // Deferred snapshot and listener failures have no synchronous recipient.
     }
   };
+
+  #scheduleRefresh(): void {
+    if (this.#client === undefined || this.#refreshScheduled) {
+      return;
+    }
+    this.#refreshScheduled = true;
+    queueMicrotask(this.#refreshFromTransport);
+  }
 
   #refresh(): boolean {
     const client = this.#client;
@@ -274,21 +264,12 @@ class AuthoredPokerClient implements PokerClient {
       return false;
     }
 
-    let nextSnapshot: ClientSnapshot;
-    try {
-      nextSnapshot = freezeSnapshot(client.snapshot());
-    } catch (error: unknown) {
-      this.#stopPolling();
-      throw error;
-    }
+    const nextSnapshot = freezeSnapshot(client.snapshot());
     if (nextSnapshot.revision === this.#snapshot.revision) {
       return false;
     }
 
     this.#snapshot = nextSnapshot;
-    if (nextSnapshot.status === "closed") {
-      this.#stopPolling();
-    }
     this.#notifyListeners();
     return true;
   }
@@ -310,22 +291,6 @@ class AuthoredPokerClient implements PokerClient {
       this.#refreshAfterFailure(error);
     }
     this.#refresh();
-  }
-
-  #startPolling(): void {
-    if (this.#interval === undefined) {
-      this.#interval = setInterval(
-        this.#pollFromInterval,
-        this.#pollIntervalMs,
-      );
-    }
-  }
-
-  #stopPolling(): void {
-    if (this.#interval !== undefined) {
-      clearInterval(this.#interval);
-      this.#interval = undefined;
-    }
   }
 }
 
@@ -373,18 +338,4 @@ function normalizeWasmInput(
     return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
   }
   return input;
-}
-
-function validatePollInterval(value: unknown): number {
-  const pollIntervalMs = value === undefined ? DEFAULT_POLL_INTERVAL_MS : value;
-  if (
-    typeof pollIntervalMs !== "number" ||
-    !Number.isFinite(pollIntervalMs) ||
-    !Number.isSafeInteger(pollIntervalMs) ||
-    pollIntervalMs <= 0 ||
-    pollIntervalMs > MAX_POLL_INTERVAL_MS
-  ) {
-    throw new TypeError(POLL_INTERVAL_ERROR);
-  }
-  return pollIntervalMs;
 }

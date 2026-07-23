@@ -1,5 +1,4 @@
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -23,7 +22,7 @@ impl Clock for ManualClock {
 
 #[derive(Default)]
 struct FakeTransportState {
-    events: VecDeque<TransportEvent>,
+    events: Option<EventSink>,
     sent: usize,
     closes: usize,
 }
@@ -32,7 +31,7 @@ struct FakeTransport(Rc<RefCell<FakeTransportState>>);
 
 impl Transport for FakeTransport {
     fn poll_event(&mut self) -> Option<TransportEvent> {
-        self.0.borrow_mut().events.pop_front()
+        None
     }
 
     fn send_text(&mut self, _message: String) -> Result<(), String> {
@@ -55,9 +54,19 @@ fn options(role: ConnectionRole) -> ClientOptions {
 }
 
 fn unused_factory() -> TransportFactory {
-    Box::new(|_| -> Result<Box<dyn Transport>, String> {
+    Box::new(|_, _| -> Result<Box<dyn Transport>, String> {
         panic!("invalid options must not construct a transport")
     })
+}
+
+fn dispatch(state: &Rc<RefCell<FakeTransportState>>, event: TransportEvent) {
+    let events = state
+        .borrow()
+        .events
+        .as_ref()
+        .expect("connected transports retain their event sink")
+        .clone();
+    events(event);
 }
 
 fn invalid_options(options: ClientOptions) -> InvalidOptionsError {
@@ -103,46 +112,62 @@ fn options_accept_both_roles_and_report_precise_validation_errors() {
 
 #[test]
 fn host_facade_delegates_each_export_once_and_closes_once() {
-    let state = Rc::new(RefCell::new(FakeTransportState {
-        events: VecDeque::from([
-            TransportEvent::Opened,
-            TransportEvent::Text(room_payload("PLAYING", "")),
-        ]),
-        ..FakeTransportState::default()
-    }));
+    let state = Rc::new(RefCell::new(FakeTransportState::default()));
     let transport_state = state.clone();
     let mut facade = WasmPokerClient::from_options(
         options(ConnectionRole::Participant),
         Rc::new(ManualClock::default()),
-        Box::new(move |_| Ok(Box::new(FakeTransport(transport_state.clone())))),
+        Box::new(move |_, events| {
+            transport_state.borrow_mut().events = Some(events);
+            Ok(Box::new(FakeTransport(transport_state.clone())))
+        }),
     )
     .unwrap();
 
     facade.connect().unwrap();
     facade.connect().unwrap();
-    assert!(facade.poll());
+    dispatch(&state, TransportEvent::Opened);
+    dispatch(&state, TransportEvent::Text(room_payload("PLAYING", "")));
     facade.vote("5").unwrap();
     facade.retract_vote().unwrap();
     facade.rename("Alicia".to_string()).unwrap();
     facade.chat("hello".to_string()).unwrap();
     facade.reveal().unwrap();
-    state
-        .borrow_mut()
-        .events
-        .push_back(TransportEvent::Text(room_payload("CARDS_REVEALED", "5")));
-    assert!(facade.poll());
+    dispatch(
+        &state,
+        TransportEvent::Text(room_payload("CARDS_REVEALED", "5")),
+    );
     facade.start_new_round().unwrap();
     assert_eq!(state.borrow().sent, 6);
-    state
-        .borrow_mut()
-        .events
-        .push_back(TransportEvent::Text("not json".to_string()));
-    assert!(facade.poll());
+    dispatch(&state, TransportEvent::Text("not json".to_string()));
+    assert_eq!(facade.client.borrow().status(), ConnectionStatus::Closed);
 
     facade.close();
     facade.close();
-    assert!(!facade.poll());
     assert_eq!(state.borrow().closes, 1);
+}
+
+#[test]
+fn event_sink_releases_client_before_notifying() {
+    let client = Rc::new(RefCell::new(Client::new(
+        "Alice".to_string(),
+        Rc::new(ManualClock::default()),
+    )));
+    let notifier_client = client.clone();
+    let notifications = Rc::new(Cell::new(0));
+    let notifier_notifications = notifications.clone();
+    let events = event_sink(
+        Rc::downgrade(&client),
+        Rc::new(move || {
+            assert!(notifier_client.try_borrow_mut().is_ok());
+            notifier_notifications.set(notifier_notifications.get() + 1);
+        }),
+    );
+
+    events(TransportEvent::Opened);
+
+    assert_eq!(notifications.get(), 1);
+    assert_eq!(client.borrow().status(), ConnectionStatus::Open);
 }
 
 fn room_payload(phase: &str, vote: &str) -> String {

@@ -71,7 +71,6 @@ describe("generated WASM integration", () => {
         revision: 1,
         status: "closed",
       });
-      expect(client.poll()).toBe(false);
       expect(captureError(client.chat.bind(client, "closed"))).toMatchObject({
         code: "Closed",
       });

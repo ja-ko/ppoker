@@ -20,9 +20,11 @@ room state, local identity and vote, activity log, round number, completed-round
 history, statistics, and snapshot revision.
 
 Native and browser transports implement the same narrow transport interface.
-`Client::poll()` applies transport events and returns a `PollOutcome` containing
-ordered `ClientUpdate` values. Consumers may apply local policy to those updates
-without owning or merging a second copy of shared state.
+Transport event acquisition is separate from state application: native clients
+use `Client::poll()` to pull and batch available events, while browser callbacks
+use `Client::handle_transport_event()` to apply each event immediately. Both
+paths return ordered `ClientUpdate` values without owning or merging a second
+copy of shared state.
 
 ### History And Future Sharing
 
@@ -56,7 +58,10 @@ authored TypeScript API.
 The WASM facade is thin. It validates and converts options and snapshots,
 provides the browser transport and clock, delegates lifecycle and commands to
 the core `Client`, and translates errors. It does not maintain parallel domain
-state or native application policy.
+state or native application policy. Browser WebSocket callbacks weakly reference
+the core client, apply transport events directly, and signal snapshot changes to
+the authored client. The browser transport does not retain an inbound event
+queue.
 
 ### Authored Web Client
 
@@ -64,10 +69,11 @@ The web package exposes one authored `PokerClient` through the asynchronous
 `createPokerClient()` factory. Creation initializes WASM and constructs the
 generated facade; importing the package has no WASM or socket side effects.
 
-That client owns the generated instance, immutable cached snapshot, polling,
-subscriptions, command delegation, and close/dispose lifecycle. `connect()`
-starts polling independently of subscriber count. There is no second public
-store, read-only wrapper, or alternative lifecycle.
+That client owns the generated instance, immutable cached snapshot,
+subscriptions, command delegation, and close/dispose lifecycle. Transport
+change signals schedule one coalesced microtask that refreshes the snapshot
+independently of subscriber count. There is no public polling API, second store,
+read-only wrapper, or alternative lifecycle.
 
 React provides only a non-owning provider and hooks over the same client.
 Provider mount and unmount do not connect or close it.
