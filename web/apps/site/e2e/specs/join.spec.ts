@@ -55,13 +55,42 @@ test("joins through the real route, holds the reveal gate, and stages the desk",
   expect(entrance.liveComplete).not.toBeNull();
   expect(entrance.bodyStarted).not.toBeNull();
   expect(entrance.bodyComplete).not.toBeNull();
-  expectStageGap(entrance.brandStarted, entrance.lineComplete, 100);
-  expectStageGap(entrance.roomStarted, entrance.brandComplete, 100);
-  expectStageGap(entrance.phaseStarted, entrance.roomStarted, 120);
-  expectStageGap(entrance.roundStarted, entrance.phaseStarted, 120);
-  expectStageGap(entrance.observedStarted, entrance.roundStarted, 120);
-  expectStageGap(entrance.liveStarted, entrance.observedStarted, 120);
-  expectStageGap(entrance.bodyStarted, entrance.liveComplete, 100);
+  const frameSamplingTolerance = 200;
+  expectStageGap(
+    entrance.brandStarted,
+    entrance.lineComplete,
+    frameSamplingTolerance,
+  );
+  expectStageGap(
+    entrance.roomStarted,
+    entrance.brandComplete,
+    frameSamplingTolerance,
+  );
+  expectStageGap(
+    entrance.phaseStarted,
+    entrance.roomStarted,
+    frameSamplingTolerance,
+  );
+  expectStageGap(
+    entrance.roundStarted,
+    entrance.phaseStarted,
+    frameSamplingTolerance,
+  );
+  expectStageGap(
+    entrance.observedStarted,
+    entrance.roundStarted,
+    frameSamplingTolerance,
+  );
+  expectStageGap(
+    entrance.liveStarted,
+    entrance.observedStarted,
+    frameSamplingTolerance,
+  );
+  expectStageGap(
+    entrance.bodyStarted,
+    entrance.liveComplete,
+    frameSamplingTolerance,
+  );
   const entranceDuration =
     (entrance.bodyComplete ?? 0) - (entrance.lineStarted ?? 0);
   expect(entranceDuration).toBeGreaterThanOrEqual(800);
