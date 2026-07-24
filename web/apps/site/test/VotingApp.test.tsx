@@ -88,6 +88,21 @@ describe("VotingApp status shells", () => {
     ).toBe(true);
   });
 
+  it("unmounts a retained room when the transport closes cleanly", () => {
+    const runtime = createRuntime(() => new Promise(() => undefined));
+    const { publish } = renderAppWithRuntime(roomSnapshot(), () => runtime);
+
+    act(() => {
+      publish(roomSnapshot({ revision: 2, status: "closed" }));
+    });
+
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Voter console offline",
+    );
+    expect(screen.queryByTestId("drawing-stage")).toBeNull();
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+  });
+
   it("uses assertive atomic announcements for alert status", () => {
     render(
       <VotingStatus detail="Terminal failure" role="alert" title="Offline" />,
@@ -147,6 +162,29 @@ describe("VotingApp voting controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Clear vote" }));
     expect(client.retractVote).toHaveBeenCalledOnce();
     expect(screen.queryByLabelText("Current vote 5")).toBeNull();
+  });
+
+  it("maps an authoritative numeric vote to the first matching deck alias", () => {
+    const { client } = renderApp(
+      roomSnapshot({
+        deck: ["05", "+5", "?"],
+        localVote: { kind: "number", value: 5 },
+      }),
+    );
+
+    expect(screen.getByLabelText("Current vote 05")).toBeTruthy();
+    expect(
+      screen
+        .getByRole("button", { name: "Vote 05" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      screen
+        .getByRole("button", { name: "Vote +5" })
+        .getAttribute("aria-pressed"),
+    ).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: "Vote +5" }));
+    expect(client.vote).not.toHaveBeenCalled();
   });
 
   it("treats a pending retract as a missing local response", () => {

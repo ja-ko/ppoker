@@ -96,6 +96,17 @@ describe("ordered local vote command acknowledgements", () => {
     expect(reconcileLocalVoteCommands(queue, nextRound)).toBeNull();
     expect(pendingLocalVoteIntent(queue, nextRound)).toBeNull();
   });
+
+  it.each(["05", "+5"])(
+    "reconciles the numeric deck alias %s with an authoritative u8 vote",
+    (alias) => {
+      const initial = snapshot(1, null, [alias]);
+      const queue = issue(null, alias, initial);
+      expect(
+        reconcileLocalVoteCommands(queue, snapshot(2, "5", [alias])),
+      ).toBeNull();
+    },
+  );
 });
 
 function issue(
@@ -121,7 +132,11 @@ function tail(
   return pending.value;
 }
 
-function snapshot(revision: number, vote: string | null): ClientSnapshot {
+function snapshot(
+  revision: number,
+  vote: string | null,
+  deck: readonly string[] = ["1", "3", "5", "8", "13", "?"],
+): ClientSnapshot {
   return makeSnapshot({
     localName: "Local",
     localVote:
@@ -132,7 +147,7 @@ function snapshot(revision: number, vote: string | null): ClientSnapshot {
           : { kind: "special", value: vote },
     revision,
     room: {
-      deck: ["1", "3", "5", "8", "13", "?"],
+      deck,
       name: "Planning",
       phase: "playing",
       players: [],

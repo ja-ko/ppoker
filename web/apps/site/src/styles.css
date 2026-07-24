@@ -2745,7 +2745,7 @@ body {
   }
 }
 
-@media (orientation: landscape) and (height <= 620px) {
+@media (orientation: landscape) and (height <= 620px) and (width >= 760px) {
   .vote-header {
     margin-bottom: 6px;
   }

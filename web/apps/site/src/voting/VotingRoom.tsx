@@ -10,6 +10,7 @@ import {
   type SyntheticEvent,
 } from "react";
 
+import { deckCardsMatch } from "../deck-card";
 import {
   AutoRevealController,
   createCommandIntent,
@@ -284,8 +285,10 @@ export function VotingRoom({
     }
     setMorphGeometry(inkMorphGeometry(inkRef.current));
     const valueText = String(value);
-    const alreadyEffective =
-      effectiveLocalVote(voteCommandsRef.current, latest) === valueText;
+    const alreadyEffective = deckCardsMatch(
+      effectiveLocalVote(voteCommandsRef.current, latest),
+      valueText,
+    );
     const accepted = autoReveal.submitDrawingVote(
       drawing.intent,
       value,
@@ -430,7 +433,10 @@ export function VotingRoom({
       return;
     }
     if (
-      effectiveLocalVote(voteCommandsRef.current, client.getSnapshot()) === card
+      deckCardsMatch(
+        effectiveLocalVote(voteCommandsRef.current, client.getSnapshot()),
+        card,
+      )
     ) {
       if (activeDrawingRef.current !== null) {
         invalidateDrawing();

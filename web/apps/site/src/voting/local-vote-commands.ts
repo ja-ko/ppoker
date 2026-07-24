@@ -1,5 +1,6 @@
 import type { ClientSnapshot, VoteData } from "@ppoker/web-client";
 
+import { deckCardKey, voteKey } from "../deck-card";
 import { votingContextKey } from "./auto-reveal";
 
 export interface LocalVoteCommand {
@@ -43,7 +44,7 @@ export function enqueueLocalVoteCommand(
       {
         issuedRevision: before.revision,
         target,
-        transitionObserved: voteLabel(before.localVote) !== target,
+        transitionObserved: !voteMatchesTarget(before.localVote, target),
       },
     ],
     contextKey,
@@ -73,12 +74,15 @@ export function reconcileLocalVoteCommands(
   if (head === undefined) {
     return null;
   }
-  const authoritative = voteLabel(snapshot.localVote);
-  if (authoritative === head.target && head.transitionObserved) {
+  const authoritativeMatchesHead = voteMatchesTarget(
+    snapshot.localVote,
+    head.target,
+  );
+  if (authoritativeMatchesHead && head.transitionObserved) {
     const next = remaining[0];
     const adjustedRemaining =
       next !== undefined &&
-      authoritative !== next.target &&
+      !voteMatchesTarget(snapshot.localVote, next.target) &&
       !next.transitionObserved
         ? [{ ...next, transitionObserved: true }, ...remaining.slice(1)]
         : remaining;
@@ -91,7 +95,7 @@ export function reconcileLocalVoteCommands(
         };
   }
   const nextHead =
-    authoritative !== head.target && !head.transitionObserved
+    !authoritativeMatchesHead && !head.transitionObserved
       ? { ...head, transitionObserved: true }
       : head;
   return {
@@ -117,12 +121,32 @@ export function effectiveLocalVote(
   snapshot: ClientSnapshot,
 ): string | null {
   const pending = pendingLocalVoteIntent(queue, snapshot);
-  return pending === null ? voteLabel(snapshot.localVote) : pending.value;
+  return pending === null
+    ? voteLabel(snapshot.localVote, snapshot.room?.deck ?? [])
+    : pending.value;
 }
 
-export function voteLabel(vote: VoteData | null): string | null {
+export function voteLabel(
+  vote: VoteData | null,
+  deck: readonly string[] = [],
+): string | null {
   if (vote === null) {
     return null;
   }
+  const key = voteKey(vote);
+  const deckLabel = deck.find((label) => deckCardKey(label) === key);
+  if (deckLabel !== undefined) {
+    return deckLabel;
+  }
   return vote.kind === "number" ? String(vote.value) : vote.value;
+}
+
+function voteMatchesTarget(
+  vote: VoteData | null,
+  target: string | null,
+): boolean {
+  if (vote === null || target === null) {
+    return vote === null && target === null;
+  }
+  return voteKey(vote) === deckCardKey(target);
 }

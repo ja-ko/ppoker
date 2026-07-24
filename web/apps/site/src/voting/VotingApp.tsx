@@ -53,6 +53,16 @@ export function VotingClientView({
       />
     );
   }
+  if (snapshot.status === "closed") {
+    return (
+      <VotingStatus
+        detail="The participant connection closed. Reload to reconnect."
+        role="alert"
+        room={room}
+        title="Voter console offline"
+      />
+    );
+  }
   if (snapshot.room !== null) {
     return (
       <VotingRoom
@@ -90,16 +100,6 @@ export function VotingClientView({
         title={
           connectError === null ? "Preparing connection" : "Connection failed"
         }
-      />
-    );
-  }
-  if (snapshot.status === "closed") {
-    return (
-      <VotingStatus
-        detail="The participant connection closed. Reload to reconnect."
-        role="alert"
-        room={room}
-        title="Voter console offline"
       />
     );
   }

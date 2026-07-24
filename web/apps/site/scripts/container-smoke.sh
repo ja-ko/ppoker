@@ -225,6 +225,11 @@ for resource in "${voter_resources[@]}"; do
   resource_status="$(fetch "${resource}" "voter-resource-${resource_number}")"
   [[ "${resource_status}" == 200 ]] || fail "${resource} returned HTTP ${resource_status}"
   case "${resource}" in
+    /models/*|/ort/*)
+      grep -Eiq '^cache-control: .*no-cache.*must-revalidate' "${temporary_directory}/voter-resource-${resource_number}.headers" || fail "${resource} is missing revalidation cache headers"
+      ;;
+  esac
+  case "${resource}" in
     /models/digits-crnn.onnx)
       grep -Eiq '^content-type: application/octet-stream' "${temporary_directory}/voter-resource-${resource_number}.headers" || fail "${resource} has the wrong MIME type"
       cmp -s web/apps/site/public/models/digits-crnn.onnx "${temporary_directory}/voter-resource-${resource_number}.body" || fail "${resource} does not match the repository model"
