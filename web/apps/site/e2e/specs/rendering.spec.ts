@@ -22,17 +22,23 @@ test.describe("scoreboard harness rendering", () => {
     await expect(page.locator(".eyebrow")).toContainText(
       "Authoritative E2E Room / E2E-ROOM",
     );
-    const roomAccess = page.getByRole("region", {
-      name: "Room access preview",
-    });
-    await expect(roomAccess.getByText("Preview")).toBeVisible();
-    await expect(roomAccess.getByText("Authoritative E2E Room")).toBeVisible();
-    await expect(roomAccess.getByText(/Join code coming soon/)).toBeVisible();
-    await expect(roomAccess.getByRole("img")).toHaveCount(0);
-    await expect(roomAccess.locator(".qr-code")).toHaveAttribute(
-      "aria-hidden",
-      "true",
-    );
+    const roomAccess = page.getByRole("region", { name: "Room access" });
+    await expect(roomAccess.getByText("Scan to join")).toBeVisible();
+    await expect(
+      roomAccess.locator(".room-code > strong", {
+        hasText: "Authoritative E2E Room",
+      }),
+    ).toBeVisible();
+    await expect(
+      roomAccess.getByRole("link", {
+        name: "Join Authoritative E2E Room voting room",
+      }),
+    ).toHaveAttribute("href", /\/vote\?room=E2E-ROOM$/u);
+    await expect(
+      roomAccess.getByRole("img", {
+        name: "QR code to join Authoritative E2E Room",
+      }),
+    ).toBeVisible();
     await expect(page.getByRole("progressbar")).toHaveAttribute(
       "aria-valuenow",
       "6",

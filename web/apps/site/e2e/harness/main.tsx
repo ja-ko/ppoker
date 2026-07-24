@@ -3,11 +3,13 @@ import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router";
 
 import { BroadcastMotionConfig } from "../../src/animation";
-import { bindSessionToRouter, createSiteRoutes } from "../../src/app-router";
+import { bindSessionsToRouter, createSiteRoutes } from "../../src/app-router";
 import { BroadcastApp } from "../../src/BroadcastApp";
 import { createBroadcastSessionManager } from "../../src/broadcast-session";
 import { createClientLifecycle } from "../../src/client-lifecycle";
 import "../../src/styles.css";
+import { createVoterNameSession } from "../../src/voting/voter-session";
+import { createVotingSessionManager } from "../../src/voting-session";
 import { createBroadcastTestDriver } from "./driver";
 import { FakePokerClient } from "./fake-poker-client";
 import { fixtureSnapshot, isSnapshotFixtureName } from "./fixtures";
@@ -66,11 +68,30 @@ if (joinMode) {
     pageTarget: window,
     reload: () => undefined,
   });
+  const votingSessions = createVotingSessionManager({
+    bindLifecycle: () => () => undefined,
+    createLifecycle: (options) =>
+      createClientLifecycle(options, () => Promise.resolve(client)),
+    createNameSession: () =>
+      createVoterNameSession({
+        generateName: () => "E2E Voter",
+        storage: null,
+      }),
+    pageTarget: window,
+    reload: () => undefined,
+  });
   const router = createBrowserRouter(
-    createSiteRoutes({ endpoint: "wss://e2e.test/socket", sessions }),
+    createSiteRoutes({
+      broadcastSessions: sessions,
+      endpoint: "wss://e2e.test/socket",
+      votingSessions,
+    }),
     { basename: "/e2e/harness" },
   );
-  bindSessionToRouter(router, sessions);
+  bindSessionsToRouter(router, {
+    broadcast: sessions,
+    voting: votingSessions,
+  });
   window.__broadcastTestDriver = createBroadcastTestDriver(client, {
     navigateToRoom: (room) =>
       router.navigate(`/room?${new URLSearchParams({ room }).toString()}`),

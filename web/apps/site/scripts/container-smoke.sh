@@ -175,6 +175,11 @@ room_status="$(fetch '/room?room=planning' room)"
 cmp -s "${temporary_directory}/root.body" "${temporary_directory}/room.body" || fail "direct room route did not return the app shell"
 require_no_cache "${temporary_directory}/room.headers"
 
+vote_status="$(fetch '/vote?room=planning' vote)"
+[[ "${vote_status}" == 200 ]] || fail "/vote?room=planning returned HTTP ${vote_status}"
+cmp -s "${temporary_directory}/root.body" "${temporary_directory}/vote.body" || fail "direct voter route did not return the app shell"
+require_no_cache "${temporary_directory}/vote.headers"
+
 fallback_status="$(fetch /container-smoke-fallback fallback)"
 [[ "${fallback_status}" == 200 ]] || fail "SPA fallback returned HTTP ${fallback_status}"
 cmp -s "${temporary_directory}/root.body" "${temporary_directory}/fallback.body" || fail "SPA fallback content differs from index.html"
@@ -208,6 +213,36 @@ for asset in "${assets[@]}"; do
 done
 [[ "${endpoint_found}" == true ]] || fail "VITE_PPOKER_ENDPOINT was not embedded in the JavaScript bundle"
 
+voter_resources=(
+  /models/digits-crnn.json
+  /models/digits-crnn.onnx
+  /ort/ort-wasm-simd-threaded.mjs
+  /ort/ort-wasm-simd-threaded.wasm
+  /legal/HANDWRITING_NOTICES.txt
+  /legal/PRODUCTION_DEPENDENCIES.txt
+)
+resource_number=0
+for resource in "${voter_resources[@]}"; do
+  resource_status="$(fetch "${resource}" "voter-resource-${resource_number}")"
+  [[ "${resource_status}" == 200 ]] || fail "${resource} returned HTTP ${resource_status}"
+  case "${resource}" in
+    /models/digits-crnn.onnx)
+      grep -Eiq '^content-type: application/octet-stream' "${temporary_directory}/voter-resource-${resource_number}.headers" || fail "${resource} has the wrong MIME type"
+      cmp -s web/apps/site/public/models/digits-crnn.onnx "${temporary_directory}/voter-resource-${resource_number}.body" || fail "${resource} does not match the repository model"
+      if cmp -s "${temporary_directory}/root.body" "${temporary_directory}/voter-resource-${resource_number}.body"; then
+        fail "${resource} silently returned the SPA shell"
+      fi
+      ;;
+    /ort/*.mjs)
+      grep -Eiq '^content-type: application/javascript' "${temporary_directory}/voter-resource-${resource_number}.headers" || fail "${resource} has the wrong MIME type"
+      ;;
+    /ort/*.wasm)
+      grep -Eiq '^content-type: application/wasm' "${temporary_directory}/voter-resource-${resource_number}.headers" || fail "${resource} has the wrong MIME type"
+      ;;
+  esac
+  resource_number=$((resource_number + 1))
+done
+
 wasm_file="$("${container_command[@]}" exec "${container}" sh -c 'set -- /usr/share/nginx/html/assets/*.wasm; test -f "$1" && basename "$1"')"
 [[ -n "${wasm_file}" ]] || fail "built image does not contain a WASM asset"
 wasm_status="$(fetch "/assets/${wasm_file}" wasm)"
@@ -238,6 +273,7 @@ missing_assets=(
   /container-smoke-missing.txt
   /container-smoke-missing.mjs
   /container-smoke-missing.map
+  /models/container-smoke-missing.onnx
   /container-smoke-missing.webmanifest
   /container-smoke-missing.woff2
 )

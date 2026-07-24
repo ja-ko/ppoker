@@ -1,0 +1,75 @@
+ppoker site production dependency notices
+=========================================
+
+Notice scope
+------------
+
+This notice covers the direct third-party JavaScript dependencies declared by
+web/apps/site/package.json, relevant browser runtime packages brought in by
+React, Motion, and ONNX Runtime, and the handwriting model/runtime additions.
+Versions are pinned by web/pnpm-lock.yaml. License texts and upstream notices
+for the packages listed within this scope are distributed beside this file.
+
+This is not a complete dependency or license audit of the ppoker repository or
+the complete built site. In particular, the pre-existing @ppoker/web-client,
+ppoker-core, and Rust crates compiled into the web client's WebAssembly are not
+enumerated or re-audited here. They remain governed by the repository's existing
+dependency and licensing process.
+
+ppoker web client 0.5.6
+  Package: @ppoker/web-client
+  Source: https://github.com/ja-ko/ppoker
+  License: EUPL-1.2 (EUPL-1.2.txt)
+  Scope boundary only: this internal workspace package and its ppoker-core/Rust
+  WebAssembly dependency graph are covered by the repository's existing source,
+  dependency, and licensing process rather than this notice.
+
+React 19.2.7, React DOM 19.2.7, and Scheduler 0.27.0
+  Source: https://github.com/facebook/react
+  Copyright: Meta Platforms, Inc. and affiliates
+  License: MIT (MIT-REACT.txt)
+  The three installed packages distribute the same license text.
+
+Motion 12.42.2
+  Source: https://github.com/motiondivision/motion
+  Copyright: 2024 Motion B.V.
+  License: MIT (MIT-MOTION.txt)
+
+Framer Motion 12.42.2
+  Source: https://github.com/motiondivision/motion
+  Copyright: 2018 Framer B.V.
+  License: MIT (MIT-FRAMER-MOTION.txt)
+
+Motion DOM 12.42.2 and Motion Utils 12.39.0
+  Source: https://github.com/motiondivision/motion
+  Copyright: 2024 Motion B.V.
+  License: MIT (MIT-MOTION.txt)
+
+tslib 2.8.1
+  Source: https://github.com/microsoft/tslib
+  Copyright: Microsoft Corporation
+  License: 0BSD (0BSD-TSLIB.txt)
+
+ONNX Runtime Web 1.27.0 and ONNX Runtime Common 1.27.0
+  Source: https://github.com/microsoft/onnxruntime/tree/v1.27.0
+  Copyright: Microsoft Corporation
+  License: MIT (MIT-ONNX-RUNTIME.txt)
+  Compiled/runtime third-party notices:
+    ONNXRUNTIME-THIRD-PARTY-NOTICES.txt
+
+@noble/hashes 2.2.0
+  Source: https://github.com/paulmillr/noble-hashes/tree/2.2.0
+  Copyright: 2022 Paul Miller (https://paulmillr.com)
+  License: MIT (MIT-NOBLE-HASHES.txt)
+
+uqr 0.1.3
+  Source: https://github.com/unjs/uqr/tree/v0.1.3
+  Copyright: Project Nayuki; 2023 Anthony Fu
+  License: MIT (MIT-UQR.txt)
+
+The ONNX Runtime npm dependency graph also installs flatbuffers,
+guid-typescript, long, platform, protobufjs, and protobufjs helper packages.
+The selected `onnxruntime-web/wasm` prebundle contains ONNX Runtime Web and ONNX
+Runtime Common sources rather than those npm dependency modules. Native code
+compiled into the external WebAssembly asset is covered by the upstream ONNX
+Runtime third-party notice above.

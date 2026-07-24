@@ -1,0 +1,105 @@
+ppoker handwriting recognition notices and provenance
+====================================================
+
+Project license
+---------------
+
+Copyright 2026 Jannik Kolodziej. Except for third-party material identified
+below, ppoker is licensed under the European Union Public Licence 1.2. The
+complete text is distributed as EUPL-1.2.txt. Corresponding source is available
+at https://github.com/ja-ko/ppoker.
+
+Handwriting source provenance
+-----------------------------
+
+The handwriting capture, rendering, rasterization, recognition runtime, CTC
+decoder, and recognition flow were ported from:
+
+  Repository: https://github.com/ja-ko/ppoker-digits-poc
+  Revision: c7cf584d99c836cbc8b1c7052616d206de4d560c
+  License: EUPL-1.2
+  Copyright: 2026 Jannik Kolodziej
+
+The source revision is pinned by these SHA-256 checksums:
+
+  8a3f515e4e0129aa125a38b549939b8fb9d978c9196b2883dd413530c6668fdb  web-client/src/InkPad.tsx
+  554970517f4d1a183c8e3734ff3391250f365c3b3ee245350bbdf78746418d0c  web-client/src/ink/capture.ts
+  244d1e6da7f7f537a914be43f5fb04028f1c1856ab1b8455ed1117150b7e0488  web-client/src/ink/rasterize.ts
+  cd938de5de336310ee69d5721cf9747c64ce686ebc3f005896659d462eb52637  web-client/src/ink/render.ts
+  90c2847b8cc5fcde749fe34eb6f1bdb363ea4a9adf9f00a12ce40e41a4ebaf82  web-client/src/ink/types.ts
+  a51b19c07fcba6390bb7b3e16c18c3e0c59134e8642ecb29d752ed7d9f36d6e1  web-client/src/recognition/client.ts
+  473beb62e6c4df2e76eb750beecd2c5e5ab7319a00ffe5e83fb8743d7d7c7c4a  web-client/src/recognition/ctc.ts
+  7f5c373967583603f3645b479294ba7f6ed3fe2fae045d2cfc817201b863a3bb  web-client/src/recognition/types.ts
+  9adb844ba5f6d41f240943a7ff2c54497c5807cea32748def57b1aa365bc1fe3  web-client/src/recognition/worker.ts
+  6d01e5e1cacae9693b9168515a95838f8fb0176186318d9f7a7c7666f27a96a4  web-client/src/poc/recognition-flow.ts
+  a1deb30c3ca40d811db9f41cabfa7c0c1b19c28d10cda829218666fa59c63ad8  web-client/src/poc/recognition-state.ts
+
+Modification notice (24 July 2026): source files were moved under
+web/apps/site/src/voting/handwriting, imports and public exports were adapted to
+the ppoker web workspace, diagnostics-only UI was omitted, the POC's usability
+confidence was fixed at 0.95, and the numeric deck remains a caller-supplied
+input rather than application policy embedded in this module.
+
+Derived CRNN model
+------------------
+
+The exact POC model and metadata are distributed as models/digits-crnn.onnx and
+models/digits-crnn.json:
+
+  bea69199be71c01a35f4485ad853ef6fd11608c616c452598cb3f330922db9af  digits-crnn.onnx
+  fef02e93f6c412614608ed5c7df24f2b94760057c0c3a857d2e208bfdd34b6fe  digits-crnn.json
+  Model bytes: 1714986
+
+The CRNN Tiny architecture was adapted from zjykzj/crnn-ctc:
+
+  Repository: https://github.com/zjykzj/crnn-ctc
+  Release: v1.3.0
+  Revision: aeceea3a2ab7e973b40d871ff628b327df31a045
+  Copyright: 2023 zjykzj
+  License: Apache-2.0 (APACHE-2.0.txt)
+  Intended initialization checkpoint: crnn_tiny-emnist.pth
+  Checkpoint SHA-256: 6d2a653513fd71f9d5de1fc238311dc017d285f0bbc55e09da7ed9eea80479c9
+
+The derivative changes the input width from 160 to 128, composes canonical
+one-to-three-digit labels, reports fine-tuning from that intended initialization
+reference, and exports a static batch-one ONNX graph. The retained checkpoint
+matched the checksum after training, but no checksum was captured at training
+start, so pre-training binary lineage is not independently established. See
+MODEL_NOTICE.txt and the model metadata for the documented provenance scope and
+model limitations.
+
+Training glyphs came from NIST-hosted EMNIST Digits, derived from NIST Special
+Database 19. Neither EMNIST nor the upstream checkpoint is distributed here.
+
+Browser dependencies
+--------------------
+
+A scoped notice for direct third-party JavaScript site dependencies, their
+relevant browser runtime packages, and the handwriting additions is distributed
+as PRODUCTION_DEPENDENCIES.txt. It is not a complete audit of the pre-existing
+@ppoker/web-client, ppoker-core, or Rust crates compiled into the web client's
+WebAssembly.
+
+ONNX Runtime Web 1.27.0 and ONNX Runtime Common 1.27.0
+  Source: https://github.com/microsoft/onnxruntime/tree/v1.27.0
+  Copyright: Microsoft Corporation
+  License: MIT (MIT-ONNX-RUNTIME.txt)
+  Runtime third-party notices: ONNXRUNTIME-THIRD-PARTY-NOTICES.txt
+  Third-party notice SHA-256:
+    0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2
+
+@noble/hashes 2.2.0
+  Source: https://github.com/paulmillr/noble-hashes/tree/2.2.0
+  Copyright: 2022 Paul Miller (https://paulmillr.com)
+  License: MIT (MIT-NOBLE-HASHES.txt)
+
+uqr 0.1.3
+  Source: https://github.com/unjs/uqr/tree/v0.1.3
+  Copyright: Project Nayuki; 2023 Anthony Fu
+  License: MIT (MIT-UQR.txt)
+
+The generated, self-hosted ONNX Runtime files are copied byte-for-byte from the
+locked 1.27.0 package and are not downloaded by development or build commands:
+
+  0a1e718d99c41b22c21f2520ff4f9e883a6b5533856e398d21816ee8eb8185d3  ort-wasm-simd-threaded.mjs
+  d1ab1b94b16a65b29d710d0b587b29e7bed336827577623913479b8afe8113e6  ort-wasm-simd-threaded.wasm
