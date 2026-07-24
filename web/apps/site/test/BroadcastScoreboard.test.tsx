@@ -34,15 +34,23 @@ describe("BroadcastScoreboard", () => {
     ).toBeDefined();
     expect(view.getByText(/Checkout Redesign \/ PX-082/)).toBeDefined();
     const roomAccess = view.getByRole("region", {
-      name: "Room access preview",
+      name: "Room access",
     });
-    expect(within(roomAccess).getByText("Preview")).toBeDefined();
+    expect(within(roomAccess).getByText("Scan to join")).toBeDefined();
     expect(within(roomAccess).getByText("Checkout Redesign")).toBeDefined();
-    expect(within(roomAccess).getByText(/Join code coming soon/)).toBeDefined();
-    expect(within(roomAccess).queryByRole("img")).toBeNull();
     expect(
-      roomAccess.querySelector(".qr-code")?.getAttribute("aria-hidden"),
-    ).toBe("true");
+      within(roomAccess).getByText(/Scan or select the QR code to join room/),
+    ).toBeDefined();
+    expect(
+      within(roomAccess).getByRole("img", {
+        name: "QR code to join Checkout Redesign",
+      }),
+    ).toBeDefined();
+    expect(
+      within(roomAccess)
+        .getByRole("link", { name: "Join Checkout Redesign voting room" })
+        .getAttribute("href"),
+    ).toBe("http://localhost:3000/vote?room=PX-082");
     expect(
       [...view.container.querySelectorAll(".panel")].every((panel) =>
         panel.firstElementChild?.classList.contains("panel-header"),

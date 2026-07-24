@@ -1,103 +1,88 @@
+import { encode } from "uqr";
+import { memo, useMemo } from "react";
+
 import { motionTransition, useBroadcastLayout } from "../animation";
+import { buildVotingUrl, type VotingUrlBase } from "../voting/voting-url";
 import { Panel } from "./ui/Panel";
 import { PanelHeader } from "./ui/PanelHeader";
 
 interface JoinPanelProps {
   readonly roomCode: string;
   readonly roomName: string;
+  readonly baseUrl?: VotingUrlBase;
+  readonly voterUrl?: string;
 }
 
-function PseudoQrPreview() {
-  const size = 25;
-  const modules = Array.from({ length: size * size }, (_, index) => {
-    const row = Math.floor(index / size);
-    const column = index % size;
-    const origins = [
-      [0, 0],
-      [0, size - 7],
-      [size - 7, 0],
-    ] as const;
-    const finder = origins.find(
-      ([top, left]) =>
-        row >= top && row < top + 7 && column >= left && column < left + 7,
-    );
+const VotingQr = memo(function VotingQr({
+  roomName,
+  voterUrl,
+}: {
+  roomName: string;
+  voterUrl: string;
+}) {
+  const qr = useMemo(() => {
+    const encoded = encode(voterUrl, { border: 4, ecc: "M" });
+    const modulePath = encoded.data
+      .flatMap((row, rowIndex) =>
+        row.flatMap((filled, columnIndex) =>
+          filled ? [`M${String(columnIndex)} ${String(rowIndex)}h1v1h-1z`] : [],
+        ),
+      )
+      .join("");
 
-    if (finder !== undefined) {
-      const localRow = row - finder[0];
-      const localColumn = column - finder[1];
-      return (
-        localRow === 0 ||
-        localRow === 6 ||
-        localColumn === 0 ||
-        localColumn === 6 ||
-        (localRow >= 2 && localRow <= 4 && localColumn >= 2 && localColumn <= 4)
-      );
-    }
-
-    const separator =
-      (row <= 7 && column <= 7) ||
-      (row <= 7 && column >= size - 8) ||
-      (row >= size - 8 && column <= 7);
-    if (separator) {
-      return false;
-    }
-    if (row === 6 || column === 6) {
-      return (row + column) % 2 === 0;
-    }
-
-    return (row * 3 + column * 5 + row * column + (row ^ column) * 7) % 13 < 6;
-  });
+    return { modulePath, size: encoded.size };
+  }, [voterUrl]);
 
   return (
     <svg
-      aria-hidden="true"
+      aria-label={`QR code to join ${roomName}`}
       className="qr-code"
       focusable="false"
-      viewBox="0 0 29 29"
+      role="img"
+      shapeRendering="crispEdges"
+      viewBox={`0 0 ${String(qr.size)} ${String(qr.size)}`}
     >
-      <rect width="29" height="29" fill="#f4f8f7" />
-      {modules.map((filled, index) =>
-        filled ? (
-          <rect
-            fill="#071014"
-            height="1"
-            key={index}
-            shapeRendering="crispEdges"
-            width="1"
-            x={(index % size) + 2}
-            y={Math.floor(index / size) + 2}
-          />
-        ) : null,
-      )}
+      <title>{`QR code to join ${roomName}`}</title>
+      <rect fill="#ffffff" height={qr.size} width={qr.size} />
+      <path d={qr.modulePath} data-qr-modules="" fill="#000000" />
     </svg>
   );
-}
+});
 
-export function JoinPanel({ roomCode, roomName }: JoinPanelProps) {
+export function JoinPanel({
+  baseUrl,
+  roomCode,
+  roomName,
+  voterUrl,
+}: JoinPanelProps) {
   const layoutEnabled = useBroadcastLayout();
+  const resolvedVoterUrl =
+    voterUrl ?? buildVotingUrl(roomCode, baseUrl ?? window.location);
 
   return (
     <Panel
       accent="vermilion"
       accentPlacement="full-width"
-      aria-label="Room access preview"
+      aria-label="Room access"
       className="join-panel"
       layout={layoutEnabled}
       transition={{ layout: motionTransition.layout }}
     >
       <PanelHeader
-        trailing={<span className="open-badge type-meta">Preview</span>}
+        trailing={<span className="open-badge type-meta">Scan to join</span>}
       >
         Room access
       </PanelHeader>
       <div className="join-content">
-        <PseudoQrPreview />
+        <a aria-label={`Join ${roomName} voting room`} href={resolvedVoterUrl}>
+          <VotingQr roomName={roomName} voterUrl={resolvedVoterUrl} />
+        </a>
         <div className="room-code">
           <span className="type-meta">Live room</span>
           <strong title={roomName}>{roomName}</strong>
         </div>
         <p className="join-preview-note type-supporting">
-          Join code coming soon / URL room {roomCode}
+          Scan or select the QR code to join room {roomCode}
         </p>
       </div>
     </Panel>

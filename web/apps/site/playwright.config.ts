@@ -11,13 +11,19 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      testIgnore: /voter-webkit\.spec\.ts/u,
       use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "webkit-voter-pointer",
+      testMatch: /voter-webkit\.spec\.ts/u,
+      use: { ...devices["iPhone 13"] },
     },
   ],
   reporter: process.env["CI"] === undefined ? "list" : "github",
   retries: process.env["CI"] === undefined ? 0 : 2,
   testDir: "./e2e/specs",
-  timeout: 20_000,
+  timeout: 30_000,
   use: {
     baseURL,
     screenshot: "only-on-failure",

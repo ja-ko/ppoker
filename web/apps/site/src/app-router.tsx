@@ -16,22 +16,35 @@ import type {
   BroadcastSessionSnapshot,
 } from "./broadcast-session";
 import { BillboardStatus } from "./components/BillboardStatus";
-import { parseBroadcastConfig, type ConfigError } from "./config";
+import {
+  parseBroadcastConfig,
+  parseVotingConfig,
+  type ConfigError,
+} from "./config";
+import { VotingApp } from "./voting/VotingApp";
+import { VotingStatus } from "./voting/VotingStatus";
+import type {
+  VotingSessionManager,
+  VotingSessionSnapshot,
+} from "./voting-session";
 
 interface SiteRouteDependencies {
+  readonly broadcastSessions: BroadcastSessionManager;
   readonly endpoint: string | undefined;
-  readonly sessions: BroadcastSessionManager;
+  readonly votingSessions: VotingSessionManager;
 }
 
 const ROOM_ROUTE_ID = "room";
+const VOTE_ROUTE_ID = "vote";
 
 type RoomRouteData =
   | { readonly error: ConfigError; readonly room: null }
   | { readonly error: null; readonly room: string };
 
 export function createSiteRoutes({
+  broadcastSessions,
   endpoint,
-  sessions,
+  votingSessions,
 }: SiteRouteDependencies): RouteObject[] {
   const roomLoader = ({
     request,
@@ -40,10 +53,23 @@ export function createSiteRoutes({
   }): RoomRouteData => {
     const result = parseBroadcastConfig(endpoint, new URL(request.url).search);
     if (!result.ok) {
-      sessions.close();
+      broadcastSessions.close();
       return { error: result.error, room: null };
     }
-    sessions.start(result.config);
+    broadcastSessions.start(result.config);
+    return { error: null, room: result.config.room };
+  };
+  const voteLoader = ({
+    request,
+  }: {
+    readonly request: Request;
+  }): RoomRouteData => {
+    const result = parseVotingConfig(endpoint, new URL(request.url).search);
+    if (!result.ok) {
+      votingSessions.close();
+      return { error: result.error, room: null };
+    }
+    votingSessions.start(result.config);
     return { error: null, room: result.config.room };
   };
 
@@ -54,10 +80,16 @@ export function createSiteRoutes({
       children: [
         { Component: JoinScreen, id: "join", index: true },
         {
-          Component: () => <RoomScreen sessions={sessions} />,
+          Component: () => <RoomScreen sessions={broadcastSessions} />,
           id: ROOM_ROUTE_ID,
           loader: roomLoader,
           path: "room",
+        },
+        {
+          Component: () => <VotingScreen sessions={votingSessions} />,
+          id: VOTE_ROUTE_ID,
+          loader: voteLoader,
+          path: "vote",
         },
       ],
       id: "root",
@@ -66,18 +98,31 @@ export function createSiteRoutes({
   ];
 }
 
-export function bindSessionToRouter(
+export function bindSessionsToRouter(
   router: Pick<DataRouter, "subscribe">,
-  sessions: Pick<BroadcastSessionManager, "close">,
+  sessions: {
+    readonly broadcast: Pick<BroadcastSessionManager, "close">;
+    readonly voting: Pick<VotingSessionManager, "close">;
+  },
 ): () => void {
   return router.subscribe((state) => {
-    const roomMatched = state.matches.some(
-      ({ route }) => route.id === ROOM_ROUTE_ID,
-    );
-    if (!roomMatched) {
-      sessions.close();
+    if (state.navigation.state !== "idle") {
+      return;
+    }
+    if (!routeMatched(state.matches, ROOM_ROUTE_ID)) {
+      sessions.broadcast.close();
+    }
+    if (!routeMatched(state.matches, VOTE_ROUTE_ID)) {
+      sessions.voting.close();
     }
   });
+}
+
+function routeMatched(
+  matches: DataRouter["state"]["matches"],
+  routeId: string,
+): boolean {
+  return matches.some(({ route }) => route.id === routeId);
 }
 
 function RootLayout() {
@@ -176,10 +221,10 @@ function RoomScreen({
   if (data.error !== null) {
     return <ConfigurationError error={data.error} />;
   }
-  return <SessionView expectedRoom={data.room} session={session} />;
+  return <BroadcastSessionView expectedRoom={data.room} session={session} />;
 }
 
-function SessionView({
+function BroadcastSessionView({
   expectedRoom,
   session,
 }: {
@@ -219,6 +264,73 @@ function SessionView({
   );
 }
 
+function VotingScreen({
+  sessions,
+}: {
+  readonly sessions: VotingSessionManager;
+}) {
+  const data = useLoaderData<RoomRouteData>();
+  const session = useSyncExternalStore(
+    sessions.subscribe,
+    sessions.getSnapshot,
+    sessions.getSnapshot,
+  );
+
+  if (data.error !== null) {
+    return <VotingConfigurationError error={data.error} />;
+  }
+  return <VotingSessionView expectedRoom={data.room} session={session} />;
+}
+
+function VotingSessionView({
+  expectedRoom,
+  session,
+}: {
+  readonly expectedRoom: string;
+  readonly session: VotingSessionSnapshot;
+}) {
+  if (session.status === "idle" || session.room !== expectedRoom) {
+    return (
+      <VotingStatus
+        detail="Preparing a participant connection for this room."
+        room={expectedRoom}
+        title="Starting voter console"
+      />
+    );
+  }
+  if (session.status === "starting") {
+    return (
+      <VotingStatus
+        detail={`Preparing a participant connection for ${session.initialName}.`}
+        room={session.room}
+        title="Starting voter console"
+      />
+    );
+  }
+  if (session.status === "error") {
+    return (
+      <VotingStatus
+        detail={errorMessage(
+          session.error,
+          "The participant client could not be created.",
+        )}
+        role="alert"
+        room={session.room}
+        title="Voter initialization failed"
+      />
+    );
+  }
+  return (
+    <VotingApp
+      client={session.client}
+      connectError={session.connectError}
+      initialName={session.initialName}
+      nameSession={session.nameSession}
+      room={session.room}
+    />
+  );
+}
+
 function ConfigurationError({ error }: { readonly error: ConfigError }) {
   const noRoom = error.code === "missing-room";
   return (
@@ -228,6 +340,17 @@ function ConfigurationError({ error }: { readonly error: ConfigError }) {
       eyebrow={noRoom ? "Room selection" : "Build configuration"}
       phaseLabel={noRoom ? "No room" : "Configuration"}
       title={noRoom ? "No room selected" : "Invalid scoreboard configuration"}
+    />
+  );
+}
+
+function VotingConfigurationError({ error }: { readonly error: ConfigError }) {
+  const noRoom = error.code === "missing-room";
+  return (
+    <VotingStatus
+      detail={error.message}
+      role="alert"
+      title={noRoom ? "No room selected" : "Invalid voter configuration"}
     />
   );
 }

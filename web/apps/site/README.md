@@ -1,9 +1,9 @@
-# Planning Poker Broadcast
+# Planning Poker Web App
 
-This app is a read-only spectator billboard. It creates one spectator
-`PokerClient` and never votes, reveals, starts rounds, chats, or renames. The
-future voter client and a functional room-access QR code are outside this app's
-current scope.
+This app serves a room join screen, a read-only spectator billboard, and a
+participant voter. The billboard QR code is functional and links to
+`/vote?room=<room>`. The voter can draw or tap a card, retract a vote, reveal or
+reset with confirmation, and rename the persisted local participant.
 
 ## Configuration
 
@@ -13,20 +13,37 @@ the room at runtime with the `room` query parameter. The site routes are:
 
 - `/` for the room join screen
 - `/room?room=planning-room` for a direct scoreboard URL
+- `/vote?room=planning-room` for a direct participant voter URL
 
 ```text
 https://scoreboard.example/
 https://scoreboard.example/room?room=planning-room
+https://scoreboard.example/vote?room=planning-room
 ```
 
 The large display title is intentionally the fixed `Planning Poker Room`
 placeholder. The authoritative room name from the live snapshot is shown in
-the header eyebrow and room-access panel. The QR-like artwork is explicitly a
-nonfunctional preview; it does not encode the room yet.
+the header eyebrow and room-access panel.
+
+The production host must serve `index.html` for direct application routes,
+including `/room`, `/vote`, and their trailing-slash forms. Static assets,
+recognition model files, ONNX Runtime files, and legal notices remain
+root-relative.
 
 Elapsed phase time and history ages are observer-local. They describe when
 this billboard observed state, are not server completion timestamps, and reset
 on reload.
+
+## Handwriting Recognition Safety
+
+The fixed `0.95` handwriting confidence threshold is an explicit,
+user-selected carry-over of the POC's usability behavior. It is a synthetic
+margin heuristic, not a probability of correctness, calibrated safety bound,
+or production-safe automatic-action threshold. The deterministic POC browser
+corpus contains known false accepts above `0.95`, including a wide zigzag
+decoded as `3` and an overlapping `13` decoded as `8`. Canonical number parsing
+and deck membership remain necessary gates, but they do not make
+out-of-distribution marks safe.
 
 ## Commands
 
@@ -41,9 +58,10 @@ VITE_PPOKER_ENDPOINT=wss://poker.example pnpm run build
 ```
 
 For local development, open the printed Vite URL and use the join form, or open
-`/room?room=planning-room` directly. The production output is static and uses
-root-relative asset URLs, so host `apps/site/dist` at the origin root with an
-SPA fallback for `/room` rather than under a path prefix.
+`/room?room=planning-room` or `/vote?room=planning-room` directly. The
+production output is static and uses root-relative asset URLs, so host
+`apps/site/dist` at the origin root with an SPA fallback for `/room` and `/vote`
+rather than under a path prefix.
 
 ## Container
 
@@ -61,19 +79,22 @@ docker run --rm --publish 8080:8080 ppoker-site:local
 ```
 
 Open `http://localhost:8080/` or
-`http://localhost:8080/room?room=planning-room`. Vite embeds the endpoint in
-the JavaScript bundle, so changing a runtime environment variable cannot
-change it; rebuild the image for a different endpoint. The build rejects an
-empty value, non-WebSocket schemes, missing hostnames, credentials (including
-a bare `@`), query parameters, and fragments before the site build starts.
+`http://localhost:8080/room?room=planning-room` for the scoreboard, or
+`http://localhost:8080/vote?room=planning-room` for the voter. Vite embeds the
+endpoint in the JavaScript bundle, so changing a runtime environment variable
+cannot change it; rebuild the image for a different endpoint. The build rejects
+an empty value, non-WebSocket schemes, missing hostnames, credentials
+(including a bare `@`), query parameters, and fragments before the site build
+starts.
 
 The runtime uses the maintained unprivileged nginx image, runs as UID/GID `101`,
 contains only nginx and `apps/site/dist`, and listens on port `8080`. The Node
 and nginx base versions are pinned by multi-platform manifest digest. Its
 health check uses `/healthz`, and its SPA fallback serves `index.html` for
-direct application routes such as `/room`. Missing static-looking paths,
-including scripts, source maps, manifests, text files, and fonts, return `404`
-without immutable cache headers.
+direct application routes such as `/room` and `/vote`. The image includes the
+voter recognition model, ONNX Runtime browser files, and production legal
+notices. Missing static-looking paths, including scripts, source maps,
+manifests, text files, and fonts, return `404` without immutable cache headers.
 
 Run the deterministic container smoke test from the repository root:
 

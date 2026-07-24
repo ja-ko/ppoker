@@ -2,6 +2,8 @@ node_modules
 apps/*/dist
 apps/*/node_modules
 apps/*/playwright-report
+apps/*/public/ort
+apps/site/public/models/digits-crnn.json
 apps/*/test-results
 packages/*/coverage
 packages/*/dist
