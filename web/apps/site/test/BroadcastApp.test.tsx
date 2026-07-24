@@ -1,34 +1,33 @@
 import type { ClientSnapshot, Player } from "@ppoker/web-client";
 import { act, render } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { BroadcastApp } from "../src/BroadcastApp";
+import { BroadcastApp, BroadcastRevealGate } from "../src/BroadcastApp";
 import {
   createFakeClient,
   makeSnapshot,
   snapshotWithStatus,
 } from "./fake-client";
+import { playingFixture } from "./scoreboard-fixtures";
 
 describe("spectator broadcast app", () => {
-  it("renders connecting, no-room, unknown-phase and terminal states", () => {
+  it("hides pending synchronization states but renders unsupported phases and terminal errors", () => {
     const fake = createFakeClient(snapshotWithStatus("connecting"));
     const view = render(
-      <BroadcastApp client={fake.client} connectError={null} room="planning" />,
+      <BroadcastApp
+        client={fake.client}
+        connectError={null}
+        revealAt={null}
+        room="planning"
+      />,
     );
-    expect(view.getByText("Connecting to room")).toBeDefined();
-    expect(view.getAllByRole("status")).toHaveLength(1);
-    expect(view.container.querySelector(".scorebug")?.classList).toContain(
-      "scorebug--status",
-    );
-    expect(view.container.querySelector(".scorebug")?.children).toHaveLength(2);
-    expect(view.container.querySelector(".broadcast-meta")).toBeNull();
-    expect(view.container.querySelector(".live-flag")).toBeNull();
+    expect(view.container.textContent).toBe("");
 
     act(() => {
       fake.publish(makeSnapshot({ revision: 2, status: "open" }));
     });
-    expect(view.getByText("Waiting for room state")).toBeDefined();
-    expect(view.getAllByRole("status")).toHaveLength(1);
+    expect(view.container.textContent).toBe("");
+    expect(view.queryByRole("status")).toBeNull();
 
     act(() => {
       fake.publish(
@@ -72,7 +71,12 @@ describe("spectator broadcast app", () => {
       }),
     );
     const view = render(
-      <BroadcastApp client={fake.client} connectError={null} room="planning" />,
+      <BroadcastApp
+        client={fake.client}
+        connectError={null}
+        revealAt={null}
+        room="planning"
+      />,
     );
     expect(view.getByRole("heading", { name: "Cards in play" })).toBeDefined();
     expect(
@@ -130,7 +134,12 @@ describe("spectator broadcast app", () => {
       }),
     );
     const view = render(
-      <BroadcastApp client={fake.client} connectError={null} room="planning" />,
+      <BroadcastApp
+        client={fake.client}
+        connectError={null}
+        revealAt={null}
+        room="planning"
+      />,
     );
 
     expect(view.getByRole("heading", { name: "Cards in play" })).toBeDefined();
@@ -177,12 +186,76 @@ describe("spectator broadcast app", () => {
       <BroadcastApp
         client={fake.client}
         connectError={new Error("constructor refused connection")}
+        revealAt={null}
         room="planning"
       />,
     );
     expect(view.getByText("Connection failed")).toBeDefined();
     expect(view.getByText("constructor refused connection")).toBeDefined();
     expect(view.getAllByRole("alert")).toHaveLength(1);
+  });
+
+  it("waits out the reveal deadline when a displayable model arrives early", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const view = render(
+      <BroadcastRevealGate revealAt={1_700} scoreboard={playingFixture}>
+        {() => <p>Scoreboard ready</p>}
+      </BroadcastRevealGate>,
+    );
+
+    expect(view.queryByText("Scoreboard ready")).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(699);
+    });
+    expect(view.queryByText("Scoreboard ready")).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(view.getByText("Scoreboard ready")).toBeDefined();
+    vi.useRealTimers();
+  });
+
+  it("reveals immediately when the displayable model arrives after the deadline", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const view = render(
+      <BroadcastRevealGate revealAt={1_700} scoreboard={null}>
+        {() => <p>Late scoreboard ready</p>}
+      </BroadcastRevealGate>,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(900);
+    });
+    view.rerender(
+      <BroadcastRevealGate revealAt={1_700} scoreboard={playingFixture}>
+        {() => <p>Late scoreboard ready</p>}
+      </BroadcastRevealGate>,
+    );
+
+    expect(view.getByText("Late scoreboard ready")).toBeDefined();
+    vi.useRealTimers();
+  });
+
+  it("does not wait for a throttled timer callback after the deadline passes", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const view = render(
+      <BroadcastRevealGate revealAt={1_700} scoreboard={null}>
+        {() => <p>Snapshot rendered after deadline</p>}
+      </BroadcastRevealGate>,
+    );
+
+    vi.setSystemTime(1_900);
+    view.rerender(
+      <BroadcastRevealGate revealAt={1_700} scoreboard={playingFixture}>
+        {() => <p>Snapshot rendered after deadline</p>}
+      </BroadcastRevealGate>,
+    );
+
+    expect(view.getByText("Snapshot rendered after deadline")).toBeDefined();
+    vi.useRealTimers();
   });
 });
 

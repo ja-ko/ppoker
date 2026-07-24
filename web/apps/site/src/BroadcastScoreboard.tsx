@@ -2,6 +2,7 @@ import {
   AnimatePresence,
   LayoutGroup,
   motion,
+  useReducedMotion,
   useIsPresent,
 } from "motion/react";
 import { forwardRef, useId } from "react";
@@ -11,6 +12,7 @@ import {
   motionTransition,
   PARTICIPANT_PANEL_LAYOUT_ID,
   phasePanelMotion,
+  scoreboardEntranceTiming,
   useBroadcastLayout,
   useBroadcastPresence,
 } from "./animation";
@@ -29,6 +31,7 @@ import type {
 } from "./scoreboard-model";
 
 interface BroadcastScoreboardProps {
+  readonly entrance?: boolean;
   readonly scoreboard: BroadcastScoreboardModel;
 }
 
@@ -293,15 +296,24 @@ function PhasePanel({ scoreboard }: BroadcastScoreboardProps) {
   );
 }
 
-export function BroadcastScoreboard({ scoreboard }: BroadcastScoreboardProps) {
+export function BroadcastScoreboard({
+  entrance = false,
+  scoreboard,
+}: BroadcastScoreboardProps) {
   const layoutGroupId = useId();
   const layoutEnabled = useBroadcastLayout();
+  const reducedMotion = useReducedMotion();
+  const entranceEnabled = entrance && reducedMotion !== true;
 
   return (
     <LayoutGroup id={layoutGroupId}>
-      <div className={`app-shell app-shell--${scoreboard.phase}`}>
+      <div
+        className={`app-shell app-shell--${scoreboard.phase}`}
+        data-scoreboard-entrance={entrance ? "enabled" : undefined}
+      >
         <BroadcastHeader
           displayTitle={scoreboard.displayTitle}
+          entrance={entrance}
           observed={scoreboard.observed}
           phase={scoreboard.phase}
           roomCode={scoreboard.roomCode}
@@ -318,7 +330,21 @@ export function BroadcastScoreboard({ scoreboard }: BroadcastScoreboardProps) {
             : `Round ${scoreboard.round.toString()}. Cards revealed. ${scoreboard.result.responseCount.toString()} responses revealed.`}
         </p>
 
-        <main className="broadcast-main">
+        <motion.main
+          animate={{ opacity: 1 }}
+          className="broadcast-main"
+          data-entrance="body"
+          initial={entranceEnabled ? { opacity: 0 } : false}
+          transition={
+            entranceEnabled
+              ? {
+                  delay: scoreboardEntranceTiming.bodyDelay,
+                  duration: scoreboardEntranceTiming.bodyDuration,
+                  ease: [0.22, 1, 0.36, 1],
+                }
+              : { duration: 0 }
+          }
+        >
           <div className="primary-column">
             <ParticipantPanel scoreboard={scoreboard} />
             <PhasePanel scoreboard={scoreboard} />
@@ -336,7 +362,7 @@ export function BroadcastScoreboard({ scoreboard }: BroadcastScoreboardProps) {
             />
             <RoundHistory history={scoreboard.history} />
           </motion.aside>
-        </main>
+        </motion.main>
       </div>
     </LayoutGroup>
   );

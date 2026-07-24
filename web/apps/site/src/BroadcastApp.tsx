@@ -1,47 +1,101 @@
 import type { PokerClient } from "@ppoker/web-client";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   PokerClientProvider,
   usePokerClientSnapshot,
 } from "@ppoker/web-client/react";
 
-import { BroadcastMotionConfig } from "./animation";
 import { BroadcastScoreboard } from "./BroadcastScoreboard";
 import { BillboardStatus } from "./components/BillboardStatus";
 import { useObserverTiming } from "./observer-timing";
 import { deriveScoreboardModel } from "./scoreboard-adapter";
+import type { BroadcastScoreboardModel } from "./scoreboard-model";
 
-interface BroadcastAppProps {
+export interface BroadcastAppProps {
   readonly client: PokerClient;
   readonly connectError: unknown;
+  readonly entrance?: boolean;
+  readonly revealAt: number | null;
   readonly room: string;
 }
 
 export function BroadcastApp({
   client,
   connectError,
+  entrance = false,
+  revealAt,
   room,
 }: BroadcastAppProps) {
   return (
-    <BroadcastMotionConfig>
-      <PokerClientProvider client={client}>
-        <BroadcastClientView connectError={connectError} room={room} />
-      </PokerClientProvider>
-    </BroadcastMotionConfig>
+    <PokerClientProvider client={client}>
+      <BroadcastClientView
+        connectError={connectError}
+        entrance={entrance}
+        revealAt={revealAt}
+        room={room}
+      />
+    </PokerClientProvider>
   );
+}
+
+interface BroadcastRevealGateProps {
+  readonly children: (scoreboard: BroadcastScoreboardModel) => ReactNode;
+  readonly revealAt: number | null;
+  readonly scoreboard: BroadcastScoreboardModel | null;
+}
+
+export function BroadcastRevealGate({
+  children,
+  revealAt,
+  scoreboard,
+}: BroadcastRevealGateProps) {
+  const [gateOpen, setGateOpen] = useState(
+    () => revealAt === null || Date.now() >= revealAt,
+  );
+  const deadlinePassed = revealAt === null || Date.now() >= revealAt;
+
+  useEffect(() => {
+    if (revealAt === null) {
+      setGateOpen(true);
+      return;
+    }
+    const remaining = revealAt - Date.now();
+    if (remaining <= 0) {
+      setGateOpen(true);
+      return;
+    }
+
+    setGateOpen(false);
+    const timer = window.setTimeout(() => {
+      setGateOpen(true);
+    }, remaining);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [revealAt]);
+
+  return (gateOpen || deadlinePassed) && scoreboard !== null
+    ? children(scoreboard)
+    : null;
 }
 
 interface BroadcastClientViewProps {
   readonly connectError: unknown;
+  readonly entrance: boolean;
+  readonly revealAt: number | null;
   readonly room: string;
 }
 
 export function BroadcastClientView({
   connectError,
+  entrance,
+  revealAt,
   room,
 }: BroadcastClientViewProps) {
   const snapshot = usePokerClientSnapshot();
   const timing = useObserverTiming(snapshot);
   const terminalError = snapshot.terminalError;
+  const scoreboard = deriveScoreboardModel(snapshot, room, timing);
 
   if (terminalError !== null) {
     return (
@@ -55,32 +109,18 @@ export function BroadcastClientView({
       />
     );
   }
-  if (snapshot.status === "connecting") {
+  if (snapshot.status === "connecting" || snapshot.status === "disconnected") {
+    if (connectError === null) {
+      return null;
+    }
     return (
       <BillboardStatus
-        detail="Waiting for the planning poker server to accept this spectator."
+        announcementRole="alert"
+        detail={errorMessage(connectError)}
         eyebrow="Spectator connection"
-        phaseLabel="Connecting"
+        phaseLabel="Unavailable"
         roomCode={room}
-        title="Connecting to room"
-      />
-    );
-  }
-  if (snapshot.status === "disconnected") {
-    return (
-      <BillboardStatus
-        announcementRole={connectError === null ? "status" : "alert"}
-        detail={
-          connectError === null
-            ? "The spectator client is preparing its connection."
-            : errorMessage(connectError)
-        }
-        eyebrow="Spectator connection"
-        phaseLabel="Starting"
-        roomCode={room}
-        title={
-          connectError === null ? "Preparing broadcast" : "Connection failed"
-        }
+        title="Connection failed"
       />
     );
   }
@@ -100,18 +140,7 @@ export function BroadcastClientView({
       />
     );
   }
-  if (snapshot.room === null) {
-    return (
-      <BillboardStatus
-        detail="Connected successfully; waiting for the first authoritative room snapshot."
-        eyebrow="Room synchronization"
-        phaseLabel="Waiting"
-        roomCode={room}
-        title="Waiting for room state"
-      />
-    );
-  }
-  if (snapshot.room.phase === "unknown") {
+  if (snapshot.room?.phase === "unknown") {
     return (
       <BillboardStatus
         announcementRole="alert"
@@ -123,20 +152,16 @@ export function BroadcastClientView({
       />
     );
   }
-
-  const scoreboard = deriveScoreboardModel(snapshot, room, timing);
-  if (scoreboard === null) {
-    return (
-      <BillboardStatus
-        detail="The room snapshot is not ready for presentation."
-        eyebrow="Room synchronization"
-        phaseLabel="Waiting"
-        roomCode={room}
-        title="Waiting for scoreboard data"
-      />
-    );
-  }
-  return <BroadcastScoreboard scoreboard={scoreboard} />;
+  return (
+    <BroadcastRevealGate revealAt={revealAt} scoreboard={scoreboard}>
+      {(displayableScoreboard) => (
+        <BroadcastScoreboard
+          entrance={entrance}
+          scoreboard={displayableScoreboard}
+        />
+      )}
+    </BroadcastRevealGate>
+  );
 }
 
 function errorMessage(error: unknown): string {

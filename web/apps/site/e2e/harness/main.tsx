@@ -1,7 +1,12 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { createBrowserRouter, RouterProvider } from "react-router";
 
+import { BroadcastMotionConfig } from "../../src/animation";
+import { bindSessionToRouter, createSiteRoutes } from "../../src/app-router";
 import { BroadcastApp } from "../../src/BroadcastApp";
+import { createBroadcastSessionManager } from "../../src/broadcast-session";
+import { createClientLifecycle } from "../../src/client-lifecycle";
 import "../../src/styles.css";
 import { createBroadcastTestDriver } from "./driver";
 import { FakePokerClient } from "./fake-poker-client";
@@ -12,17 +17,84 @@ if (rootElement === null) {
   throw new Error("E2E harness root element not found.");
 }
 
-const requestedFixture = new URLSearchParams(window.location.search).get(
-  "fixture",
-);
+const search = new URLSearchParams(window.location.search);
+const requestedFixture = search.get("fixture");
+const joinMode = search.get("mode") === "join";
 const fixtureName = isSnapshotFixtureName(requestedFixture)
   ? requestedFixture
   : "playing";
-const client = new FakePokerClient(fixtureSnapshot(fixtureName));
-window.__broadcastTestDriver = createBroadcastTestDriver(client);
-
-createRoot(rootElement).render(
-  <StrictMode>
-    <BroadcastApp client={client} connectError={null} room="E2E-ROOM" />
-  </StrictMode>,
+const client = new FakePokerClient(
+  fixtureSnapshot(joinMode ? "connecting" : fixtureName),
 );
+
+const root = createRoot(rootElement);
+if (joinMode) {
+  const sessionState = {
+    activeRoom: null as string | null,
+    closeCount: 0,
+    startCount: 0,
+  };
+  let activeLifecycle: symbol | undefined;
+  const sessions = createBroadcastSessionManager({
+    bindLifecycle: () => () => undefined,
+    createLifecycle: (options) => {
+      const lifecycle = createClientLifecycle(options, () =>
+        Promise.resolve(client),
+      );
+      const identity = Symbol(options.room);
+      let closed = false;
+      return {
+        close: () => {
+          if (!closed) {
+            closed = true;
+            sessionState.closeCount += 1;
+            if (activeLifecycle === identity) {
+              activeLifecycle = undefined;
+              sessionState.activeRoom = null;
+            }
+          }
+          lifecycle.close();
+        },
+        start: () => {
+          activeLifecycle = identity;
+          sessionState.activeRoom = options.room;
+          sessionState.startCount += 1;
+          return lifecycle.start();
+        },
+      };
+    },
+    pageTarget: window,
+    reload: () => undefined,
+  });
+  const router = createBrowserRouter(
+    createSiteRoutes({ endpoint: "wss://e2e.test/socket", sessions }),
+    { basename: "/e2e/harness" },
+  );
+  bindSessionToRouter(router, sessions);
+  window.__broadcastTestDriver = createBroadcastTestDriver(client, {
+    navigateToRoom: (room) =>
+      router.navigate(`/room?${new URLSearchParams({ room }).toString()}`),
+    sessionState: () => ({ ...sessionState }),
+  });
+  root.render(
+    <StrictMode>
+      <RouterProvider router={router} />
+    </StrictMode>,
+  );
+} else {
+  window.__broadcastTestDriver = createBroadcastTestDriver(client);
+  root.render(
+    <StrictMode>
+      <BroadcastMotionConfig>
+        <div className="site-root">
+          <BroadcastApp
+            client={client}
+            connectError={null}
+            revealAt={null}
+            room="E2E-ROOM"
+          />
+        </div>
+      </BroadcastMotionConfig>
+    </StrictMode>,
+  );
+}
