@@ -10,6 +10,32 @@ vi.mock("uqr", async (importOriginal) => {
 });
 
 describe("JoinPanel", () => {
+  it("derives an absolute same-origin voting URL from the browser location", () => {
+    const originalPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    window.history.replaceState({}, "", "/room?room=old#score");
+
+    try {
+      const view = render(
+        <JoinPanel roomCode="PX-082" roomName="Checkout Redesign" />,
+      );
+      const expected = `${window.location.origin}/vote?room=PX-082`;
+
+      expect(
+        view
+          .getByRole("link", {
+            name: "Join Checkout Redesign voting room",
+          })
+          .getAttribute("href"),
+      ).toBe(expected);
+      expect(vi.mocked(encode)).toHaveBeenCalledWith(expected, {
+        border: 4,
+        ecc: "M",
+      });
+    } finally {
+      window.history.replaceState({}, "", originalPath);
+    }
+  });
+
   it("links a real, accessible QR code to the exact injected voting URL", () => {
     const voterUrl =
       "https://board.example/vote?room=Caf%C3%A9%20%E6%9D%B1%E4%BA%AC";

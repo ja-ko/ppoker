@@ -6,6 +6,7 @@ import type {
 } from "@ppoker/web-client";
 
 import { BILLBOARD_TITLE_PLACEHOLDER } from "./config";
+import { deckCardKey, voteKey } from "./deck-card";
 import {
   historyObservationKey,
   type ObserverTimingSnapshot,
@@ -308,22 +309,6 @@ function historySummary(
 
 function voteLabel(vote: VoteData): string {
   return vote.kind === "number" ? vote.value.toString() : vote.value;
-}
-
-function voteKey(vote: VoteData): string {
-  return vote.kind === "number"
-    ? `number:${vote.value.toString()}`
-    : `special:${vote.value}`;
-}
-
-function deckCardKey(label: string): string {
-  if (/^\+?\d+$/u.test(label)) {
-    const value = Number(label);
-    if (Number.isInteger(value) && value >= 0 && value <= 255) {
-      return `number:${value.toString()}`;
-    }
-  }
-  return `special:${label}`;
 }
 
 function formatAverage(average: number | null): string {

@@ -248,6 +248,7 @@ test("phone and short-landscape layouts preserve the drawing-first interaction",
   for (const viewport of [
     { height: 844, width: 390 },
     { height: 568, width: 320 },
+    { height: 320, width: 390 },
     { height: 390, width: 844 },
   ]) {
     await page.setViewportSize(viewport);
