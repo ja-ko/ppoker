@@ -218,7 +218,6 @@ voter_resources=(
   /models/digits-crnn.onnx
   /ort/ort-wasm-simd-threaded.mjs
   /ort/ort-wasm-simd-threaded.wasm
-  /legal/HANDWRITING_NOTICES.txt
   /legal/PRODUCTION_DEPENDENCIES.txt
 )
 resource_number=0
