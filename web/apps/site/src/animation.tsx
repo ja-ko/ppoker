@@ -4,6 +4,25 @@ import type { ReactNode } from "react";
 export const REDUCED_MOTION_PREFERENCE = "user" as const;
 export const PARTICIPANT_PANEL_LAYOUT_ID = "broadcast:participant-panel";
 
+export const JOIN_ROUTE_EXIT_DURATION_SECONDS = 0.18;
+export const SCOREBOARD_REVEAL_DELAY_MS = 700;
+
+export const scoreboardEntranceTiming = {
+  bodyDelay: 0.78,
+  bodyDuration: 0.22,
+  brandDelay: 0.18,
+  brandDuration: 0.18,
+  headerItemDelay: 0.36,
+  headerItemDuration: 0.22,
+  headerItemStagger: 0.05,
+  lineDuration: 0.18,
+} as const;
+
+export const joinRouteExitTransition = {
+  duration: JOIN_ROUTE_EXIT_DURATION_SECONDS,
+  ease: [0.4, 0, 1, 1],
+} as const satisfies Transition;
+
 export const motionTransition = {
   layout: {
     damping: 38,

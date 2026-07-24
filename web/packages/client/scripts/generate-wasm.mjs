@@ -16,4 +16,5 @@ runChecked(wasmPack.command, [
   "web",
   "--out-dir",
   output,
+  "--locked",
 ]);

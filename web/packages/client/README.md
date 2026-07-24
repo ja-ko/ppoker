@@ -36,7 +36,7 @@ Run `pnpm run wasm:generate` after changing shared Rust models, the WASM facade,
 or generated TypeScript contracts when you need fresh bindings without a full
 build. Generation deletes and recreates
 `packages/client/src/generated/ppoker-wasm/` using `wasm-pack build --target
-web`.
+web --locked`.
 
 `pnpm run build` cleans `packages/client/dist/`, regenerates WASM, emits
 declarations, and builds both package entrypoints. `pnpm run package:verify`

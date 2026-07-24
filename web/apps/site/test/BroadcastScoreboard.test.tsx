@@ -50,6 +50,24 @@ describe("BroadcastScoreboard", () => {
     ).toBe(true);
   });
 
+  it("adds entrance choreography only when requested and keeps it mounted", () => {
+    const view = render(<BroadcastScoreboard scoreboard={playingFixture} />);
+    expect(view.container.querySelector('[data-entrance="line"]')).toBeNull();
+    expect(view.container.querySelector(".scorebug")?.children).toHaveLength(4);
+
+    view.rerender(<BroadcastScoreboard entrance scoreboard={playingFixture} />);
+    const line = view.container.querySelector('[data-entrance="line"]');
+    const body = view.container.querySelector('[data-entrance="body"]');
+    expect(line).not.toBeNull();
+    expect(view.container.querySelector(".scorebug")?.children).toHaveLength(5);
+
+    view.rerender(
+      <BroadcastScoreboard entrance scoreboard={revealedFixture} />,
+    );
+    expect(view.container.querySelector('[data-entrance="line"]')).toBe(line);
+    expect(view.container.querySelector('[data-entrance="body"]')).toBe(body);
+  });
+
   it("renders the revealed votes and final distribution", () => {
     const view = render(<BroadcastScoreboard scoreboard={revealedFixture} />);
 

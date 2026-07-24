@@ -1,9 +1,9 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { createBrowserRouter, RouterProvider } from "react-router";
 
-import { startBroadcastClient } from "./bootstrap";
-import { BillboardStatus } from "./components/BillboardStatus";
-import { parseBroadcastConfig } from "./config";
+import { bindSessionToRouter, createSiteRoutes } from "./app-router";
+import { createBroadcastSessionManager } from "./broadcast-session";
 import "./styles.css";
 
 const root = document.querySelector<HTMLDivElement>("#root");
@@ -12,47 +12,31 @@ if (root === null) {
   throw new Error("Root element not found");
 }
 
+const sessions = createBroadcastSessionManager({
+  pageTarget: window,
+  reload: () => {
+    window.location.reload();
+  },
+});
+const router = createBrowserRouter(
+  createSiteRoutes({
+    endpoint: import.meta.env.VITE_PPOKER_ENDPOINT,
+    sessions,
+  }),
+);
+const unbindRouter = bindSessionToRouter(router, sessions);
 const reactRoot = createRoot(root);
-const render = (children: React.ReactNode): void => {
-  reactRoot.render(<StrictMode>{children}</StrictMode>);
-};
-const configResult = parseBroadcastConfig(
-  import.meta.env.VITE_PPOKER_ENDPOINT,
-  window.location.search,
+reactRoot.render(
+  <StrictMode>
+    <RouterProvider router={router} />
+  </StrictMode>,
 );
 
-if (!configResult.ok) {
-  const noRoom = configResult.error.code === "missing-room";
-  render(
-    <BillboardStatus
-      announcementRole="alert"
-      detail={configResult.error.message}
-      eyebrow={noRoom ? "Room selection" : "Build configuration"}
-      phaseLabel={noRoom ? "No room" : "Configuration"}
-      title={noRoom ? "No room selected" : "Invalid scoreboard configuration"}
-    />,
-  );
-} else {
-  const { config } = configResult;
-  const bootstrap = startBroadcastClient(
-    {
-      render,
-      unmount: () => {
-        reactRoot.unmount();
-      },
-    },
-    config,
-    {
-      pageTarget: window,
-      reload: () => {
-        window.location.reload();
-      },
-    },
-  );
-
-  if (import.meta.hot !== undefined) {
-    import.meta.hot.dispose(() => {
-      bootstrap.dispose();
-    });
-  }
+if (import.meta.hot !== undefined) {
+  import.meta.hot.dispose(() => {
+    unbindRouter();
+    sessions.dispose();
+    router.dispose();
+    reactRoot.unmount();
+  });
 }
