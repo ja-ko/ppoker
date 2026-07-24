@@ -846,7 +846,7 @@ export function VotingRoom({
             Connection {connectionLabel}
           </span>
           <span>Recognizer {recognizerStatus.readiness}</span>
-          <a href="/legal/HANDWRITING_NOTICES.txt">Notices</a>
+          <a href="/legal/PRODUCTION_DEPENDENCIES.txt">Notices</a>
         </div>
         <div className="vote-name">
           <span>
