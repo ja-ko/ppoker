@@ -6,5 +6,6 @@
 /web/packages/*/dist/
 /web/packages/*/coverage/
 /web/packages/*/src/generated/ppoker-wasm/
+/web/apps/site/public/ort/
 /web/*.tgz
 /web/packages/*/*.tgz

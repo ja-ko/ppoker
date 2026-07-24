@@ -8,6 +8,8 @@ export interface BroadcastConfig {
   readonly room: string;
 }
 
+export type VotingConfig = BroadcastConfig;
+
 export type ConfigErrorCode =
   "invalid-endpoint" | "invalid-room" | "missing-endpoint" | "missing-room";
 
@@ -27,6 +29,35 @@ export function spectatorClientOptions(config: BroadcastConfig): ClientOptions {
     role: "spectator",
     room: config.room,
   };
+}
+
+export function participantClientOptions(
+  config: VotingConfig,
+  name: string,
+): ClientOptions {
+  return {
+    endpoint: config.endpoint,
+    name,
+    role: "participant",
+    room: config.room,
+  };
+}
+
+export function parseVotingConfig(
+  endpointValue: string | undefined,
+  search: string,
+): ConfigResult {
+  const result = parseBroadcastConfig(endpointValue, search);
+  if (!result.ok && result.error.code === "missing-room") {
+    return {
+      error: {
+        ...result.error,
+        message: "Add ?room=<room name> to this voter URL.",
+      },
+      ok: false,
+    };
+  }
+  return result;
 }
 
 export function parseBroadcastConfig(
