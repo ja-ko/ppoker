@@ -125,11 +125,11 @@ function JoinScreen() {
     if (!isPresent) {
       return;
     }
-    const timeout = window.setTimeout(() => {
+    const focusTimer = window.setTimeout(() => {
       roomInput.current?.focus({ preventScroll: true });
-    }, 0);
+    }, 100);
     return () => {
-      window.clearTimeout(timeout);
+      window.clearTimeout(focusTimer);
     };
   }, [isPresent]);
 
