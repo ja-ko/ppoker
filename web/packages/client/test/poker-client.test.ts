@@ -102,7 +102,7 @@ async function createTestClient(
 }
 
 function invoke(client: PokerClient, [method, ...arguments_]: Operation): void {
-  Reflect.apply(client[method], client, arguments_);
+  Reflect.apply(client[method].bind(client), undefined, arguments_);
 }
 
 function setRawSnapshot(
