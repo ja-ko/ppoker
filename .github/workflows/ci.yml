@@ -78,7 +78,7 @@ jobs:
           package_json_file: web/package.json
       - uses: actions/setup-node@v7
         with:
-          node-version-file: web/package.json
+          node-version: "24"
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
@@ -158,7 +158,7 @@ jobs:
           package_json_file: web/package.json
       - uses: actions/setup-node@v7
         with:
-          node-version-file: web/package.json
+          node-version: "24"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown

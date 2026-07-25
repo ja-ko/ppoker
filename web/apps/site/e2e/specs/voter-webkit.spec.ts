@@ -80,7 +80,6 @@ test("iPhone handwriting header and countdown text remain interactive and contai
       const range = document.createRange();
       range.selectNodeContents(button);
       const text = range.getBoundingClientRect();
-      range.detach();
       return {
         bottom: text.bottom <= bounds.bottom,
         left: text.left >= bounds.left,

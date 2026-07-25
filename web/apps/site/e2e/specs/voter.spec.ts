@@ -116,7 +116,6 @@ async function commitMorphGeometry(page: Page): Promise<{
     const range = document.createRange();
     range.selectNodeContents(output);
     const targetBounds = range.getBoundingClientRect();
-    range.detach();
     if (originalAnimation.length === 0) {
       output.style.removeProperty("animation");
     } else {
@@ -352,7 +351,6 @@ async function expectRenderedTextContained(locator: Locator): Promise<void> {
         right: rect.right,
         top: rect.top,
       }));
-    range.detach();
     return {
       bounds: {
         bottom: bounds.bottom,

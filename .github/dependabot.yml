@@ -23,6 +23,13 @@ updates:
       day: "saturday"
     cooldown:
       default-days: 5
+    ignore:
+      # TypeScript 7.0 has no compiler API for typescript-eslint. Revisit at 7.1.
+      - dependency-name: "typescript"
+        versions: [">=7.0.0 <7.1.0"]
+      # Keep ambient APIs aligned with Node 24 until the next LTS upgrade.
+      - dependency-name: "@types/node"
+        versions: [">=25.0.0"]
     groups:
       all-dependencies:
         patterns:
