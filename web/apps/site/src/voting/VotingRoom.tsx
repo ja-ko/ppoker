@@ -1382,7 +1382,6 @@ function finalTextRunBounds(
   } catch {
     return null;
   } finally {
-    range.detach();
     if (animation.length === 0) {
       output.style.removeProperty("animation");
     } else {

@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@10.34.5",
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=24.0.0"
   },
   "scripts": {
     "dev": "pnpm --filter @ppoker/site run dev",
@@ -31,7 +31,7 @@
     "eslint": "10.7.0",
     "globals": "17.7.0",
     "prettier": "3.9.5",
-    "typescript": "5.9.3",
+    "typescript": "6.0.3",
     "typescript-eslint": "8.64.0"
   }
 }
