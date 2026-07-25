@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import {
   CARD_STROKES,
@@ -8,6 +8,7 @@ import {
   drawCard,
   expectCommandSummary,
   expectNoHorizontalOverflow,
+  expectNoVerticalOverflow,
   gotoVoterFixture,
   publishVoterFixture,
   settlePaint,
@@ -32,6 +33,106 @@ async function expectMinimumTouchTargets(page: Page): Promise<void> {
       }),
     );
   expect(undersizedTargets).toEqual([]);
+}
+
+async function expectFullyWithinVisualViewport(
+  locator: Locator,
+): Promise<void> {
+  await expect(locator).toBeAttached();
+  const geometry = await locator.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    const viewport = window.visualViewport;
+    const left = viewport?.offsetLeft ?? 0;
+    const top = viewport?.offsetTop ?? 0;
+    const right = left + (viewport?.width ?? window.innerWidth);
+    const bottom = top + (viewport?.height ?? window.innerHeight);
+    return {
+      bounds: {
+        bottom: bounds.bottom,
+        left: bounds.left,
+        right: bounds.right,
+        top: bounds.top,
+      },
+      contained:
+        bounds.left >= left - 1 &&
+        bounds.right <= right + 1 &&
+        bounds.top >= top - 1 &&
+        bounds.bottom <= bottom + 1,
+      text: element.textContent.trim() || element.tagName,
+      viewport: { bottom, left, right, top },
+      visible:
+        bounds.width > 0 &&
+        bounds.height > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden",
+    };
+  });
+  expect(geometry.visible, JSON.stringify(geometry)).toBe(true);
+  expect(geometry.contained, JSON.stringify(geometry)).toBe(true);
+}
+
+async function expectInteractiveControlsWithinViewport(
+  page: Page,
+): Promise<void> {
+  const controls = page.locator(
+    ".vote-route button:visible, .vote-route a:visible",
+  );
+  for (const control of await controls.all()) {
+    await expectFullyWithinVisualViewport(control);
+  }
+}
+
+async function expectUsableHandwritingSurface(page: Page): Promise<void> {
+  const handwritingSurface = surface(page);
+  await expect(handwritingSurface).toHaveAttribute("aria-disabled", "false");
+  await expectFullyWithinVisualViewport(handwritingSurface);
+  const bounds = await handwritingSurface.boundingBox();
+  if (bounds === null) {
+    throw new Error("Handwriting surface has no browser bounds.");
+  }
+  expect(bounds.width).toBeGreaterThanOrEqual(200);
+  expect(bounds.height).toBeGreaterThanOrEqual(44);
+}
+
+async function expectCountdownControlsSeparated(page: Page): Promise<void> {
+  const overlaps = await page.evaluate(() => {
+    const box = (selector: string): DOMRect => {
+      const element = document.querySelector<HTMLElement>(selector);
+      if (element === null) {
+        throw new Error(`${selector} is missing.`);
+      }
+      return element.getBoundingClientRect();
+    };
+    const intersects = (left: DOMRect, right: DOMRect): boolean =>
+      left.left < right.right - 1 &&
+      left.right > right.left + 1 &&
+      left.top < right.bottom - 1 &&
+      left.bottom > right.top + 1;
+    const phase = box(".vote-phase-button");
+    const cancel = box(".vote-countdown-cancel");
+    const context = box(".vote-room-context");
+    const drawingHeading = box(".vote-draw-heading");
+    const drawingStage = box(".vote-draw-stage");
+    return {
+      cancelContext: intersects(cancel, context),
+      cancelHeading: intersects(cancel, drawingHeading),
+      cancelStage: intersects(cancel, drawingStage),
+      phaseCancel: intersects(phase, cancel),
+      phaseContext: intersects(phase, context),
+      phaseHeading: intersects(phase, drawingHeading),
+      phaseStage: intersects(phase, drawingStage),
+    };
+  });
+  expect(overlaps).toEqual({
+    cancelContext: false,
+    cancelHeading: false,
+    cancelStage: false,
+    phaseCancel: false,
+    phaseContext: false,
+    phaseHeading: false,
+    phaseStage: false,
+  });
 }
 
 test.describe("voter real recognition", () => {
@@ -68,6 +169,13 @@ test.describe("voter real recognition", () => {
     await expect(page.locator("output.vote-result--morphing")).toHaveText("5");
     await expect(stage(page)).toHaveClass(/vote-draw-stage--committed/u);
     await expect(page.getByLabel("Current vote 5")).toBeVisible();
+    await expect(page.getByLabel("Current vote 5")).toHaveClass(
+      /vote-result--handwritten/u,
+    );
+    await expect(page.getByLabel("Current vote 5")).toHaveCSS(
+      "overflow",
+      "visible",
+    );
 
     await drawCard(page, "13");
     await expect(stage(page)).toHaveClass(/vote-draw-stage--committing/u);
@@ -226,7 +334,7 @@ test("reveal and reset dialogs focus safely and issue only confirmed commands", 
   await publishVoterFixture(page, "revealed");
   const resetButton = page.getByRole("button", { name: "Reset", exact: true });
   await resetButton.click();
-  const resetDialog = page.getByRole("dialog", { name: "Reset this round?" });
+  const resetDialog = page.getByRole("dialog", { name: "Start new round?" });
   await expect(
     resetDialog.getByRole("button", { name: "Cancel" }),
   ).toBeFocused();
@@ -241,55 +349,71 @@ test("reveal and reset dialogs focus safely and issue only confirmed commands", 
   ]);
 });
 
-test("phone and short-landscape layouts preserve the drawing-first interaction", async ({
+test("revealed rounds use the contained dedicated voter result view", async ({
   page,
 }) => {
+  await page.setViewportSize({ height: 664, width: 390 });
+  await gotoVoterFixture(page, "playing");
+  await publishVoterFixture(page, "revealed");
+  await settlePaint(page);
+
+  const result = page.locator(".vote-result-view");
+  await expect(result).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Round result" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Final average 6.5")).toHaveText("6.5");
+  await expect(page.locator(".vote-final-own-vote")).toContainText(
+    "Your vote 5",
+  );
+  await expect(
+    page.getByText("Vote distribution", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("img", { name: /Vote distribution:/u }),
+  ).toBeVisible();
+  await expect(page.getByRole("group", { name: "Voting cards" })).toHaveCount(
+    0,
+  );
+  await expect(surface(page)).toHaveCount(0);
+  await expect(page.locator(".vote-responses, .vote-slots")).toHaveCount(0);
+  await expect(page.getByText("Responses locked", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(page.getByText("Ready Peer", { exact: true })).toHaveCount(0);
+
+  await expectFullyWithinVisualViewport(result);
+  await expectFullyWithinVisualViewport(page.locator(".vote-name"));
+  await expectInteractiveControlsWithinViewport(page);
+  await expectNoHorizontalOverflow(page);
+  await expectNoVerticalOverflow(page);
+});
+
+test("phone layouts keep voter controls and identity in the viewport", async ({
+  page,
+}) => {
+  const portraitViewports = [
+    { height: 664, width: 390, vote: "5" },
+    { height: 568, width: 320, vote: "8" },
+  ] as const;
+
+  await page.setViewportSize(portraitViewports[0]);
   await gotoVoterFixture(page, "long-deck");
-  for (const viewport of [
-    { height: 844, width: 390 },
-    { height: 568, width: 320 },
-    { height: 320, width: 390 },
-    { height: 390, width: 844 },
-  ]) {
+  for (const viewport of portraitViewports) {
     await page.setViewportSize(viewport);
+    await publishVoterFixture(page, "long-deck");
     await settlePaint(page);
     await expectNoHorizontalOverflow(page);
+    await expectNoVerticalOverflow(page);
 
-    const geometry = await page.evaluate(() => {
-      const box = (selector: string) => {
-        const element = document.querySelector<HTMLElement>(selector);
-        if (element === null) {
-          throw new Error(`${selector} is missing.`);
-        }
-        const bounds = element.getBoundingClientRect();
-        return {
-          bottom: bounds.bottom,
-          height: bounds.height,
-          left: bounds.left,
-          right: bounds.right,
-          top: bounds.top,
-          width: bounds.width,
-        };
-      };
-      const headerContext = box(".vote-room-context");
-      const phaseControl = box(".vote-phase-control");
-      const drawing = box(".vote-draw-stage");
-      const deck = box(".vote-deck-panel");
-      const writingSurface = box(".ink-surface");
-      return {
-        deck,
-        drawing,
-        headerSeparated:
-          headerContext.right <= phaseControl.left + 1 ||
-          phaseControl.right <= headerContext.left + 1,
-        writingSurface,
-      };
-    });
-    expect(geometry.headerSeparated).toBe(true);
-    expect(geometry.writingSurface.height).toBeGreaterThanOrEqual(250);
-    expect(geometry.drawing.width * geometry.drawing.height).toBeGreaterThan(
-      geometry.deck.width * geometry.deck.height,
-    );
+    await expectFullyWithinVisualViewport(page.locator(".vote-room-context"));
+    await expectFullyWithinVisualViewport(page.locator(".vote-phase-control"));
+    await expectFullyWithinVisualViewport(page.locator(".vote-deck-panel"));
+    await expectFullyWithinVisualViewport(page.locator(".vote-responses"));
+    await expectFullyWithinVisualViewport(page.locator(".vote-name"));
+    await expectUsableHandwritingSurface(page);
+    await expectInteractiveControlsWithinViewport(page);
+    await expectMinimumTouchTargets(page);
 
     const longCard = page.getByRole("button", {
       name: "Vote Needs another conversation with stakeholders",
@@ -342,83 +466,84 @@ test("phone and short-landscape layouts preserve the drawing-first interaction",
       widthFits: true,
     });
 
+    await publishVoterFixture(page, "final-vote");
+    await page
+      .getByRole("button", { name: `Vote ${viewport.vote}`, exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: /Reveal in [123]/u }),
+    ).toBeVisible();
+    const cancel = page.getByRole("button", { name: "Cancel" });
+    await expect(cancel).toBeVisible();
+    await expectCountdownControlsSeparated(page);
+    await expectFullyWithinVisualViewport(page.locator(".vote-phase-control"));
+    await expectFullyWithinVisualViewport(page.locator(".vote-name"));
+    await expectInteractiveControlsWithinViewport(page);
     await expectMinimumTouchTargets(page);
-
-    if (viewport.width === 320) {
-      await page.evaluate(() => {
-        window.scrollTo(0, 0);
-      });
-      await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
-      await publishVoterFixture(page, "final-vote");
-      await page.getByRole("button", { name: "Vote 5" }).evaluate((button) => {
-        if (!(button instanceof HTMLButtonElement)) {
-          throw new Error("Vote 5 target is not a button.");
-        }
-        button.click();
-      });
-      await expect(
-        page.getByRole("button", { name: "Reveal in 3" }),
-      ).toBeVisible();
-      const cancel = page.getByRole("button", { name: "Cancel" });
-      await expect(cancel).toBeVisible();
-      const overlaps = await page.evaluate(() => {
-        const box = (selector: string): DOMRect => {
-          const element = document.querySelector<HTMLElement>(selector);
-          if (element === null) {
-            throw new Error(`${selector} is missing.`);
-          }
-          return element.getBoundingClientRect();
-        };
-        const intersects = (left: DOMRect, right: DOMRect): boolean =>
-          left.left < right.right - 1 &&
-          left.right > right.left + 1 &&
-          left.top < right.bottom - 1 &&
-          left.bottom > right.top + 1;
-        const phase = box(".vote-phase-button");
-        const cancelButton = box(".vote-countdown-cancel");
-        const drawingHeading = box(".vote-draw-heading");
-        const drawingStage = box(".vote-draw-stage");
-        return {
-          cancelHeading: intersects(cancelButton, drawingHeading),
-          cancelStage: intersects(cancelButton, drawingStage),
-          phaseCancel: intersects(phase, cancelButton),
-          phaseHeading: intersects(phase, drawingHeading),
-          phaseStage: intersects(phase, drawingStage),
-        };
-      });
-      expect(overlaps).toEqual({
-        cancelHeading: false,
-        cancelStage: false,
-        phaseCancel: false,
-        phaseHeading: false,
-        phaseStage: false,
-      });
-      await expectMinimumTouchTargets(page);
-      await cancel.click();
-      await publishVoterFixture(page, "long-deck");
-    }
-
-    await page.locator(".vote-footer").scrollIntoViewIfNeeded();
-    await expect(page.locator(".vote-footer")).toBeVisible();
-    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
     await expectNoHorizontalOverflow(page);
-    await page.evaluate(() => {
-      window.scrollTo(0, 0);
-    });
+    await expectNoVerticalOverflow(page);
+    await cancel.click();
   }
 });
 
-test("drawing after document scroll keeps the pointer origin aligned", async ({
+test("short landscape keeps drawing and deck interaction on-page", async ({
   page,
 }) => {
-  await page.setViewportSize({ height: 568, width: 390 });
-  await gotoVoterFixture(page, "playing");
-  await page.evaluate(() => {
-    window.scrollTo(0, 110);
+  await page.setViewportSize({ height: 390, width: 844 });
+  await gotoVoterFixture(page, "long-deck");
+  await settlePaint(page);
+  await expectNoHorizontalOverflow(page);
+  await expectNoVerticalOverflow(page);
+  await expectFullyWithinVisualViewport(page.locator(".vote-room-context"));
+  await expectFullyWithinVisualViewport(page.locator(".vote-phase-control"));
+  await expectFullyWithinVisualViewport(page.locator(".vote-name"));
+  await expectUsableHandwritingSurface(page);
+  await expectMinimumTouchTargets(page);
+
+  const longLandscapeCard = page.getByRole("button", {
+    name: "Vote Needs another conversation with stakeholders",
   });
+  await longLandscapeCard.scrollIntoViewIfNeeded();
+  await expect(longLandscapeCard).toBeVisible();
+  await longLandscapeCard.click();
+  await expectCommandSummary(page, [
+    {
+      args: ["Needs another conversation with stakeholders"],
+      name: "vote",
+    },
+  ]);
+  await expectNoHorizontalOverflow(page);
+  await expectNoVerticalOverflow(page);
+});
+
+test("extremely short narrow viewports scroll instead of clipping controls", async ({
+  page,
+}) => {
+  await page.setViewportSize({ height: 320, width: 390 });
+  await gotoVoterFixture(page, "long-deck");
+  await expectNoHorizontalOverflow(page);
+  await expectUsableHandwritingSurface(page);
   await expect
-    .poll(() => page.evaluate(() => window.scrollY))
-    .toBeGreaterThan(0);
+    .poll(() =>
+      page.evaluate(
+        () =>
+          document.documentElement.scrollHeight >
+          document.documentElement.clientHeight,
+      ),
+    )
+    .toBe(true);
+
+  await page.locator(".vote-footer").scrollIntoViewIfNeeded();
+  await expect(page.locator(".vote-name")).toBeVisible();
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+});
+
+test("compact portrait drawing stays aligned without document scrolling", async ({
+  page,
+}) => {
+  await page.setViewportSize({ height: 664, width: 390 });
+  await gotoVoterFixture(page, "playing");
+  await expectNoVerticalOverflow(page);
 
   const surfaceBox = await surface(page).boundingBox();
   if (surfaceBox === null) {
@@ -427,12 +552,35 @@ test("drawing after document scroll keeps the pointer origin aligned", async ({
   expect(surfaceBox.y).toBeGreaterThanOrEqual(0);
   await drawCard(page, "5");
   await settlePaint(page);
+  const glyphGeometry = await page
+    .getByLabel("Current vote 5")
+    .evaluate((glyph) => {
+      const drawingStage = glyph.closest(".vote-draw-stage");
+      if (drawingStage === null) {
+        throw new Error("Current vote drawing stage is missing.");
+      }
+      const glyphBounds = glyph.getBoundingClientRect();
+      const stageBounds = drawingStage.getBoundingClientRect();
+      return {
+        bottom: glyphBounds.bottom <= stageBounds.bottom + 1,
+        left: glyphBounds.left >= stageBounds.left - 1,
+        right: glyphBounds.right <= stageBounds.right + 1,
+        top: glyphBounds.top >= stageBounds.top - 1,
+      };
+    });
+  expect(glyphGeometry).toEqual({
+    bottom: true,
+    left: true,
+    right: true,
+    top: true,
+  });
   const ink = await canvasInkCenter(page);
   expect(ink.alphaPixels).toBeGreaterThan(100);
   expect(ink.x).toBeGreaterThan(surfaceBox.width * 0.35);
   expect(ink.x).toBeLessThan(surfaceBox.width * 0.65);
   expect(ink.y).toBeGreaterThan(surfaceBox.height * 0.25);
   expect(ink.y).toBeLessThan(surfaceBox.height * 0.8);
+  await expectNoVerticalOverflow(page);
   await expectCommandSummary(page, [{ args: ["5"], name: "vote" }]);
 });
 

@@ -5,20 +5,53 @@ import {
   drawCard,
   expectCommandSummary,
   expectNoHorizontalOverflow,
+  expectNoVerticalOverflow,
   gotoVoterFixture,
   settlePaint,
 } from "./voter-helpers";
 
-test("iOS-style touch input is captured after scrolling without moving the page", async ({
+test("iPhone touch input stays aligned without document scrolling", async ({
   page,
 }) => {
   await gotoVoterFixture(page, "playing");
-  await page.evaluate(() => {
-    window.scrollTo(0, 90);
+  await expectNoVerticalOverflow(page);
+
+  const identity = page.locator(".vote-name > span");
+  await expect(identity).toContainText("Voting as E2E Voter");
+  const identityGeometry = await identity.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const left = viewport?.offsetLeft ?? 0;
+    const top = viewport?.offsetTop ?? 0;
+    const right = left + (viewport?.width ?? window.innerWidth);
+    const bottom = top + (viewport?.height ?? window.innerHeight);
+    const hit = document.elementFromPoint(
+      bounds.left + bounds.width / 2,
+      bounds.top + bounds.height / 2,
+    );
+    return {
+      bounds: {
+        bottom: bounds.bottom,
+        left: bounds.left,
+        right: bounds.right,
+        top: bounds.top,
+      },
+      contained:
+        bounds.left >= left - 1 &&
+        bounds.right <= right + 1 &&
+        bounds.top >= top - 1 &&
+        bounds.bottom <= bottom + 1,
+      unobstructed: hit !== null && element.contains(hit),
+      viewport: { bottom, left, right, top },
+    };
   });
-  await expect
-    .poll(() => page.evaluate(() => window.scrollY))
-    .toBeGreaterThan(0);
+  expect(identityGeometry.contained, JSON.stringify(identityGeometry)).toBe(
+    true,
+  );
+  expect(identityGeometry.unobstructed, JSON.stringify(identityGeometry)).toBe(
+    true,
+  );
+
   const surface = page.getByRole("region", { name: /Handwriting surface/u });
   const bounds = await surface.boundingBox();
   if (bounds === null) {
@@ -38,6 +71,7 @@ test("iOS-style touch input is captured after scrolling without moving the page"
   ).toBe("none");
   expect(await page.evaluate(() => window.scrollY)).toBe(beforeScroll);
   await expectNoHorizontalOverflow(page);
+  await expectNoVerticalOverflow(page);
   await expectCommandSummary(page, []);
   await expect(page.getByTestId("drawing-stage")).toHaveClass(
     /vote-draw-stage--empty/u,
@@ -45,7 +79,7 @@ test("iOS-style touch input is captured after scrolling without moving the page"
 
   const alignedSurface = await surface.boundingBox();
   if (alignedSurface === null) {
-    throw new Error("Scrolled handwriting surface has no browser bounds.");
+    throw new Error("Aligned handwriting surface has no browser bounds.");
   }
   await drawCard(page, "5");
   await settlePaint(page);
@@ -55,6 +89,7 @@ test("iOS-style touch input is captured after scrolling without moving the page"
   expect(ink.x).toBeLessThan(alignedSurface.width * 0.65);
   expect(ink.y).toBeGreaterThan(alignedSurface.height * 0.25);
   expect(ink.y).toBeLessThan(alignedSurface.height * 0.8);
+  await expectNoVerticalOverflow(page);
   await expectCommandSummary(page, [{ args: ["5"], name: "vote" }]);
   await expect(page.getByLabel("Current vote 5")).toBeVisible();
 });

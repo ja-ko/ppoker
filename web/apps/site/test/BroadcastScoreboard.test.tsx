@@ -36,11 +36,13 @@ describe("BroadcastScoreboard", () => {
     const roomAccess = view.getByRole("region", {
       name: "Room access",
     });
-    expect(within(roomAccess).getByText("Scan to join")).toBeDefined();
-    expect(within(roomAccess).getByText("Checkout Redesign")).toBeDefined();
+    expect(within(roomAccess).getByText("Room access")).toBeDefined();
+    expect(within(roomAccess).queryByText("Scan to join")).toBeNull();
+    expect(within(roomAccess).queryByText("Live room")).toBeNull();
+    expect(within(roomAccess).queryByText("Checkout Redesign")).toBeNull();
     expect(
-      within(roomAccess).getByText(/Scan or select the QR code to join room/),
-    ).toBeDefined();
+      within(roomAccess).queryByText(/Scan or select the QR code to join room/),
+    ).toBeNull();
     expect(
       within(roomAccess).getByRole("img", {
         name: "QR code to join Checkout Redesign",

@@ -68,23 +68,10 @@ export function JoinPanel({
       layout={layoutEnabled}
       transition={{ layout: motionTransition.layout }}
     >
-      <PanelHeader
-        trailing={<span className="open-badge type-meta">Scan to join</span>}
-      >
-        Room access
-      </PanelHeader>
-      <div className="join-content">
-        <a aria-label={`Join ${roomName} voting room`} href={resolvedVoterUrl}>
-          <VotingQr roomName={roomName} voterUrl={resolvedVoterUrl} />
-        </a>
-        <div className="room-code">
-          <span className="type-meta">Live room</span>
-          <strong title={roomName}>{roomName}</strong>
-        </div>
-        <p className="join-preview-note type-supporting">
-          Scan or select the QR code to join room {roomCode}
-        </p>
-      </div>
+      <PanelHeader>Room access</PanelHeader>
+      <a aria-label={`Join ${roomName} voting room`} href={resolvedVoterUrl}>
+        <VotingQr roomName={roomName} voterUrl={resolvedVoterUrl} />
+      </a>
     </Panel>
   );
 }

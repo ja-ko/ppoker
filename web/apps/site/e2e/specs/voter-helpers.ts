@@ -111,10 +111,12 @@ export async function gotoVoterFixture(
     )
     .toBe(true);
   if (options.waitForRecognizer !== false) {
-    await expect(page.locator(".vote-recognizer")).toHaveText(
-      "Recognizer ready",
-      { timeout: MODEL_READY_TIMEOUT_MS },
-    );
+    await expect(
+      page
+        .locator(".vote-footer")
+        .locator(".vote-footer-statuses")
+        .getByText("Recognizer ready", { exact: true }),
+    ).toBeVisible({ timeout: MODEL_READY_TIMEOUT_MS });
     await expect(
       page.getByRole("region", { name: /Handwriting surface/u }),
     ).toHaveAttribute("aria-disabled", "false");
@@ -166,6 +168,34 @@ export async function expectNoHorizontalOverflow(page: Page): Promise<void> {
       })),
     )
     .toEqual({ body: true, document: true });
+}
+
+export async function expectNoVerticalOverflow(page: Page): Promise<void> {
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const scrollingElement = document.scrollingElement;
+        return {
+          bodyClientHeight: document.body.clientHeight,
+          bodyFits: document.body.scrollHeight <= window.innerHeight + 1,
+          bodyScrollHeight: document.body.scrollHeight,
+          documentClientHeight: document.documentElement.clientHeight,
+          documentFits:
+            document.documentElement.scrollHeight <=
+            document.documentElement.clientHeight + 1,
+          documentScrollHeight: document.documentElement.scrollHeight,
+          scrollTop: scrollingElement?.scrollTop ?? window.scrollY,
+          scrollY: window.scrollY,
+          viewportHeight: window.innerHeight,
+        };
+      }),
+    )
+    .toMatchObject({
+      bodyFits: true,
+      documentFits: true,
+      scrollTop: 0,
+      scrollY: 0,
+    });
 }
 
 async function viewportPoints(

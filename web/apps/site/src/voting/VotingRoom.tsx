@@ -10,7 +10,9 @@ import {
   type SyntheticEvent,
 } from "react";
 
+import { VoteDistribution } from "../components/VoteDistribution";
 import { deckCardsMatch } from "../deck-card";
+import { deriveCurrentVoteResult } from "../scoreboard-adapter";
 import {
   AutoRevealController,
   createCommandIntent,
@@ -609,7 +611,6 @@ export function VotingRoom({
           "--vote-ink-translate-y": `${String(morphGeometry.translateY)}%`,
         } as CSSProperties);
   const connectionLabel = snapshot.status === "open" ? "live" : snapshot.status;
-  const liveSummary = `${String(responseCount)} of ${String(voters.length)} responses. Connection ${connectionLabel}. Recognizer ${recognizerStatus.readiness}.`;
   const renderedVote =
     voteInput.status === "committing" && voteInput.value !== null
       ? String(voteInput.value)
@@ -618,11 +619,20 @@ export function VotingRoom({
     displayVote !== null || voteInput.status === "committing";
   const textualResult =
     renderedVote !== null && canonicalValue(renderedVote) === null;
+  const handwrittenResult =
+    (voteInput.status === "committing" || voteInput.status === "committed") &&
+    voteInput.value !== null &&
+    deckCardsMatch(renderedVote, String(voteInput.value));
 
   const room = snapshot.room;
   if (room === null) {
     return null;
   }
+  const revealedResult = deriveCurrentVoteResult(snapshot);
+  const liveSummary =
+    revealedResult === null
+      ? `${String(responseCount)} of ${String(voters.length)} responses. Connection ${connectionLabel}. Recognizer ${recognizerStatus.readiness}.`
+      : `Round ${String(snapshot.roundNumber)} result. Final average ${revealedResult.average}. Your vote ${revealedResult.ownVote ?? "not cast"}. ${String(revealedResult.responseCount)} responses revealed.`;
 
   return (
     <main className={`vote-route vote-shell vote-shell--${room.phase}`}>
@@ -666,194 +676,216 @@ export function VotingRoom({
         </div>
       </header>
 
-      <section className="vote-workspace" aria-label="Vote input">
-        <div
-          className={`vote-draw-stage vote-draw-stage--${voteInput.status}`}
-          data-effect-motion={voteInput.effectMotion ?? undefined}
-          data-testid="drawing-stage"
-          style={morphStyle}
-        >
-          <div className="vote-draw-heading">
-            <div>
-              <span className="vote-kicker">Handwriting input</span>
-              <p id="ink-instructions">Write one deck number anywhere.</p>
-            </div>
-            <span
-              className={`vote-recognizer vote-recognizer--${recognizerStatus.readiness}`}
+      {revealedResult === null ? (
+        <>
+          <section className="vote-workspace" aria-label="Vote input">
+            <div
+              className={`vote-draw-stage vote-draw-stage--${voteInput.status}`}
+              data-effect-motion={voteInput.effectMotion ?? undefined}
+              data-testid="drawing-stage"
+              style={morphStyle}
             >
-              {recognizerLabel(recognizerStatus)}
-            </span>
-          </div>
-          <InkPad
-            ref={inkRef}
-            className={`vote-ink vote-ink--${voteInput.status}`}
-            enabled={canDraw}
-            onPointerAccepted={pointerAccepted}
-            onStrokeCancel={() => {
-              flow.strokeCancelled();
-            }}
-            onStrokeComplete={() => {
-              flow.strokeCompleted();
-            }}
-          />
-          {hasRenderedVote ? (
-            <output
-              className={`vote-result${voteInput.status === "committing" ? " vote-result--morphing" : ""}${textualResult ? " vote-result--textual" : ""}`}
-              aria-label={`Current vote ${String(voteInput.value ?? displayVote ?? "")}`}
-            >
-              {renderedVote}
-            </output>
-          ) : null}
-          {!hasRenderedVote &&
-          !canDraw &&
-          recognizerStatus.readiness !== "failed" ? (
-            <p className="vote-draw-unavailable">
-              {canVote
-                ? "Recognizer loading. Deck buttons are ready."
-                : room.phase === "revealed"
-                  ? "Round revealed"
-                  : "Drawing unavailable"}
-            </p>
-          ) : null}
-          {recognizerStatus.readiness === "failed" ? (
-            <div className="vote-recognizer-failure">
-              <p>
-                {recognizerStatus.error?.message ?? recognizerStatus.status}
-              </p>
-              <button
-                onClick={() => {
-                  try {
-                    flow.retry();
-                  } catch (error: unknown) {
-                    reportCommandError(error);
-                  }
+              <div className="vote-draw-heading">
+                <div>
+                  <span className="vote-kicker">Handwriting input</span>
+                  <p id="ink-instructions">Write a deck number</p>
+                </div>
+                {recognizerStatus.readiness === "ready" ? null : (
+                  <span
+                    className={`vote-recognizer vote-recognizer--${recognizerStatus.readiness}`}
+                  >
+                    {recognizerLabel(recognizerStatus)}
+                  </span>
+                )}
+              </div>
+              <InkPad
+                ref={inkRef}
+                className={`vote-ink vote-ink--${voteInput.status}`}
+                enabled={canDraw}
+                onPointerAccepted={pointerAccepted}
+                onStrokeCancel={() => {
+                  flow.strokeCancelled();
                 }}
-                type="button"
-              >
-                Retry recognizer
-              </button>
-            </div>
-          ) : null}
-          <div
-            className="vote-input-feedback"
-            aria-atomic="true"
-            aria-live="polite"
-            role="status"
-          >
-            {inputFeedback(voteInput, diagnostics)}
-            {voteInput.inferenceError !== null ? (
-              <button
-                onClick={() => {
-                  try {
-                    flow.retry();
-                  } catch (error: unknown) {
-                    reportCommandError(error);
-                  }
+                onStrokeComplete={() => {
+                  flow.strokeCompleted();
                 }}
-                type="button"
-              >
-                Retry recognition
-              </button>
-            ) : null}
-          </div>
-        </div>
-
-        <section className="vote-deck-panel" aria-labelledby="vote-deck-title">
-          <div className="vote-deck-heading">
-            <div>
-              <span className="vote-kicker">Authoritative deck</span>
-              <h2 id="vote-deck-title">Tap a card</h2>
-            </div>
-            {effectiveVote !== null ? (
-              <button
-                className="vote-clear-button"
-                disabled={!canVote}
-                onClick={clearVote}
-                type="button"
-              >
-                Clear vote
-              </button>
-            ) : null}
-          </div>
-          <div className="vote-deck" role="group" aria-label="Voting cards">
-            {room.deck.map((card, index) => {
-              const selected = effectiveVote === card;
-              const pending = currentVoteIntent?.value === card;
-              return (
-                <button
-                  aria-label={`Vote ${card}`}
-                  aria-pressed={selected}
-                  className={`vote-card${voteCardSizeClass(card)}${selected ? " vote-card--selected" : ""}${pending ? " vote-card--pending" : ""}`}
-                  disabled={!canVote}
-                  key={`${card}:${String(index)}`}
-                  onClick={() => {
-                    voteForCard(card);
-                  }}
-                  type="button"
+              />
+              {hasRenderedVote ? (
+                <output
+                  className={`vote-result${voteInput.status === "committing" ? " vote-result--morphing" : ""}${handwrittenResult ? " vote-result--handwritten" : ""}${textualResult ? " vote-result--textual" : ""}`}
+                  aria-label={`Current vote ${String(voteInput.value ?? displayVote ?? "")}`}
                 >
-                  {card}
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      </section>
-
-      <section
-        className="vote-responses"
-        aria-labelledby="vote-responses-title"
-      >
-        <div
-          className="vote-response-summary"
-          aria-label={`${String(responseCount)} of ${String(voters.length)} responses locked`}
-          aria-valuemax={voters.length}
-          aria-valuemin={0}
-          aria-valuenow={responseCount}
-          role="progressbar"
-        >
-          <span className="vote-kicker" id="vote-responses-title">
-            Responses locked
-          </span>
-          <strong>
-            {responseCount}/{voters.length}
-          </strong>
-        </div>
-        <ol className="vote-slots">
-          {voters.map((voter, index) => {
-            const covered = isVoterCovered(
-              voter,
-              coverage.localVoter,
-              currentVoteIntent,
-            );
-            return (
-              <li
-                className={
-                  covered ? "vote-slot vote-slot--locked" : "vote-slot"
-                }
-                key={`${voter.name}:${String(index)}`}
+                  {renderedVote}
+                </output>
+              ) : null}
+              {!hasRenderedVote &&
+              !canDraw &&
+              recognizerStatus.readiness !== "failed" ? (
+                <p className="vote-draw-unavailable">
+                  {canVote
+                    ? "Recognizer loading. Deck buttons are ready."
+                    : "Drawing unavailable"}
+                </p>
+              ) : null}
+              {recognizerStatus.readiness === "failed" ? (
+                <div className="vote-recognizer-failure">
+                  <p>
+                    {recognizerStatus.error?.message ?? recognizerStatus.status}
+                  </p>
+                  <button
+                    onClick={() => {
+                      try {
+                        flow.retry();
+                      } catch (error: unknown) {
+                        reportCommandError(error);
+                      }
+                    }}
+                    type="button"
+                  >
+                    Retry recognizer
+                  </button>
+                </div>
+              ) : null}
+              <div
+                className="vote-input-feedback"
+                aria-atomic="true"
+                aria-live="polite"
+                role="status"
               >
-                <span aria-hidden="true">
-                  {String(index + 1).padStart(2, "0")}
-                </span>
-                <strong>{voter.name}</strong>
-                <em>{covered ? "Voted" : "Thinking"}</em>
-              </li>
-            );
-          })}
-        </ol>
-      </section>
+                {inputFeedback(voteInput, diagnostics)}
+                {voteInput.inferenceError !== null ? (
+                  <button
+                    onClick={() => {
+                      try {
+                        flow.retry();
+                      } catch (error: unknown) {
+                        reportCommandError(error);
+                      }
+                    }}
+                    type="button"
+                  >
+                    Retry recognition
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            <section
+              className="vote-deck-panel"
+              aria-labelledby="vote-deck-title"
+            >
+              <div className="vote-deck-heading">
+                <div>
+                  <span className="vote-kicker">Authoritative deck</span>
+                  <h2 id="vote-deck-title">Tap a card</h2>
+                </div>
+                {effectiveVote !== null ? (
+                  <button
+                    className="vote-clear-button"
+                    disabled={!canVote}
+                    onClick={clearVote}
+                    type="button"
+                  >
+                    Clear vote
+                  </button>
+                ) : null}
+              </div>
+              <div className="vote-deck" role="group" aria-label="Voting cards">
+                {room.deck.map((card, index) => {
+                  const selected = effectiveVote === card;
+                  const pending = currentVoteIntent?.value === card;
+                  return (
+                    <button
+                      aria-label={`Vote ${card}`}
+                      aria-pressed={selected}
+                      className={`vote-card${voteCardSizeClass(card)}${selected ? " vote-card--selected" : ""}${pending ? " vote-card--pending" : ""}`}
+                      disabled={!canVote}
+                      key={`${card}:${String(index)}`}
+                      onClick={() => {
+                        voteForCard(card);
+                      }}
+                      type="button"
+                    >
+                      {card}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          </section>
+
+          <section
+            className="vote-responses"
+            aria-labelledby="vote-responses-title"
+          >
+            <div
+              className="vote-response-summary"
+              aria-label={`${String(responseCount)} of ${String(voters.length)} responses locked`}
+              aria-valuemax={voters.length}
+              aria-valuemin={0}
+              aria-valuenow={responseCount}
+              role="progressbar"
+            >
+              <span className="vote-kicker" id="vote-responses-title">
+                Responses locked
+              </span>
+              <strong>
+                {responseCount}/{voters.length}
+              </strong>
+            </div>
+            <ol className="vote-slots">
+              {voters.map((voter, index) => {
+                const covered = isVoterCovered(
+                  voter,
+                  coverage.localVoter,
+                  currentVoteIntent,
+                );
+                return (
+                  <li
+                    className={
+                      covered ? "vote-slot vote-slot--locked" : "vote-slot"
+                    }
+                    key={`${voter.name}:${String(index)}`}
+                  >
+                    <span aria-hidden="true">
+                      {String(index + 1).padStart(2, "0")}
+                    </span>
+                    <strong>{voter.name}</strong>
+                    <em>{covered ? "Voted" : "Thinking"}</em>
+                  </li>
+                );
+              })}
+            </ol>
+          </section>
+        </>
+      ) : (
+        <section
+          className="vote-result-view"
+          aria-labelledby="vote-result-title"
+        >
+          <div className="vote-final-score">
+            <span className="vote-kicker">Final average</span>
+            <h2 id="vote-result-title">Round result</h2>
+            <strong
+              aria-label={`Final average ${revealedResult.average}`}
+              className="vote-final-average"
+            >
+              {revealedResult.average}
+            </strong>
+            <p className="vote-final-own-vote">
+              Your vote <strong>{revealedResult.ownVote ?? "-"}</strong>
+            </p>
+          </div>
+          <VoteDistribution
+            distribution={revealedResult.distribution}
+            meta={`${revealedResult.numericResponses.toString()} numeric / ${revealedResult.specialResponses.toString()} special`}
+            title="Vote distribution"
+            titleId="vote-result-distribution-title"
+          />
+        </section>
+      )}
 
       <footer className="vote-footer">
-        <div className="vote-footer-statuses">
-          <span>
-            <i
-              className={`vote-live-dot${snapshot.status === "open" ? "" : " vote-live-dot--offline"}`}
-            />
-            Connection {connectionLabel}
-          </span>
-          <span>Recognizer {recognizerStatus.readiness}</span>
-          <a href="/legal/PRODUCTION_DEPENDENCIES.txt">Notices</a>
-        </div>
         <div className="vote-name">
           <span>
             Voting as <strong>{currentName}</strong>
@@ -867,6 +899,16 @@ export function VotingRoom({
           >
             Rename
           </button>
+        </div>
+        <div className="vote-footer-statuses">
+          <span>
+            <i
+              className={`vote-live-dot${snapshot.status === "open" ? "" : " vote-live-dot--offline"}`}
+            />
+            Connection {connectionLabel}
+          </span>
+          <span>Recognizer {recognizerStatus.readiness}</span>
+          <a href="/legal/PRODUCTION_DEPENDENCIES.txt">Notices</a>
         </div>
       </footer>
       <p
@@ -915,7 +957,7 @@ export function VotingRoom({
           }}
           onConfirm={sendReset}
           returnFocusRef={phaseActionRef}
-          title="Reset this round?"
+          title="Start new round?"
         />
       ) : null}
       {dialog === "rename" ? (
@@ -1244,9 +1286,7 @@ function recognizerLabel(status: RecognizerStatus): string {
   if (status.readiness === "loading") {
     return `Recognizer ${String(Math.round(status.progress * 100))}%`;
   }
-  return status.readiness === "ready"
-    ? "Recognizer ready"
-    : "Recognizer offline";
+  return "Recognizer offline";
 }
 
 function inputFeedback(

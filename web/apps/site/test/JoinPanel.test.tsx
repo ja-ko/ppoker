@@ -57,6 +57,11 @@ describe("JoinPanel", () => {
         name: "QR code to join International planning",
       }),
     ).toBeDefined();
+    expect(view.getByText("Room access")).toBeDefined();
+    expect(view.queryByText("Scan to join")).toBeNull();
+    expect(view.queryByText("Live room")).toBeNull();
+    expect(view.queryByText("International planning")).toBeNull();
+    expect(view.queryByText(/Scan or select the QR code/)).toBeNull();
     expect(view.queryByText(/Preview|coming soon/)).toBeNull();
   });
 
