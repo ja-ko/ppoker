@@ -2,6 +2,8 @@
 /lcov.info
 /crates/ppoker-wasm/pkg/
 /web/node_modules/
+/web/coverage/
+/web/dist/
 /web/packages/*/node_modules/
 /web/packages/*/dist/
 /web/packages/*/coverage/

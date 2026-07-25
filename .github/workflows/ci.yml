@@ -5,7 +5,7 @@ permissions:
 
 on:
   push:
-    branches: ["**"]
+    branches: [master]
   pull_request:
   workflow_dispatch:
 
@@ -20,19 +20,23 @@ jobs:
   rust:
     name: Rust
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
+          components: clippy, llvm-tools-preview, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: taiki-e/install-action@nextest
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
       - name: Run Clippy
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-      - name: Run Rust tests
-        run: cargo nextest run --locked --workspace --all-features --profile ci
+      - name: Build debug binary
+        run: cargo build --locked --package ppoker
+      - name: Run Rust tests with coverage
+        run: cargo llvm-cov --locked --all-features --workspace --lcov --output-path lcov.info nextest --profile ci
       - name: Upload Rust test results to Codecov
         if: ${{ !cancelled() && hashFiles('target/nextest/ci/junit.xml') != '' }}
         uses: codecov/codecov-action@v5
@@ -42,18 +46,37 @@ jobs:
           name: rust
           report_type: test_results
           token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload Rust coverage to Codecov
+        if: ${{ !cancelled() && hashFiles('lcov.info') != '' }}
+        uses: codecov/codecov-action@v5
+        with:
+          disable_search: true
+          files: lcov.info
+          flags: rust
+          name: rust
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload debug binary
+        if: ${{ !cancelled() && hashFiles('target/debug/ppoker') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          if-no-files-found: error
+          name: linux-x86_64-debug-${{ github.sha }}
+          path: target/debug/ppoker
+          retention-days: 7
 
   web:
     name: Web
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       CHROME_BIN: google-chrome
+      PPOKER_E2E_REUSE_CLIENT_BUILD: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: web/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: web/package.json
           cache: pnpm
@@ -66,12 +89,21 @@ jobs:
       - name: Install frontend dependencies
         working-directory: web
         run: pnpm install --frozen-lockfile
-      - name: Run web and WASM checks
+      - name: Run web and WASM checks with coverage
         working-directory: web
-        run: pnpm run check
-      - name: Build web workspace
+        run: pnpm run check:coverage
+      - name: Upload web coverage to Codecov
+        if: ${{ !cancelled() && hashFiles('web/packages/client/coverage/lcov.info') != '' }}
+        uses: codecov/codecov-action@v5
+        with:
+          disable_search: true
+          files: web/packages/client/coverage/lcov.info
+          flags: frontend
+          name: frontend
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Build site
         working-directory: web
-        run: pnpm run build
+        run: pnpm --filter @ppoker/site run build
       - name: Install Playwright browsers
         working-directory: web
         run: pnpm --filter @ppoker/site exec playwright install --with-deps chromium webkit
@@ -88,27 +120,3 @@ jobs:
             web/apps/site/test-results
             web/apps/site/playwright-report
           retention-days: 7
-
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Build debug binary
-        run: cargo build --locked --package ppoker
-      - name: Upload debug binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-binary-debug
-          path: target/debug/ppoker
-      - name: Build release binary
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-        run: cargo build --release --locked --package ppoker
-      - name: Upload release binary
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-binary-release
-          path: target/release/ppoker
