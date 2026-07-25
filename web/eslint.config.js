@@ -1,4 +1,5 @@
 import eslint from "@eslint/js";
+import vitest from "@vitest/eslint-plugin";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
@@ -30,6 +31,14 @@ export default tseslint.config(
     },
     rules: {
       "@typescript-eslint/no-explicit-any": "error",
+    },
+  },
+  {
+    files: ["**/test/**/*.{ts,tsx}"],
+    plugins: { vitest },
+    rules: {
+      "@typescript-eslint/unbound-method": "off",
+      "vitest/unbound-method": "error",
     },
   },
   {
