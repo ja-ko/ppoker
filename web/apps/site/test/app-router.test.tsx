@@ -472,11 +472,12 @@ describe("site routing", () => {
 
   it("renders voter initialization failure through the session snapshot", async () => {
     const initializationError = new Error("Participant WASM failed");
+    const start = vi.fn<() => Promise<never>>(() =>
+      Promise.reject(initializationError),
+    );
     const lifecycle: PokerClientLifecycle = {
       close: vi.fn<() => void>(),
-      start: vi.fn<() => Promise<never>>(() =>
-        Promise.reject(initializationError),
-      ),
+      start,
     };
     const votingSessions = createVotingSessionManager({
       bindLifecycle: () => vi.fn<() => void>(),
@@ -501,6 +502,10 @@ describe("site routing", () => {
     expect(screen.getByRole("alert").textContent).toContain(
       "Participant WASM failed",
     );
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    await waitFor(() => {
+      expect(start).toHaveBeenCalledTimes(2);
+    });
     expect(router.state.errors).toBeNull();
 
     unbind();
@@ -551,6 +556,7 @@ function fakeVotingSessions(
   snapshot: VotingSessionSnapshot = { status: "idle" },
 ): VotingSessionManager & {
   readonly close: ReturnType<typeof vi.fn<() => void>>;
+  readonly reconnect: ReturnType<typeof vi.fn<() => void>>;
   readonly start: ReturnType<typeof vi.fn<(config: VotingConfig) => void>>;
 } {
   const listeners = new Set<() => void>();
@@ -558,6 +564,7 @@ function fakeVotingSessions(
     close: vi.fn<() => void>(),
     dispose: vi.fn<() => void>(),
     getSnapshot: () => snapshot,
+    reconnect: vi.fn<() => void>(),
     start: vi.fn<(config: VotingConfig) => void>(),
     subscribe: (listener) => {
       listeners.add(listener);

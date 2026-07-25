@@ -1950,7 +1950,11 @@ body {
 }
 
 .vote-draw-heading {
+  position: absolute;
   z-index: 4;
+  top: 0;
+  right: 0;
+  left: 0;
   padding: 14px 14px 10px;
   pointer-events: none;
 }
@@ -2659,6 +2663,19 @@ body {
   line-height: 1.6;
 }
 
+.vote-status-action {
+  min-width: 132px;
+  min-height: 44px;
+  margin-top: 24px;
+  padding: 0 18px;
+  border: 1px solid var(--vote-orange);
+  color: #190d08;
+  background: var(--vote-orange);
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .vote-status-pulse {
   display: block;
   width: 42%;
@@ -2688,7 +2705,7 @@ body {
         var(--vote-ink-translate-x, 0),
         var(--vote-ink-translate-y, 0)
       )
-      scale(var(--vote-ink-scale-x, 1), var(--vote-ink-scale-y, 1));
+      scale(var(--vote-ink-scale, 1));
   }
 }
 

@@ -282,14 +282,22 @@ function VotingScreen({
   if (data.error !== null) {
     return <VotingConfigurationError error={data.error} />;
   }
-  return <VotingSessionView expectedRoom={data.room} session={session} />;
+  return (
+    <VotingSessionView
+      expectedRoom={data.room}
+      onReconnect={sessions.reconnect}
+      session={session}
+    />
+  );
 }
 
 function VotingSessionView({
   expectedRoom,
+  onReconnect,
   session,
 }: {
   readonly expectedRoom: string;
+  readonly onReconnect: () => void;
   readonly session: VotingSessionSnapshot;
 }) {
   if (session.status === "idle" || session.room !== expectedRoom) {
@@ -313,6 +321,7 @@ function VotingSessionView({
   if (session.status === "error") {
     return (
       <VotingStatus
+        action={{ label: "Reconnect", onClick: onReconnect }}
         detail={errorMessage(
           session.error,
           "The participant client could not be created.",
@@ -329,6 +338,7 @@ function VotingSessionView({
       connectError={session.connectError}
       initialName={session.initialName}
       nameSession={session.nameSession}
+      onReconnect={onReconnect}
       room={session.room}
     />
   );

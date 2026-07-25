@@ -10,12 +10,26 @@ class ScreenWakeLockCoordinator {
   #activeConsumers = 0;
   #held: HeldWakeLock | null = null;
   #requestInFlight = false;
+  #userActivationArmed = false;
   #visibilityVersion = 0;
   #wakeLock: WakeLock | null = null;
+
+  readonly #handleUserActivation = (): void => {
+    const userActivation = (
+      navigator as unknown as { readonly userActivation?: UserActivation }
+    ).userActivation;
+    if (userActivation !== undefined && !userActivation.isActive) {
+      return;
+    }
+    this.#disarmUserActivation();
+    this.#request();
+  };
 
   readonly #handleVisibilityChange = (): void => {
     if (document.visibilityState !== "visible") {
       this.#visibilityVersion += 1;
+      this.#disarmUserActivation();
+      this.#releaseHeld();
       return;
     }
     this.#request();
@@ -55,15 +69,10 @@ class ScreenWakeLockCoordinator {
       "visibilitychange",
       this.#handleVisibilityChange,
     );
+    this.#disarmUserActivation();
     this.#activation = null;
     this.#wakeLock = null;
-
-    const held = this.#held;
-    this.#held = null;
-    if (held !== null) {
-      held.sentinel.removeEventListener("release", held.onRelease);
-      void releaseSilently(held.sentinel);
-    }
+    this.#releaseHeld();
   }
 
   #request(): void {
@@ -81,6 +90,7 @@ class ScreenWakeLockCoordinator {
     }
 
     const visibilityVersion = this.#visibilityVersion;
+    this.#disarmUserActivation();
     this.#requestInFlight = true;
 
     let request: Promise<WakeLockSentinel>;
@@ -88,6 +98,7 @@ class ScreenWakeLockCoordinator {
       request = wakeLock.request("screen");
     } catch {
       this.#requestInFlight = false;
+      this.#armUserActivation();
       return;
     }
 
@@ -109,19 +120,23 @@ class ScreenWakeLockCoordinator {
       },
       () => {
         this.#requestInFlight = false;
+        const activeAndVisible =
+          this.#activeConsumers > 0 && document.visibilityState === "visible";
         if (
-          this.#activeConsumers > 0 &&
-          document.visibilityState === "visible" &&
+          activeAndVisible &&
           (activation !== this.#activation ||
             visibilityVersion !== this.#visibilityVersion)
         ) {
           this.#request();
+        } else if (activeAndVisible) {
+          this.#armUserActivation();
         }
       },
     );
   }
 
   #hold(sentinel: WakeLockSentinel): void {
+    this.#disarmUserActivation();
     const onRelease = (): void => {
       sentinel.removeEventListener("release", onRelease);
       if (this.#held?.sentinel !== sentinel) {
@@ -136,6 +151,40 @@ class ScreenWakeLockCoordinator {
     if (sentinel.released) {
       onRelease();
     }
+  }
+
+  #releaseHeld(): void {
+    const held = this.#held;
+    this.#held = null;
+    if (held === null) {
+      return;
+    }
+    held.sentinel.removeEventListener("release", held.onRelease);
+    void releaseSilently(held.sentinel);
+  }
+
+  #armUserActivation(): void {
+    if (
+      this.#userActivationArmed ||
+      this.#activeConsumers === 0 ||
+      document.visibilityState !== "visible" ||
+      this.#held !== null ||
+      this.#requestInFlight
+    ) {
+      return;
+    }
+    this.#userActivationArmed = true;
+    document.addEventListener("keydown", this.#handleUserActivation, true);
+    document.addEventListener("pointerup", this.#handleUserActivation, true);
+  }
+
+  #disarmUserActivation(): void {
+    if (!this.#userActivationArmed) {
+      return;
+    }
+    this.#userActivationArmed = false;
+    document.removeEventListener("keydown", this.#handleUserActivation, true);
+    document.removeEventListener("pointerup", this.#handleUserActivation, true);
   }
 }
 

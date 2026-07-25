@@ -21,6 +21,7 @@ export interface VotingAppProps extends VotingAppDependencies {
   readonly connectError: unknown;
   readonly initialName: string;
   readonly nameSession: VoterNameSession;
+  readonly onReconnect: () => void;
   readonly room: string;
 }
 
@@ -38,6 +39,7 @@ export function VotingClientView({
   createRecognitionRuntime,
   initialName,
   nameSession,
+  onReconnect,
   room,
 }: Omit<VotingAppProps, "client">) {
   const client = usePokerClient();
@@ -50,13 +52,17 @@ export function VotingClientView({
         role="alert"
         room={room}
         title="Connection ended"
+        {...(snapshot.terminalError.code === "Transport"
+          ? { action: { label: "Reconnect", onClick: onReconnect } }
+          : {})}
       />
     );
   }
   if (snapshot.status === "closed") {
     return (
       <VotingStatus
-        detail="The participant connection closed. Reload to reconnect."
+        action={{ label: "Reconnect", onClick: onReconnect }}
+        detail="The participant connection closed. Reconnect to continue."
         role="alert"
         room={room}
         title="Voter console offline"
@@ -100,6 +106,9 @@ export function VotingClientView({
         title={
           connectError === null ? "Preparing connection" : "Connection failed"
         }
+        {...(connectError === null
+          ? {}
+          : { action: { label: "Reconnect", onClick: onReconnect } })}
       />
     );
   }

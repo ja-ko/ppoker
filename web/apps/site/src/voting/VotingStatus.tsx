@@ -1,4 +1,8 @@
 interface VotingStatusProps {
+  readonly action?: {
+    readonly label: string;
+    readonly onClick: () => void;
+  };
   readonly detail: string;
   readonly room?: string;
   readonly title: string;
@@ -6,6 +10,7 @@ interface VotingStatusProps {
 }
 
 export function VotingStatus({
+  action,
   detail,
   room,
   role = "status",
@@ -28,6 +33,15 @@ export function VotingStatus({
         </p>
         <h1>{title}</h1>
         <p>{detail}</p>
+        {action === undefined ? null : (
+          <button
+            className="vote-status-action"
+            onClick={action.onClick}
+            type="button"
+          >
+            {action.label}
+          </button>
+        )}
         <span className="vote-status-pulse" aria-hidden="true" />
       </section>
     </main>
