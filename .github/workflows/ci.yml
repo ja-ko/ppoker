@@ -39,7 +39,7 @@ jobs:
         run: cargo llvm-cov --locked --all-features --workspace --lcov --output-path lcov.info nextest --profile ci
       - name: Upload Rust test results to Codecov
         if: ${{ !cancelled() && hashFiles('target/nextest/ci/junit.xml') != '' }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           disable_search: true
           files: target/nextest/ci/junit.xml
@@ -48,7 +48,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
       - name: Upload Rust coverage to Codecov
         if: ${{ !cancelled() && hashFiles('lcov.info') != '' }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           disable_search: true
           files: lcov.info
@@ -57,7 +57,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
       - name: Upload debug binary
         if: ${{ !cancelled() && hashFiles('target/debug/ppoker') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           if-no-files-found: error
           name: linux-x86_64-debug-${{ github.sha }}
@@ -73,7 +73,7 @@ jobs:
       PPOKER_E2E_REUSE_CLIENT_BUILD: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           package_json_file: web/package.json
       - uses: actions/setup-node@v7
@@ -94,7 +94,7 @@ jobs:
         run: pnpm run check:coverage
       - name: Upload web coverage to Codecov
         if: ${{ !cancelled() && hashFiles('web/packages/client/coverage/lcov.info') != '' }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           disable_search: true
           files: web/packages/client/coverage/lcov.info
@@ -112,7 +112,7 @@ jobs:
         run: pnpm run test:e2e
       - name: Upload Playwright failure artifacts
         if: ${{ !cancelled() && failure() && hashFiles('web/apps/site/test-results/**') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           if-no-files-found: ignore
           name: playwright-failure-artifacts
