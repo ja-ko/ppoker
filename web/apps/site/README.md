@@ -65,9 +65,9 @@ trailing-slash forms.
 
 ## GitHub Pages
 
-`.github/workflows/pages.yml` builds and deploys `apps/site/dist` on pushes to
-`web-client` or `master`. The Pages build embeds
-`wss://pp.discordia.network/` and enables hash routing. The deployed routes are:
+`.github/workflows/ci.yml` builds and deploys `apps/site/dist` after all CI jobs
+pass on pushes to `master`. The Pages build embeds `wss://pp.discordia.network/`
+and enables hash routing. The deployed routes are:
 
 ```text
 https://pp.jko.dev/
@@ -76,6 +76,6 @@ https://pp.jko.dev/#/vote?room=planning-room
 ```
 
 Vite embeds the endpoint in the JavaScript bundle, so changing it requires a
-new deployment. The workflow validates the endpoint, builds the Rust WASM and
-web workspaces, prepares the recognition assets, and uploads only the static
-site output to GitHub Pages.
+new deployment. The workflow validates the endpoint, reuses the validated WASM
+and web client build, prepares the recognition assets, and uploads only the
+static site output to GitHub Pages.
