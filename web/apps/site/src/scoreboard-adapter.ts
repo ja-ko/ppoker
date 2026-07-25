@@ -30,9 +30,6 @@ export function deriveScoreboardModel(
     return null;
   }
 
-  const roomPlayers = room.players.filter(
-    (player) => player.userType === "player",
-  );
   const indexedHistory = snapshot.history.map((entry, sourceIndex) => ({
     entry,
     sourceIndex,
@@ -78,7 +75,7 @@ export function deriveScoreboardModel(
     phase: "revealed",
     result:
       featuredCurrent === undefined
-        ? resultFromRoom(snapshot, roomPlayers)
+        ? resultFromRoom(snapshot)
         : roundResult(featuredCurrent, timing),
   };
 }
@@ -190,10 +187,7 @@ function withViewIds(players: readonly Player[]): readonly {
   });
 }
 
-function resultFromRoom(
-  snapshot: ClientSnapshot,
-  players: readonly Player[],
-): RoundResult {
+function resultFromRoom(snapshot: ClientSnapshot): RoundResult {
   const room = snapshot.room;
   if (room === null) {
     throw new Error("Room result requires room state.");
@@ -202,7 +196,7 @@ function resultFromRoom(
     snapshot.roundNumber,
     snapshot.average,
     room.deck,
-    players,
+    room.players,
     "just now",
   );
 }
@@ -212,12 +206,11 @@ function roundResult(
   timing: ObserverTimingSnapshot,
 ): RoundResult {
   const { entry, sourceIndex } = indexedEntry;
-  const players = entry.votes.filter((player) => player.userType === "player");
   return resultFromVotes(
     entry.roundNumber,
     entry.average,
     entry.deck,
-    players,
+    entry.votes,
     timing.historyAges.get(
       historyObservationKey(entry.roundNumber, sourceIndex),
     ) ?? "just now",
@@ -231,8 +224,22 @@ function resultFromVotes(
   players: readonly Player[],
   observedAt: string,
 ): RoundResult {
+  return {
+    ...deriveVoteResult(average, deck, players),
+    observedAt,
+    round,
+  };
+}
+
+function deriveVoteResult(
+  average: number | null,
+  deck: readonly string[],
+  players: readonly Player[],
+): Omit<RoundResult, "observedAt" | "round"> {
   const revealedVotes = players.flatMap((player) =>
-    player.vote.state === "revealed" ? [player.vote.value] : [],
+    player.userType === "player" && player.vote.state === "revealed"
+      ? [player.vote.value]
+      : [],
   );
   const distribution = voteDistribution(deck, revealedVotes);
   return {
@@ -241,11 +248,32 @@ function resultFromVotes(
     leadingCount: Math.max(0, ...distribution.map((item) => item.count)),
     numericResponses: revealedVotes.filter((vote) => vote.kind === "number")
       .length,
-    observedAt,
     responseCount: revealedVotes.length,
-    round,
     specialResponses: revealedVotes.filter((vote) => vote.kind === "special")
       .length,
+  };
+}
+
+export function deriveCurrentVoteResult(snapshot: ClientSnapshot):
+  | (Omit<RoundResult, "observedAt" | "round"> & {
+      readonly ownVote: string | null;
+    })
+  | null {
+  const room = snapshot.room;
+  if (room?.phase !== "revealed") {
+    return null;
+  }
+  const archived = [...snapshot.history]
+    .reverse()
+    .find((entry) => entry.roundNumber === snapshot.roundNumber);
+  const average = archived === undefined ? snapshot.average : archived.average;
+  const deck = archived === undefined ? room.deck : archived.deck;
+  const players = archived === undefined ? room.players : archived.votes;
+  const ownVote =
+    archived === undefined ? snapshot.localVote : archived.ownVote;
+  return {
+    ...deriveVoteResult(average, deck, players),
+    ownVote: ownVote === null ? null : voteLabel(ownVote, deck),
   };
 }
 
@@ -307,8 +335,12 @@ function historySummary(
   };
 }
 
-function voteLabel(vote: VoteData): string {
-  return vote.kind === "number" ? vote.value.toString() : vote.value;
+function voteLabel(vote: VoteData, deck: readonly string[] = []): string {
+  const key = voteKey(vote);
+  const deckLabel = deck.find((label) => deckCardKey(label) === key);
+  return (
+    deckLabel ?? (vote.kind === "number" ? vote.value.toString() : vote.value)
+  );
 }
 
 function formatAverage(average: number | null): string {

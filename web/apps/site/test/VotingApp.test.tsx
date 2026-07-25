@@ -1,4 +1,4 @@
-import type { ClientSnapshot, Player } from "@ppoker/web-client";
+import type { ClientSnapshot, Player, VoteData } from "@ppoker/web-client";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { PointerEventHandler } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -114,12 +114,29 @@ describe("VotingApp status shells", () => {
 });
 
 describe("VotingApp voting controls", () => {
+  it("uses concise handwriting guidance without duplicating the ready status", () => {
+    renderApp(roomSnapshot());
+
+    expect(screen.getByText("Write a deck number")).toBeTruthy();
+    expect(screen.queryByText("Write one deck number anywhere.")).toBeNull();
+    expect(screen.getAllByText("Recognizer ready")).toHaveLength(1);
+  });
+
+  it("places voter identity before runtime statuses in the footer", () => {
+    renderApp(roomSnapshot());
+
+    const footer = document.querySelector(".vote-footer");
+    expect(footer?.firstElementChild?.className).toBe("vote-name");
+    expect(footer?.lastElementChild?.className).toBe("vote-footer-statuses");
+  });
+
   it("votes an exact authoritative card, displays it optimistically, and retracts", () => {
     const { client } = renderApp(roomSnapshot());
 
     fireEvent.click(screen.getByRole("button", { name: "Vote ?" }));
     expect(client.vote).toHaveBeenCalledWith("?");
-    expect(screen.getByLabelText("Current vote ?")).toBeTruthy();
+    const tappedVote = screen.getByLabelText("Current vote ?");
+    expect(tappedVote.className).not.toContain("vote-result--handwritten");
     expect(
       screen
         .getByRole("button", { name: "Vote ?" })
@@ -158,7 +175,9 @@ describe("VotingApp voting controls", () => {
     const { client } = renderApp(
       roomSnapshot({ localVote: { kind: "number", value: 5 } }),
     );
-    expect(screen.getByLabelText("Current vote 5")).toBeTruthy();
+    expect(screen.getByLabelText("Current vote 5").className).not.toContain(
+      "vote-result--handwritten",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Clear vote" }));
     expect(client.retractVote).toHaveBeenCalledOnce();
     expect(screen.queryByLabelText("Current vote 5")).toBeNull();
@@ -385,6 +404,99 @@ describe("VotingApp voting controls", () => {
 });
 
 describe("VotingApp phase actions", () => {
+  it("renders a dedicated revealed result with the local vote and billboard distribution", () => {
+    renderApp(
+      roomSnapshot({
+        average: 6.5,
+        deck: ["05", "8", "?"],
+        localVote: { kind: "number", value: 5 },
+        phase: "revealed",
+        players: [
+          player("Local", "revealed", true),
+          player("Peer", "revealed", false, "player", {
+            kind: "number",
+            value: 8,
+          }),
+          player("Special", "revealed", false, "player", {
+            kind: "special",
+            value: "?",
+          }),
+        ],
+      }),
+    );
+
+    expect(screen.getByRole("heading", { name: "Round result" })).toBeTruthy();
+    const average = screen.getByLabelText("Final average 6.5");
+    expect(average.className).toBe("vote-final-average");
+    expect(average.textContent).toBe("6.5");
+    expect(screen.getByText("Your vote").textContent).toContain("05");
+    expect(
+      screen.getByRole("img", {
+        name: "Vote distribution: 05 1, 8 1, ? 1",
+      }),
+    ).toBeTruthy();
+    expect(screen.getByText("2 numeric / 1 special")).toBeTruthy();
+    expect(screen.getByText("Vote distribution").id).toBe(
+      "vote-result-distribution-title",
+    );
+    expect(screen.queryByTestId("drawing-stage")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Voting cards" })).toBeNull();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(screen.queryByText("Peer")).toBeNull();
+    expect(
+      screen
+        .getAllByRole("status")
+        .some((status) =>
+          status.textContent.includes(
+            "Round 4 result. Final average 6.5. Your vote 05.",
+          ),
+        ),
+    ).toBe(true);
+  });
+
+  it("uses the archived final result instead of mutable revealed room state", () => {
+    const archivedVotes = [
+      player("Local", "revealed", true),
+      player("Peer", "revealed", false, "player", {
+        kind: "number",
+        value: 8,
+      }),
+    ];
+    renderApp(
+      roomSnapshot({
+        average: 13,
+        deck: ["13"],
+        history: [
+          {
+            average: 6.5,
+            deck: ["05", "8"],
+            ownVote: { kind: "number", value: 5 },
+            roundNumber: 4,
+            votes: archivedVotes,
+          },
+        ],
+        localVote: { kind: "number", value: 13 },
+        phase: "revealed",
+        players: [
+          player("Mutable", "revealed", true, "player", {
+            kind: "number",
+            value: 13,
+          }),
+        ],
+      }),
+    );
+
+    expect(screen.getByLabelText("Final average 6.5")).toBeTruthy();
+    expect(screen.getByText("Your vote").textContent).toContain("05");
+    expect(
+      screen.getByRole("img", {
+        name: "Vote distribution: 05 1, 8 1",
+      }),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText("Final average 13.0")).toBeNull();
+    expect(screen.queryByText("Mutable")).toBeNull();
+  });
+
   it("confirms reveal when a strict player is missing", () => {
     const { client } = renderApp(
       roomSnapshot({
@@ -446,7 +558,10 @@ describe("VotingApp phase actions", () => {
     const { client } = renderApp(roomSnapshot({ phase: "revealed" }));
     fireEvent.click(screen.getByRole("button", { name: "Reset" }));
     expect(client.startNewRound).not.toHaveBeenCalled();
-    const confirm = screen.getByRole("button", { name: "Start new round" });
+    const dialog = screen.getByRole("dialog", { name: "Start new round?" });
+    const confirm = within(dialog).getByRole("button", {
+      name: "Start new round",
+    });
     fireEvent.click(confirm);
     fireEvent.click(confirm);
     expect(client.startNewRound).toHaveBeenCalledOnce();
@@ -523,6 +638,32 @@ describe("VotingApp phase actions", () => {
 });
 
 describe("VotingApp handwriting command boundaries", () => {
+  it("marks only committed handwriting as the handwritten vote source", async () => {
+    testRaster = raster();
+    const runtime = createRuntime((_input, revision) =>
+      Promise.resolve(recognition("8", revision)),
+    );
+    renderAppWithRuntime(roomSnapshot(), () => runtime);
+
+    fireEvent.click(screen.getByRole("button", { name: "Vote 5" }));
+    expect(screen.getByLabelText("Current vote 5").className).not.toContain(
+      "vote-result--handwritten",
+    );
+
+    drawStroke();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(675);
+    });
+    expect(screen.getByLabelText("Current vote 8").className).toContain(
+      "vote-result--handwritten",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Vote ?" }));
+    const textualVote = screen.getByLabelText("Current vote ?");
+    expect(textualVote.className).not.toContain("vote-result--handwritten");
+    expect(textualVote.className).toContain("vote-result--textual");
+  });
+
   it("does not vote when recognition resolves after manual reveal", async () => {
     testRaster = raster();
     const pending = deferred<Recognition>();
@@ -824,7 +965,9 @@ function renderAppWithRuntime(
 }
 
 interface RoomSnapshotOptions {
+  readonly average?: number | null;
   readonly deck?: readonly string[];
+  readonly history?: ClientSnapshot["history"];
   readonly localVote?: ClientSnapshot["localVote"];
   readonly localName?: string;
   readonly phase?: "playing" | "revealed" | "unknown";
@@ -836,6 +979,8 @@ interface RoomSnapshotOptions {
 
 function roomSnapshot(options: RoomSnapshotOptions = {}): ClientSnapshot {
   return makeSnapshot({
+    average: options.average ?? null,
+    history: options.history ?? [],
     localName: options.localName ?? "Calm Otter",
     localVote: options.localVote ?? null,
     revision: options.revision ?? 1,
@@ -858,6 +1003,7 @@ function player(
   voteState: "hidden" | "missing" | "revealed",
   isYou = false,
   userType: Player["userType"] = "player",
+  revealedValue: VoteData = { kind: "number", value: 5 },
 ): Player {
   return {
     isYou,
@@ -865,7 +1011,7 @@ function player(
     userType,
     vote:
       voteState === "revealed"
-        ? { state: "revealed", value: { kind: "number", value: 5 } }
+        ? { state: "revealed", value: revealedValue }
         : { state: voteState },
   };
 }

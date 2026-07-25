@@ -23,22 +23,47 @@ test.describe("scoreboard harness rendering", () => {
       "Authoritative E2E Room / E2E-ROOM",
     );
     const roomAccess = page.getByRole("region", { name: "Room access" });
-    await expect(roomAccess.getByText("Scan to join")).toBeVisible();
+    await expect(roomAccess.getByText("Room access")).toBeVisible();
+    await expect(roomAccess.getByText("Scan to join")).toHaveCount(0);
+    await expect(roomAccess.getByText("Live room")).toHaveCount(0);
     await expect(
-      roomAccess.locator(".room-code > strong", {
-        hasText: "Authoritative E2E Room",
-      }),
-    ).toBeVisible();
+      roomAccess.getByText("Authoritative E2E Room", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      roomAccess.getByText(/Scan or select the QR code/u),
+    ).toHaveCount(0);
     await expect(
       roomAccess.getByRole("link", {
         name: "Join Authoritative E2E Room voting room",
       }),
     ).toHaveAttribute("href", /\/vote\?room=E2E-ROOM$/u);
-    await expect(
-      roomAccess.getByRole("img", {
-        name: "QR code to join Authoritative E2E Room",
-      }),
-    ).toBeVisible();
+    const qrCode = roomAccess.getByRole("img", {
+      name: "QR code to join Authoritative E2E Room",
+    });
+    await expect(qrCode).toBeVisible();
+    const qrLayout = await qrCode.evaluate((svg) => {
+      const link = svg.closest("a");
+      if (link === null) {
+        throw new Error("QR link is missing.");
+      }
+      const qrBounds = svg.getBoundingClientRect();
+      const linkBounds = link.getBoundingClientRect();
+      const linkStyle = getComputedStyle(link);
+      const linkContentHeight =
+        linkBounds.height -
+        Number.parseFloat(linkStyle.paddingTop) -
+        Number.parseFloat(linkStyle.paddingBottom);
+      return {
+        borderWidth: getComputedStyle(svg).borderTopWidth,
+        heightDelta: Math.abs(qrBounds.height - linkContentHeight),
+        restrictiveSize: Math.min(qrBounds.width, qrBounds.height),
+        widthDelta: Math.abs(qrBounds.width - linkBounds.width),
+      };
+    });
+    expect(qrLayout.borderWidth).toBe("0px");
+    expect(qrLayout.heightDelta).toBeLessThanOrEqual(1);
+    expect(qrLayout.widthDelta).toBeLessThanOrEqual(1);
+    expect(qrLayout.restrictiveSize).toBeGreaterThan(160);
     await expect(page.getByRole("progressbar")).toHaveAttribute(
       "aria-valuenow",
       "6",
