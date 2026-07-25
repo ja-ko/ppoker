@@ -196,6 +196,7 @@ function createHarness(
     getStrokes: () => [],
     getVisualBounds: () => null,
     getCanonicalInkLocus: () => null,
+    getSurfaceBounds: () => null,
     rasterize: () => {
       if (ink.rasterError) {
         throw ink.rasterError;

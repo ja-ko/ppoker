@@ -33,6 +33,9 @@ import {
   voteInputReducer,
   type FlowDiagnostics,
   type InkPadHandle,
+  type InkSurfaceBounds,
+  type InkSurfaceSize,
+  type InkVisualBounds,
   type RecognitionRuntime,
   type RecognitionFailureSource,
   type RecognizerStatus,
@@ -48,6 +51,11 @@ import {
   type LocalVoteCommandQueue,
   type PendingLocalVoteIntent,
 } from "./local-vote-commands";
+import {
+  fitRectToRect,
+  type InkMorphTransform,
+  type MorphRect,
+} from "./handwriting/ink/morph";
 import {
   phaseControlPolicy,
   selectVoters,
@@ -68,13 +76,6 @@ interface OptimisticName {
   readonly contextKey: string;
   readonly revision: number;
   readonly value: string;
-}
-
-interface InkMorphGeometry {
-  readonly originX: number;
-  readonly originY: number;
-  readonly translateX: number;
-  readonly translateY: number;
 }
 
 class StaleDrawingError extends Error {
@@ -144,14 +145,52 @@ export function VotingRoom({
   const voteCommandsRef = useRef(voteCommands);
   voteCommandsRef.current = voteCommands;
   const [revealMissingCount, setRevealMissingCount] = useState(0);
-  const [morphGeometry, setMorphGeometry] = useState<InkMorphGeometry | null>(
+  const [morphGeometry, setMorphGeometry] = useState<InkMorphTransform | null>(
     null,
   );
+  const pendingInkMorphRef = useRef<PendingInkMorph | null>(null);
+  const morphSurfaceSizeRef = useRef<InkSurfaceSize | null>(null);
+  const confirmCommitSurfaceRef = useRef(false);
   const activeDrawingRef = useRef<ActiveDrawing | null>(null);
   const flowRef = useRef<RecognitionFlow | null>(null);
   const effectiveVoteRef = useRef<string | null>(null);
   const phaseActionRef = useRef<HTMLButtonElement>(null);
   const renameButtonRef = useRef<HTMLButtonElement>(null);
+  const resultRef = useRef<HTMLOutputElement>(null);
+
+  const resetInkMorph = (): void => {
+    pendingInkMorphRef.current = null;
+    morphSurfaceSizeRef.current = null;
+    confirmCommitSurfaceRef.current = false;
+    setMorphGeometry(null);
+  };
+  const handleInkSurfaceChange = (size: InkSurfaceSize): void => {
+    const fittedSize = morphSurfaceSizeRef.current;
+    if (
+      voteInputRef.current.status === "committing" &&
+      fittedSize !== null &&
+      Math.abs(fittedSize.width - size.width) < 0.5 &&
+      Math.abs(fittedSize.height - size.height) < 0.5
+    ) {
+      if (confirmCommitSurfaceRef.current) {
+        confirmCommitSurfaceRef.current = false;
+        const bounds = inkRef.current?.getVisualBounds() ?? null;
+        const surface = inkRef.current?.getSurfaceBounds() ?? null;
+        const target = finalTextRunBounds(resultRef.current, surface);
+        const source =
+          bounds === null || surface === null
+            ? null
+            : inkBoundsInSurface(bounds, surface);
+        setMorphGeometry(
+          source === null || target === null
+            ? null
+            : fitRectToRect(source, target),
+        );
+      }
+      return;
+    }
+    resetInkMorph();
+  };
 
   const setPending = (pending: PhasePending): void => {
     phasePendingRef.current = pending;
@@ -285,7 +324,8 @@ export function VotingRoom({
     ) {
       throw new StaleDrawingError();
     }
-    setMorphGeometry(inkMorphGeometry(inkRef.current));
+    pendingInkMorphRef.current = inkMorphSource(inkRef.current);
+    setMorphGeometry(null);
     const valueText = String(value);
     const alreadyEffective = deckCardsMatch(
       effectiveLocalVote(voteCommandsRef.current, latest),
@@ -331,7 +371,7 @@ export function VotingRoom({
       enqueueVoteCommand(null, latestBeforeCommand, client.getSnapshot());
     }
     activeDrawingRef.current = null;
-    setMorphGeometry(null);
+    resetInkMorph();
     setYieldedResult(false);
   };
   failDrawingRef.current = (error, revision, source): void => {
@@ -390,7 +430,7 @@ export function VotingRoom({
     flow.clear();
     updateVoteCommands(null);
     updateOptimisticName(null);
-    setMorphGeometry(null);
+    resetInkMorph();
     setYieldedResult(false);
     setPending(null);
     setDialog(null);
@@ -424,7 +464,7 @@ export function VotingRoom({
     activeDrawingRef.current = null;
     autoReveal.cancel();
     flow.clear();
-    setMorphGeometry(null);
+    resetInkMorph();
     if (showAuthoritative) {
       setYieldedResult(false);
     }
@@ -504,7 +544,7 @@ export function VotingRoom({
       activeDrawingRef.current?.intent ?? createDrawingIntent(),
     );
     setYieldedResult(true);
-    setMorphGeometry(null);
+    resetInkMorph();
     setCommandError(null);
     try {
       const revision = flow.pointerAccepted();
@@ -605,10 +645,12 @@ export function VotingRoom({
     morphGeometry === null
       ? undefined
       : ({
-          "--vote-ink-origin-x": `${String(morphGeometry.originX)}%`,
-          "--vote-ink-origin-y": `${String(morphGeometry.originY)}%`,
-          "--vote-ink-translate-x": `${String(morphGeometry.translateX)}%`,
-          "--vote-ink-translate-y": `${String(morphGeometry.translateY)}%`,
+          "--vote-ink-origin-x": `${String(morphGeometry.originX)}px`,
+          "--vote-ink-origin-y": `${String(morphGeometry.originY)}px`,
+          "--vote-ink-translate-x": `${String(morphGeometry.translateX)}px`,
+          "--vote-ink-translate-y": `${String(morphGeometry.translateY)}px`,
+          "--vote-ink-scale-x": String(morphGeometry.scaleX),
+          "--vote-ink-scale-y": String(morphGeometry.scaleY),
         } as CSSProperties);
   const connectionLabel = snapshot.status === "open" ? "live" : snapshot.status;
   const renderedVote =
@@ -619,10 +661,39 @@ export function VotingRoom({
     displayVote !== null || voteInput.status === "committing";
   const textualResult =
     renderedVote !== null && canonicalValue(renderedVote) === null;
-  const handwrittenResult =
-    (voteInput.status === "committing" || voteInput.status === "committed") &&
-    voteInput.value !== null &&
-    deckCardsMatch(renderedVote, String(voteInput.value));
+
+  useLayoutEffect(() => {
+    if (voteInput.status !== "committing") {
+      return;
+    }
+    if (voteInput.effectMotion !== "full") {
+      resetInkMorph();
+      return;
+    }
+
+    const pending = pendingInkMorphRef.current;
+    const surface = inkRef.current?.getSurfaceBounds() ?? null;
+    const target = finalTextRunBounds(resultRef.current, surface);
+    const source =
+      pending === null || surface === null
+        ? null
+        : inkBoundsInSurface(pending.bounds, surface);
+    pendingInkMorphRef.current = null;
+    morphSurfaceSizeRef.current = surface;
+    confirmCommitSurfaceRef.current =
+      pending !== null &&
+      surface !== null &&
+      (Math.abs(pending.bounds.surfaceWidth - surface.width) >= 0.5 ||
+        Math.abs(pending.bounds.surfaceHeight - surface.height) >= 0.5);
+    setMorphGeometry(
+      source === null || target === null ? null : fitRectToRect(source, target),
+    );
+  }, [
+    voteInput.effectMotion,
+    voteInput.revision,
+    voteInput.status,
+    voteInput.value,
+  ]);
 
   const room = snapshot.room;
   if (room === null) {
@@ -703,16 +774,19 @@ export function VotingRoom({
                 className={`vote-ink vote-ink--${voteInput.status}`}
                 enabled={canDraw}
                 onPointerAccepted={pointerAccepted}
+                onClear={resetInkMorph}
                 onStrokeCancel={() => {
                   flow.strokeCancelled();
                 }}
                 onStrokeComplete={() => {
                   flow.strokeCompleted();
                 }}
+                onSurfaceChange={handleInkSurfaceChange}
               />
               {hasRenderedVote ? (
                 <output
-                  className={`vote-result${voteInput.status === "committing" ? " vote-result--morphing" : ""}${handwrittenResult ? " vote-result--handwritten" : ""}${textualResult ? " vote-result--textual" : ""}`}
+                  ref={resultRef}
+                  className={`vote-result${voteInput.status === "committing" ? " vote-result--morphing" : ""}${textualResult ? " vote-result--textual" : ""}`}
                   aria-label={`Current vote ${String(voteInput.value ?? displayVote ?? "")}`}
                 >
                   {renderedVote}
@@ -1251,38 +1325,75 @@ function responseSummary(
   };
 }
 
-function inkMorphGeometry(ink: InkPadHandle | null): InkMorphGeometry | null {
+interface PendingInkMorph {
+  readonly bounds: InkVisualBounds;
+}
+
+function inkMorphSource(ink: InkPadHandle | null): PendingInkMorph | null {
   if (ink === null) {
     return null;
   }
   const bounds = ink.getVisualBounds();
-  const locus = ink.getCanonicalInkLocus();
-  const source =
-    bounds === null
-      ? locus === null
-        ? null
-        : {
-            x: locus.center.x,
-            y: locus.center.y,
-            width: locus.coordinateSpace.width,
-            height: locus.coordinateSpace.height,
-          }
-      : {
-          x: bounds.centerX,
-          y: bounds.centerY,
-          width: bounds.surfaceWidth,
-          height: bounds.surfaceHeight,
-        };
-  if (source === null || source.width <= 0 || source.height <= 0) {
+  return bounds === null ? null : { bounds };
+}
+
+function inkBoundsInSurface(
+  bounds: InkVisualBounds,
+  surface: InkSurfaceBounds,
+): MorphRect | null {
+  if (
+    bounds.surfaceWidth <= 0 ||
+    bounds.surfaceHeight <= 0 ||
+    surface.width <= 0 ||
+    surface.height <= 0
+  ) {
     return null;
   }
-  const originX = (source.x / source.width) * 100;
-  const originY = (source.y / source.height) * 100;
+  const scaleX = surface.width / bounds.surfaceWidth;
+  const scaleY = surface.height / bounds.surfaceHeight;
   return {
-    originX,
-    originY,
-    translateX: 50 - originX,
-    translateY: 50 - originY,
+    left: bounds.minX * scaleX,
+    top: bounds.minY * scaleY,
+    width: bounds.width * scaleX,
+    height: bounds.height * scaleY,
+  };
+}
+
+function finalTextRunBounds(
+  output: HTMLOutputElement | null,
+  surface: InkSurfaceBounds | null,
+): MorphRect | null {
+  if (output === null || surface === null) {
+    return null;
+  }
+  const range = document.createRange();
+  if (typeof range.getBoundingClientRect !== "function") {
+    return null;
+  }
+
+  const animation = output.style.getPropertyValue("animation");
+  const priority = output.style.getPropertyPriority("animation");
+  output.style.setProperty("animation", "none", "important");
+  let bounds: DOMRect;
+  try {
+    range.selectNodeContents(output);
+    bounds = range.getBoundingClientRect();
+  } catch {
+    return null;
+  } finally {
+    range.detach();
+    if (animation.length === 0) {
+      output.style.removeProperty("animation");
+    } else {
+      output.style.setProperty("animation", animation, priority);
+    }
+  }
+
+  return {
+    left: bounds.left - surface.left,
+    top: bounds.top - surface.top,
+    width: bounds.width,
+    height: bounds.height,
   };
 }
 

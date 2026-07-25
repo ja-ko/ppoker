@@ -10,6 +10,68 @@ import {
   settlePaint,
 } from "./voter-helpers";
 
+test("iPhone handwriting header and countdown text remain interactive and contained", async ({
+  page,
+}) => {
+  await gotoVoterFixture(page, "final-vote", { waitForRecognizer: false });
+
+  const geometry = await page
+    .getByRole("region", { name: /Handwriting surface/u })
+    .evaluate((surface) => {
+      const stage = surface.closest<HTMLElement>(".vote-draw-stage");
+      const heading = stage?.querySelector<HTMLElement>(".vote-draw-heading");
+      if (stage === null || heading === null || heading === undefined) {
+        throw new Error("Handwriting stage or heading is missing.");
+      }
+      const surfaceBounds = surface.getBoundingClientRect();
+      const stageBounds = stage.getBoundingClientRect();
+      const headingBounds = heading.getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        headingBounds.left + headingBounds.width / 2,
+        headingBounds.top + headingBounds.height / 2,
+      );
+      return {
+        edges: {
+          bottom: Math.abs(surfaceBounds.bottom - stageBounds.bottom),
+          left: Math.abs(surfaceBounds.left - stageBounds.left),
+          right: Math.abs(surfaceBounds.right - stageBounds.right),
+          top: Math.abs(surfaceBounds.top - stageBounds.top),
+        },
+        headingHitsSurface: hit === surface || surface.contains(hit),
+        headingPointerEvents: getComputedStyle(heading).pointerEvents,
+      };
+    });
+  expect(geometry.headingHitsSurface).toBe(true);
+  expect(geometry.headingPointerEvents).toBe("none");
+  expect(Object.values(geometry.edges).every((gap) => gap <= 1.5)).toBe(true);
+
+  await page.getByRole("button", { name: "Vote 5", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: /Reveal in [123]/u }),
+  ).toBeVisible();
+  const cancelGeometry = await page
+    .getByRole("button", { name: "Cancel" })
+    .evaluate((button) => {
+      const bounds = button.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(button);
+      const text = range.getBoundingClientRect();
+      range.detach();
+      return {
+        bottom: text.bottom <= bounds.bottom,
+        left: text.left >= bounds.left,
+        right: text.right <= bounds.right,
+        top: text.top >= bounds.top,
+      };
+    });
+  expect(cancelGeometry).toEqual({
+    bottom: true,
+    left: true,
+    right: true,
+    top: true,
+  });
+});
+
 test("iPhone touch input stays aligned without document scrolling", async ({
   page,
 }) => {

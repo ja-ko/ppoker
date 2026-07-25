@@ -19,6 +19,205 @@ const stage = (page: Page) => page.getByTestId("drawing-stage");
 const surface = (page: Page) =>
   page.getByRole("region", { name: /Handwriting surface/u });
 
+async function commitMorphGeometry(page: Page): Promise<{
+  readonly firstTransform: string | null;
+  readonly layerBlend: { readonly base: string; readonly tint: string };
+  readonly layerOpacity: {
+    readonly end: { readonly base: number; readonly tint: number };
+    readonly middle: { readonly base: number; readonly tint: number };
+    readonly start: { readonly base: number; readonly tint: number };
+  };
+  readonly originError: { readonly left: number; readonly top: number };
+  readonly scale: { readonly x: number; readonly y: number };
+  readonly targetError: {
+    readonly height: number;
+    readonly left: number;
+    readonly top: number;
+    readonly width: number;
+  };
+  readonly tint: {
+    readonly blue: number;
+    readonly green: number;
+    readonly red: number;
+  };
+}> {
+  return stage(page).evaluate((drawingStage) => {
+    const handwritingSurface =
+      drawingStage.querySelector<HTMLElement>(".ink-surface");
+    const visual = drawingStage.querySelector<HTMLElement>(".ink-visual");
+    const base =
+      drawingStage.querySelector<HTMLCanvasElement>(".ink-canvas--base");
+    const tint =
+      drawingStage.querySelector<HTMLCanvasElement>(".ink-canvas--tint");
+    const output = drawingStage.querySelector<HTMLOutputElement>(
+      "output.vote-result--morphing",
+    );
+    if (
+      handwritingSurface === null ||
+      visual === null ||
+      base === null ||
+      tint === null ||
+      output === null
+    ) {
+      throw new Error("Commit morph elements are missing.");
+    }
+
+    const stageStyle = getComputedStyle(drawingStage);
+    const number = (property: string): number => {
+      const value = Number.parseFloat(stageStyle.getPropertyValue(property));
+      if (!Number.isFinite(value)) {
+        throw new Error(`${property} is not finite.`);
+      }
+      return value;
+    };
+    const originX = number("--vote-ink-origin-x");
+    const originY = number("--vote-ink-origin-y");
+    const translateX = number("--vote-ink-translate-x");
+    const translateY = number("--vote-ink-translate-y");
+    const scaleX = number("--vote-ink-scale-x");
+    const scaleY = number("--vote-ink-scale-y");
+
+    const context = base.getContext("2d");
+    const tintContext = tint.getContext("2d");
+    if (context === null || tintContext === null) {
+      throw new Error("Commit canvases have no 2D context.");
+    }
+    const pixels = context.getImageData(0, 0, base.width, base.height).data;
+    let minX = base.width;
+    let minY = base.height;
+    let maxX = -1;
+    let maxY = -1;
+    for (let offset = 3; offset < pixels.length; offset += 4) {
+      if (pixels[offset] === 0) {
+        continue;
+      }
+      const pixel = (offset - 3) / 4;
+      const x = pixel % base.width;
+      const y = Math.floor(pixel / base.width);
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+    if (maxX < minX || maxY < minY) {
+      throw new Error("Commit ink is empty.");
+    }
+    const surfaceBounds = handwritingSurface.getBoundingClientRect();
+    const pixelScaleX = surfaceBounds.width / base.width;
+    const pixelScaleY = surfaceBounds.height / base.height;
+    const source = {
+      left: minX * pixelScaleX,
+      top: minY * pixelScaleY,
+      width: (maxX - minX + 1) * pixelScaleX,
+      height: (maxY - minY + 1) * pixelScaleY,
+    };
+
+    const originalAnimation = output.style.getPropertyValue("animation");
+    const originalPriority = output.style.getPropertyPriority("animation");
+    output.style.setProperty("animation", "none", "important");
+    const range = document.createRange();
+    range.selectNodeContents(output);
+    const targetBounds = range.getBoundingClientRect();
+    range.detach();
+    if (originalAnimation.length === 0) {
+      output.style.removeProperty("animation");
+    } else {
+      output.style.setProperty(
+        "animation",
+        originalAnimation,
+        originalPriority,
+      );
+    }
+    const target = {
+      left: targetBounds.left - surfaceBounds.left,
+      top: targetBounds.top - surfaceBounds.top,
+      width: targetBounds.width,
+      height: targetBounds.height,
+    };
+
+    const tintPixels = tintContext.getImageData(
+      0,
+      0,
+      tint.width,
+      tint.height,
+    ).data;
+    let tintOffset = 3;
+    for (let offset = 7; offset < tintPixels.length; offset += 4) {
+      if ((tintPixels[offset] ?? 0) > (tintPixels[tintOffset] ?? 0)) {
+        tintOffset = offset;
+      }
+    }
+    if (tintPixels[tintOffset] === 0) {
+      throw new Error("Tint canvas is empty.");
+    }
+
+    const animation = visual.getAnimations()[0];
+    const effect = animation?.effect;
+    const firstTransform =
+      effect instanceof KeyframeEffect
+        ? String(effect.getKeyframes()[0]?.["transform"] ?? "")
+        : null;
+    const baseAnimation = base.getAnimations()[0];
+    const tintAnimation = tint.getAnimations()[0];
+    if (baseAnimation === undefined || tintAnimation === undefined) {
+      throw new Error("Commit tint animations are missing.");
+    }
+    const animationState = [baseAnimation, tintAnimation].map((candidate) => ({
+      currentTime: candidate.currentTime,
+      playState: candidate.playState,
+    }));
+    baseAnimation.pause();
+    tintAnimation.pause();
+    const opacityAt = (time: number) => {
+      baseAnimation.currentTime = time;
+      tintAnimation.currentTime = time;
+      return {
+        base: Number.parseFloat(getComputedStyle(base).opacity),
+        tint: Number.parseFloat(getComputedStyle(tint).opacity),
+      };
+    };
+    const layerOpacity = {
+      start: opacityAt(0),
+      middle: opacityAt(230),
+      end: opacityAt(460),
+    };
+    for (const [index, candidate] of [baseAnimation, tintAnimation].entries()) {
+      const state = animationState[index];
+      if (state === undefined) {
+        continue;
+      }
+      candidate.currentTime = state.currentTime;
+      if (state.playState === "running") {
+        candidate.play();
+      }
+    }
+    return {
+      firstTransform,
+      layerBlend: {
+        base: getComputedStyle(base).mixBlendMode,
+        tint: getComputedStyle(tint).mixBlendMode,
+      },
+      layerOpacity,
+      originError: {
+        left: Math.abs(originX - source.left),
+        top: Math.abs(originY - source.top),
+      },
+      scale: { x: scaleX, y: scaleY },
+      targetError: {
+        left: Math.abs(originX + translateX - target.left),
+        top: Math.abs(originY + translateY - target.top),
+        width: Math.abs(source.width * scaleX - target.width),
+        height: Math.abs(source.height * scaleY - target.height),
+      },
+      tint: {
+        red: tintPixels[tintOffset - 3] ?? 0,
+        green: tintPixels[tintOffset - 2] ?? 0,
+        blue: tintPixels[tintOffset - 1] ?? 0,
+      },
+    };
+  });
+}
+
 async function expectMinimumTouchTargets(page: Page): Promise<void> {
   const undersizedTargets = await page
     .locator("button:visible, a:visible")
@@ -83,6 +282,48 @@ async function expectInteractiveControlsWithinViewport(
   }
 }
 
+async function expectRenderedTextContained(locator: Locator): Promise<void> {
+  await expect(locator).toBeVisible();
+  const geometry = await locator.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const textRects = [...range.getClientRects()]
+      .filter((rect) => rect.width > 0 && rect.height > 0)
+      .map((rect) => ({
+        bottom: rect.bottom,
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+      }));
+    range.detach();
+    return {
+      bounds: {
+        bottom: bounds.bottom,
+        left: bounds.left,
+        right: bounds.right,
+        top: bounds.top,
+      },
+      textRects,
+      textTransform: getComputedStyle(element).textTransform,
+    };
+  });
+  expect(geometry.textTransform).toBe("uppercase");
+  expect(geometry.textRects.length, JSON.stringify(geometry)).toBeGreaterThan(
+    0,
+  );
+  expect(
+    geometry.textRects.every(
+      (rect) =>
+        rect.left >= geometry.bounds.left &&
+        rect.right <= geometry.bounds.right &&
+        rect.top >= geometry.bounds.top &&
+        rect.bottom <= geometry.bounds.bottom,
+    ),
+    JSON.stringify(geometry),
+  ).toBe(true);
+}
+
 async function expectUsableHandwritingSurface(page: Page): Promise<void> {
   const handwritingSurface = surface(page);
   await expect(handwritingSurface).toHaveAttribute("aria-disabled", "false");
@@ -93,6 +334,35 @@ async function expectUsableHandwritingSurface(page: Page): Promise<void> {
   }
   expect(bounds.width).toBeGreaterThanOrEqual(200);
   expect(bounds.height).toBeGreaterThanOrEqual(44);
+  const coverage = await handwritingSurface.evaluate((element) => {
+    const stage = element.closest<HTMLElement>(".vote-draw-stage");
+    const heading = stage?.querySelector<HTMLElement>(".vote-draw-heading");
+    if (stage === null || heading === null || heading === undefined) {
+      throw new Error("Handwriting stage or heading is missing.");
+    }
+    const surfaceBounds = element.getBoundingClientRect();
+    const stageBounds = stage.getBoundingClientRect();
+    const headingBounds = heading.getBoundingClientRect();
+    const headingHit = document.elementFromPoint(
+      headingBounds.left + headingBounds.width / 2,
+      headingBounds.top + headingBounds.height / 2,
+    );
+    return {
+      bottom: Math.abs(surfaceBounds.bottom - stageBounds.bottom),
+      headingHitsSurface:
+        headingHit === element || element.contains(headingHit),
+      headingPointerEvents: getComputedStyle(heading).pointerEvents,
+      left: Math.abs(surfaceBounds.left - stageBounds.left),
+      right: Math.abs(surfaceBounds.right - stageBounds.right),
+      top: Math.abs(surfaceBounds.top - stageBounds.top),
+    };
+  });
+  expect(coverage.headingHitsSurface).toBe(true);
+  expect(coverage.headingPointerEvents).toBe("none");
+  expect(coverage.left).toBeLessThanOrEqual(1.5);
+  expect(coverage.right).toBeLessThanOrEqual(1.5);
+  expect(coverage.top).toBeLessThanOrEqual(1.5);
+  expect(coverage.bottom).toBeLessThanOrEqual(1.5);
 }
 
 async function expectCountdownControlsSeparated(page: Page): Promise<void> {
@@ -162,14 +432,48 @@ test.describe("voter real recognition", () => {
 
     await drawCard(page, "5", true);
     await expect(stage(page)).toHaveClass(/vote-draw-stage--committing/u);
-    await expect(page.locator("canvas.vote-ink")).toHaveCSS(
+    const inkVisual = page.locator(".ink-visual");
+    await expect(inkVisual).toHaveCSS("animation-name", "vote-ink-commit");
+    const morphingResult = page.locator("output.vote-result--morphing");
+    await expect(morphingResult).toHaveText("5");
+    await expect(morphingResult).toHaveCSS(
       "animation-name",
-      "vote-ink-commit",
+      "vote-type-emerge",
     );
-    await expect(page.locator("output.vote-result--morphing")).toHaveText("5");
+    await expect
+      .poll(() =>
+        stage(page).evaluate((element) =>
+          getComputedStyle(element).getPropertyValue("--vote-ink-scale-x"),
+        ),
+      )
+      .not.toBe("");
+    const morph = await commitMorphGeometry(page);
+    expect(morph.firstTransform).toBe("translate(0px) scale(1)");
+    expect(morph.layerBlend).toEqual({
+      base: "plus-lighter",
+      tint: "plus-lighter",
+    });
+    expect(morph.layerOpacity.start).toEqual({ base: 1, tint: 0 });
+    expect(morph.layerOpacity.middle.base).toBeGreaterThan(0);
+    expect(morph.layerOpacity.middle.base).toBeLessThan(1);
+    expect(morph.layerOpacity.middle.tint).toBeGreaterThan(0);
+    expect(morph.layerOpacity.middle.tint).toBeLessThan(1);
+    expect(
+      morph.layerOpacity.middle.base + morph.layerOpacity.middle.tint,
+    ).toBeCloseTo(1, 3);
+    expect(morph.layerOpacity.end).toEqual({ base: 0, tint: 1 });
+    expect(morph.originError.left).toBeLessThanOrEqual(1);
+    expect(morph.originError.top).toBeLessThanOrEqual(1);
+    expect(morph.targetError.left).toBeLessThanOrEqual(0.5);
+    expect(morph.targetError.top).toBeLessThanOrEqual(0.5);
+    expect(morph.targetError.width).toBeLessThanOrEqual(1);
+    expect(morph.targetError.height).toBeLessThanOrEqual(1);
+    expect(morph.scale.x).toBeGreaterThan(0);
+    expect(morph.scale.y).toBeGreaterThan(0);
+    expect(morph.tint).toEqual({ blue: 31, green: 75, red: 255 });
     await expect(stage(page)).toHaveClass(/vote-draw-stage--committed/u);
     await expect(page.getByLabel("Current vote 5")).toBeVisible();
-    await expect(page.getByLabel("Current vote 5")).toHaveClass(
+    await expect(page.getByLabel("Current vote 5")).not.toHaveClass(
       /vote-result--handwritten/u,
     );
     await expect(page.getByLabel("Current vote 5")).toHaveCSS(
@@ -197,23 +501,21 @@ test("invalid real-model ink retracts an existing vote and shakes to transparent
 
   await drawCard(page, "2");
   await expect(stage(page)).toHaveClass(/vote-draw-stage--rejecting/u);
-  await expect(page.locator("canvas.vote-ink")).toHaveCSS(
+  await expect(page.locator(".ink-visual")).toHaveCSS(
     "animation-name",
     "vote-ink-reject",
   );
-  const rejectionFrames = await page
-    .locator("canvas.vote-ink")
-    .evaluate((canvas) =>
-      canvas.getAnimations().flatMap((animation) => {
-        const effect = animation.effect;
-        return effect instanceof KeyframeEffect
-          ? effect.getKeyframes().map((frame) => ({
-              opacity: frame["opacity"] ?? null,
-              transform: frame["transform"] ?? null,
-            }))
-          : [];
-      }),
-    );
+  const rejectionFrames = await page.locator(".ink-visual").evaluate((canvas) =>
+    canvas.getAnimations().flatMap((animation) => {
+      const effect = animation.effect;
+      return effect instanceof KeyframeEffect
+        ? effect.getKeyframes().map((frame) => ({
+            opacity: frame["opacity"] ?? null,
+            transform: frame["transform"] ?? null,
+          }))
+        : [];
+    }),
+  );
   expect(
     new Set(rejectionFrames.map(({ transform }) => transform)).size,
   ).toBeGreaterThan(2);
@@ -232,6 +534,7 @@ test("final-vote countdown cancellation, replacement, and rejection stay determi
 
   await page.getByRole("button", { name: "Vote 5" }).click();
   await expect(page.getByRole("button", { name: "Reveal in 3" })).toBeVisible();
+  await expectRenderedTextContained(page.locator(".vote-countdown-cancel"));
   await page.getByRole("button", { name: "Cancel" }).click();
   await expect(
     page.getByRole("button", { name: "Reveal", exact: true }),
@@ -475,6 +778,7 @@ test("phone layouts keep voter controls and identity in the viewport", async ({
     ).toBeVisible();
     const cancel = page.getByRole("button", { name: "Cancel" });
     await expect(cancel).toBeVisible();
+    await expectRenderedTextContained(cancel);
     await expectCountdownControlsSeparated(page);
     await expectFullyWithinVisualViewport(page.locator(".vote-phase-control"));
     await expectFullyWithinVisualViewport(page.locator(".vote-name"));
@@ -512,6 +816,20 @@ test("short landscape keeps drawing and deck interaction on-page", async ({
       name: "vote",
     },
   ]);
+  await expectNoHorizontalOverflow(page);
+  await expectNoVerticalOverflow(page);
+
+  await publishVoterFixture(page, "final-vote");
+  await page.getByRole("button", { name: "Vote 5", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: /Reveal in [123]/u }),
+  ).toBeVisible();
+  const cancel = page.getByRole("button", { name: "Cancel" });
+  await expectRenderedTextContained(cancel);
+  await expectCountdownControlsSeparated(page);
+  await expectFullyWithinVisualViewport(page.locator(".vote-phase-control"));
+  await expectInteractiveControlsWithinViewport(page);
+  await expectMinimumTouchTargets(page);
   await expectNoHorizontalOverflow(page);
   await expectNoVerticalOverflow(page);
 });
@@ -604,12 +922,12 @@ test("reduced motion still produces the recognized vote", async ({ page }) => {
       if (!drawingStage.classList.contains("vote-draw-stage--committing")) {
         return;
       }
-      const canvas = drawingStage.querySelector("canvas.vote-ink");
-      if (canvas === null) {
+      const inkVisual = drawingStage.querySelector(".ink-visual");
+      if (inkVisual === null) {
         throw new Error("Vote ink is missing.");
       }
       captureWindow.__reducedVoteEffect = {
-        animationName: getComputedStyle(canvas).animationName,
+        animationName: getComputedStyle(inkVisual).animationName,
         effectMotion: drawingStage.dataset["effectMotion"] ?? null,
       };
       observer.disconnect();

@@ -57,6 +57,7 @@ export interface InkPadHandle {
   getLatestPointTime(): number | null;
   getStats(): InkStats;
   getStrokes(): readonly ImmutableInkStroke[];
+  getSurfaceBounds(): InkSurfaceBounds | null;
   getVisualBounds(): InkVisualBounds | null;
   getCanonicalInkLocus(): CanonicalInkLocus | null;
   rasterize(): RasterizedInk | null;
@@ -73,6 +74,11 @@ export interface InkVisualBounds extends InkBounds {
 export interface InkSurfaceSize {
   width: number;
   height: number;
+}
+
+export interface InkSurfaceBounds extends InkSurfaceSize {
+  left: number;
+  top: number;
 }
 
 export interface CanonicalInkLocus {
@@ -141,11 +147,16 @@ export const InkPad = forwardRef<InkPadHandle, InkPadProps>(function InkPad(
   ref,
 ) {
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const visualRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const tintCanvasRef = useRef<HTMLCanvasElement>(null);
   const completedStrokesRef = useRef<InkStroke[]>([]);
   const activeStrokeRef = useRef<ActivePointer | null>(null);
   const latestPointTimeRef = useRef<number | null>(null);
   const visualBoundsRef = useRef<InkVisualBounds | null>(null);
+  const readVisualBoundsRef = useRef<() => InkVisualBounds | null>(
+    () => visualBoundsRef.current,
+  );
   const canonicalInkLocusRef = useRef<CanonicalInkLocus | null>(null);
   const clearRef = useRef<() => void>(() => undefined);
   const restoreVectorInkRef = useRef<() => void>(() => undefined);
@@ -195,7 +206,18 @@ export const InkPad = forwardRef<InkPadHandle, InkPadProps>(function InkPad(
       getLatestPointTime: () => latestPointTimeRef.current,
       getStats: () => inkStats(completedStrokesRef.current),
       getStrokes: () => immutableStrokeSnapshot(completedStrokesRef.current),
-      getVisualBounds: () => visualBoundsRef.current,
+      getSurfaceBounds: () => {
+        const bounds = surfaceRef.current?.getBoundingClientRect();
+        return bounds && bounds.width > 0 && bounds.height > 0
+          ? {
+              left: bounds.left,
+              top: bounds.top,
+              width: bounds.width,
+              height: bounds.height,
+            }
+          : null;
+      },
+      getVisualBounds: () => readVisualBoundsRef.current(),
       getCanonicalInkLocus: () => canonicalInkLocusRef.current,
       rasterize: () => rasterizeInk(completedStrokesRef.current),
       restoreVectorInk: () => {
@@ -211,8 +233,10 @@ export const InkPad = forwardRef<InkPadHandle, InkPadProps>(function InkPad(
 
   useEffect(() => {
     const surface = surfaceRef.current;
+    const visual = visualRef.current;
     const canvas = canvasRef.current;
-    if (!surface || !canvas) {
+    const tintCanvas = tintCanvasRef.current;
+    if (!surface || !visual || !canvas || !tintCanvas) {
       return;
     }
 
@@ -261,6 +285,63 @@ export const InkPad = forwardRef<InkPadHandle, InkPadProps>(function InkPad(
           }
         : null;
     };
+
+    const readVisualBounds = (): InkVisualBounds | null => {
+      if (!metrics) {
+        return null;
+      }
+      const context = completedInkCanvas.getContext("2d");
+      if (!context || typeof context.getImageData !== "function") {
+        return visualBoundsRef.current;
+      }
+      try {
+        const pixels = context.getImageData(
+          0,
+          0,
+          completedInkCanvas.width,
+          completedInkCanvas.height,
+        ).data;
+        let minX = completedInkCanvas.width;
+        let minY = completedInkCanvas.height;
+        let maxX = -1;
+        let maxY = -1;
+        for (let offset = 3; offset < pixels.length; offset += 4) {
+          if (pixels[offset] === 0) {
+            continue;
+          }
+          const pixel = (offset - 3) / 4;
+          const x = pixel % completedInkCanvas.width;
+          const y = Math.floor(pixel / completedInkCanvas.width);
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+        }
+        if (maxX < minX || maxY < minY) {
+          return null;
+        }
+        const dpr = metrics.dpr;
+        const logicalMinX = minX / dpr;
+        const logicalMinY = minY / dpr;
+        const logicalMaxX = (maxX + 1) / dpr;
+        const logicalMaxY = (maxY + 1) / dpr;
+        return {
+          minX: logicalMinX,
+          minY: logicalMinY,
+          maxX: logicalMaxX,
+          maxY: logicalMaxY,
+          width: logicalMaxX - logicalMinX,
+          height: logicalMaxY - logicalMinY,
+          centerX: (logicalMinX + logicalMaxX) / 2,
+          centerY: (logicalMinY + logicalMaxY) / 2,
+          surfaceWidth: metrics.logicalWidth,
+          surfaceHeight: metrics.logicalHeight,
+        };
+      } catch {
+        return visualBoundsRef.current;
+      }
+    };
+    readVisualBoundsRef.current = readVisualBounds;
 
     const updateCanonicalInkLocus = () => {
       const bounds = inkBounds(completedStrokesRef.current);
@@ -326,6 +407,18 @@ export const InkPad = forwardRef<InkPadHandle, InkPadProps>(function InkPad(
       if (active) {
         drawInk(context, active.strokes.map(viewportStroke), visibleStyle());
       }
+
+      const tintContext = tintCanvas.getContext("2d");
+      if (tintContext) {
+        tintContext.save();
+        tintContext.setTransform(1, 0, 0, 1, 0, 0);
+        tintContext.clearRect(0, 0, tintCanvas.width, tintCanvas.height);
+        tintContext.drawImage(canvas, 0, 0);
+        tintContext.globalCompositeOperation = "source-in";
+        tintContext.fillStyle = "#ff4b1f";
+        tintContext.fillRect(0, 0, tintCanvas.width, tintCanvas.height);
+        tintContext.restore();
+      }
     };
 
     const requestPaint = () => {
@@ -336,17 +429,29 @@ export const InkPad = forwardRef<InkPadHandle, InkPadProps>(function InkPad(
       if (restorationFrame !== null) {
         window.cancelAnimationFrame(restorationFrame);
       }
-      const getAnimations = (
-        canvas as unknown as { getAnimations?: () => Animation[] }
-      ).getAnimations;
-      for (const animation of getAnimations?.call(canvas) ?? []) {
-        animation.cancel();
+      for (const element of [visual, canvas, tintCanvas]) {
+        const getAnimations = (
+          element as unknown as { getAnimations?: () => Animation[] }
+        ).getAnimations;
+        for (const animation of getAnimations?.call(element) ?? []) {
+          animation.cancel();
+        }
       }
+      visual.style.setProperty("animation", "none", "important");
+      visual.style.setProperty("transition", "none", "important");
+      visual.style.setProperty("opacity", "1", "important");
+      visual.style.setProperty("transform", "none", "important");
+      visual.style.setProperty("filter", "none", "important");
       canvas.style.setProperty("animation", "none", "important");
       canvas.style.setProperty("transition", "none", "important");
       canvas.style.setProperty("opacity", "1", "important");
       canvas.style.setProperty("transform", "none", "important");
       canvas.style.setProperty("filter", "none", "important");
+      tintCanvas.style.setProperty("animation", "none", "important");
+      tintCanvas.style.setProperty("transition", "none", "important");
+      tintCanvas.style.setProperty("opacity", "0", "important");
+      tintCanvas.style.setProperty("transform", "none", "important");
+      tintCanvas.style.setProperty("filter", "none", "important");
       if (animationFrame !== null) {
         window.cancelAnimationFrame(animationFrame);
         animationFrame = null;
@@ -354,11 +459,21 @@ export const InkPad = forwardRef<InkPadHandle, InkPadProps>(function InkPad(
       paint();
       restorationFrame = window.requestAnimationFrame(() => {
         restorationFrame = null;
+        visual.style.removeProperty("animation");
+        visual.style.removeProperty("transition");
+        visual.style.removeProperty("opacity");
+        visual.style.removeProperty("transform");
+        visual.style.removeProperty("filter");
         canvas.style.removeProperty("animation");
         canvas.style.removeProperty("transition");
         canvas.style.removeProperty("opacity");
         canvas.style.removeProperty("transform");
         canvas.style.removeProperty("filter");
+        tintCanvas.style.removeProperty("animation");
+        tintCanvas.style.removeProperty("transition");
+        tintCanvas.style.removeProperty("opacity");
+        tintCanvas.style.removeProperty("transform");
+        tintCanvas.style.removeProperty("filter");
       });
     };
     restoreVectorInkRef.current = restoreVectorInk;
@@ -407,6 +522,12 @@ export const InkPad = forwardRef<InkPadHandle, InkPadProps>(function InkPad(
       }
       metrics = resizeCanvas(
         canvas,
+        bounds.width,
+        bounds.height,
+        window.devicePixelRatio,
+      );
+      resizeCanvas(
+        tintCanvas,
         bounds.width,
         bounds.height,
         window.devicePixelRatio,
@@ -590,8 +711,8 @@ export const InkPad = forwardRef<InkPadHandle, InkPadProps>(function InkPad(
         );
       }
       rebuildCompletedInk();
+      restoreVectorInk();
       propsRef.current.onClear?.();
-      requestPaint();
     };
 
     surface.addEventListener("pointerdown", onPointerDown);
@@ -620,6 +741,7 @@ export const InkPad = forwardRef<InkPadHandle, InkPadProps>(function InkPad(
     return () => {
       clearRef.current = () => undefined;
       restoreVectorInkRef.current = () => undefined;
+      readVisualBoundsRef.current = () => visualBoundsRef.current;
       cancelRef.current = () => undefined;
       if (animationFrame !== null) {
         window.cancelAnimationFrame(animationFrame);
@@ -658,11 +780,18 @@ export const InkPad = forwardRef<InkPadHandle, InkPadProps>(function InkPad(
       aria-describedby="ink-instructions"
       aria-disabled={!enabled}
     >
-      <canvas
-        ref={canvasRef}
-        className={`ink-canvas ${className}`.trim()}
-        aria-hidden="true"
-      />
+      <div ref={visualRef} className={`ink-visual ${className}`.trim()}>
+        <canvas
+          ref={canvasRef}
+          className="ink-canvas ink-canvas--base"
+          aria-hidden="true"
+        />
+        <canvas
+          ref={tintCanvasRef}
+          className="ink-canvas ink-canvas--tint"
+          aria-hidden="true"
+        />
+      </div>
     </div>
   );
 });

@@ -16,9 +16,6 @@
   --color-vermilion: #ff4b1f;
   --font-sans: Arial, Helvetica, sans-serif;
   --font-score: "Arial Narrow", "Liberation Sans Narrow", Arial, sans-serif;
-  --font-handwritten:
-    "Segoe Print", "Bradley Hand", "Chalkboard SE", "Comic Sans MS",
-    var(--font-score);
   --text-meta: 0.625rem;
   --text-label: 0.6875rem;
   --text-supporting: 0.75rem;
@@ -1853,7 +1850,7 @@ body {
 }
 
 .vote-phase-button,
-.vote-countdown-cancel {
+.vote-route .vote-countdown-cancel {
   min-height: 44px;
   border: 0;
   font-size: 0.75rem;
@@ -1912,7 +1909,6 @@ body {
   display: grid;
   min-height: clamp(380px, 56dvh, 670px);
   overflow: hidden;
-  grid-template-rows: auto minmax(0, 1fr);
   isolation: isolate;
   container-type: size;
   background:
@@ -1987,10 +1983,9 @@ body {
 }
 
 .vote-route .ink-surface {
-  position: relative;
+  position: absolute;
   z-index: 2;
-  width: 100%;
-  min-height: 0;
+  inset: 0;
   cursor: crosshair;
   touch-action: none;
   user-select: none;
@@ -2000,21 +1995,45 @@ body {
   cursor: default;
 }
 
+.vote-route .ink-visual,
 .vote-route .ink-canvas {
   position: absolute;
   inset: 0;
-  display: block;
   width: 100%;
   height: 100%;
   pointer-events: none;
-  transform-origin: var(--vote-ink-origin-x, 50%) var(--vote-ink-origin-y, 50%);
 }
 
-.vote-route .vote-ink--committing {
+.vote-route .ink-visual {
+  isolation: isolate;
+  transform-origin: var(--vote-ink-origin-x, 0) var(--vote-ink-origin-y, 0);
+}
+
+.vote-route .ink-canvas {
+  display: block;
+}
+
+.vote-route .ink-canvas--tint {
+  opacity: 0;
+}
+
+.vote-route .ink-visual.vote-ink--committing {
   animation: vote-ink-commit 460ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
-.vote-route .vote-ink--rejecting {
+.vote-route .vote-ink--committing .ink-canvas {
+  mix-blend-mode: plus-lighter;
+}
+
+.vote-route .vote-ink--committing .ink-canvas--base {
+  animation: vote-ink-light-out 460ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.vote-route .vote-ink--committing .ink-canvas--tint {
+  animation: vote-ink-tint-in 460ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.vote-route .ink-visual.vote-ink--rejecting {
   animation: vote-ink-reject 420ms ease-out forwards;
 }
 
@@ -2072,13 +2091,6 @@ body {
 
 .vote-result:not(.vote-result--textual) {
   padding: 0.06em 0.1em;
-}
-
-.vote-result--handwritten {
-  font-family: var(--font-handwritten);
-  font-weight: 700;
-  letter-spacing: -0.04em;
-  line-height: 1;
 }
 
 .vote-result--morphing {
@@ -2657,17 +2669,12 @@ body {
   0% {
     opacity: 1;
     filter: blur(0);
-    transform: scale(1);
+    transform: translate(0, 0) scale(1, 1);
   }
 
   66% {
     opacity: 0.72;
     filter: blur(0.6px);
-    transform: translate(
-        var(--vote-ink-translate-x, 0),
-        var(--vote-ink-translate-y, 0)
-      )
-      scale(1.2);
   }
 
   100% {
@@ -2677,7 +2684,27 @@ body {
         var(--vote-ink-translate-x, 0),
         var(--vote-ink-translate-y, 0)
       )
-      scale(1.38);
+      scale(var(--vote-ink-scale-x, 1), var(--vote-ink-scale-y, 1));
+  }
+}
+
+@keyframes vote-ink-light-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes vote-ink-tint-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
   }
 }
 
@@ -3058,7 +3085,17 @@ body {
     transition-duration: 1ms !important;
   }
 
-  .vote-route .vote-ink--committing {
+  .vote-route .ink-visual.vote-ink--committing {
     animation-name: vote-ink-commit-reduced !important;
+  }
+
+  .vote-route .vote-ink--committing .ink-canvas--base {
+    opacity: 1;
+    animation: none !important;
+  }
+
+  .vote-route .vote-ink--committing .ink-canvas--tint {
+    opacity: 0;
+    animation: none !important;
   }
 }

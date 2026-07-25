@@ -10,6 +10,7 @@ import {
 } from "../src/broadcast-session";
 import type { PokerClientLifecycle } from "../src/client-lifecycle";
 import type { BroadcastConfig, VotingConfig } from "../src/config";
+import { useScreenWakeLock } from "../src/voting/screen-wake-lock";
 import type { VoterNameSession } from "../src/voting/voter-session";
 import {
   createVotingSessionManager,
@@ -17,6 +18,10 @@ import {
   type VotingSessionSnapshot,
 } from "../src/voting-session";
 import { createFakeClient, makeSnapshot } from "./fake-client";
+
+vi.mock("../src/voting/screen-wake-lock", () => ({
+  useScreenWakeLock: vi.fn(),
+}));
 
 const endpoint = "wss://example.test/socket";
 
@@ -45,13 +50,14 @@ describe("site routing", () => {
       ).toBeNull();
       expect(sessions.start).not.toHaveBeenCalled();
       expect(router.state.location.pathname).toBe("/");
+      expect(useScreenWakeLock).not.toHaveBeenCalled();
 
       unbind();
       router.dispose();
     },
   );
 
-  it("starts a direct room route with the decoded query room", () => {
+  it("starts a direct room route with the decoded query room", async () => {
     const sessions = fakeSessions();
     const room = "Roadmap/API? v2";
     const router = createMemoryRouter(createRoutes(sessions), {
@@ -62,6 +68,10 @@ describe("site routing", () => {
 
     expect(sessions.start).toHaveBeenCalledOnce();
     expect(sessions.start).toHaveBeenCalledWith({ endpoint, room });
+    await waitFor(() => {
+      expect(router.state.initialized).toBe(true);
+    });
+    expect(useScreenWakeLock).not.toHaveBeenCalled();
 
     unbind();
     router.dispose();
@@ -285,7 +295,33 @@ describe("site routing", () => {
     expect(
       await screen.findByRole("heading", { name: "Starting voter console" }),
     ).toBeDefined();
+    expect(useScreenWakeLock).toHaveBeenCalledOnce();
+    expect(useScreenWakeLock).toHaveBeenCalledWith(true);
     expect(screen.getByText(`Room / ${room}`)).toBeDefined();
+
+    unbind();
+    router.dispose();
+  });
+
+  it("deactivates the voter wake lock when its route starts exiting", async () => {
+    const broadcastSessions = fakeSessions();
+    const votingSessions = fakeVotingSessions();
+    const router = createMemoryRouter(
+      createRoutes(broadcastSessions, votingSessions),
+      { initialEntries: ["/vote?room=planning"] },
+    );
+    const unbind = bindRouter(router, broadcastSessions, votingSessions);
+    render(<RouterProvider router={router} />);
+    expect(
+      await screen.findByRole("heading", { name: "Starting voter console" }),
+    ).toBeDefined();
+    expect(useScreenWakeLock).toHaveBeenLastCalledWith(true);
+
+    await router.navigate("/");
+
+    await waitFor(() => {
+      expect(useScreenWakeLock).toHaveBeenLastCalledWith(false);
+    });
 
     unbind();
     router.dispose();
