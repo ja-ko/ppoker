@@ -1955,6 +1955,10 @@ body {
   pointer-events: none;
 }
 
+.vote-draw-heading * {
+  pointer-events: none;
+}
+
 .vote-draw-heading p {
   margin: 4px 0 0;
   color: #a2adb1;
