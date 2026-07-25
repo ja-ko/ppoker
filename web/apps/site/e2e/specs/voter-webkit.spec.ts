@@ -13,7 +13,7 @@ import {
 test("iPhone handwriting header and countdown text remain interactive and contained", async ({
   page,
 }) => {
-  await gotoVoterFixture(page, "final-vote", { waitForRecognizer: false });
+  await gotoVoterFixture(page, "final-vote");
 
   const geometry = await page
     .getByRole("region", { name: /Handwriting surface/u })
@@ -37,13 +37,32 @@ test("iPhone handwriting header and countdown text remain interactive and contai
           right: Math.abs(surfaceBounds.right - stageBounds.right),
           top: Math.abs(surfaceBounds.top - stageBounds.top),
         },
+        headingChildrenIgnorePointers: [...heading.querySelectorAll("*")].every(
+          (element) => getComputedStyle(element).pointerEvents === "none",
+        ),
+        headingCenter: {
+          x: headingBounds.left + headingBounds.width / 2,
+          y: headingBounds.top + headingBounds.height / 2,
+        },
         headingHitsSurface: hit === surface || surface.contains(hit),
         headingPointerEvents: getComputedStyle(heading).pointerEvents,
       };
     });
+  expect(geometry.headingChildrenIgnorePointers).toBe(true);
   expect(geometry.headingHitsSurface).toBe(true);
   expect(geometry.headingPointerEvents).toBe("none");
   expect(Object.values(geometry.edges).every((gap) => gap <= 1.5)).toBe(true);
+
+  await page.touchscreen.tap(
+    geometry.headingCenter.x,
+    geometry.headingCenter.y,
+  );
+  await expect(page.getByTestId("drawing-stage")).toHaveClass(
+    /vote-draw-stage--settling/u,
+  );
+  await expect(page.getByTestId("drawing-stage")).toHaveClass(
+    /vote-draw-stage--empty/u,
+  );
 
   await page.getByRole("button", { name: "Vote 5", exact: true }).click();
   await expect(
