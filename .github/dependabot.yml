@@ -27,3 +27,12 @@ updates:
       all-dependencies:
         patterns:
           - "*"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "saturday"
+    groups:
+      all-actions:
+        patterns:
+          - "*"
