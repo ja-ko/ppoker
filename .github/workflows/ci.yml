@@ -101,9 +101,6 @@ jobs:
           flags: frontend
           name: frontend
           token: ${{ secrets.CODECOV_TOKEN }}
-      - name: Build site
-        working-directory: web
-        run: pnpm --filter @ppoker/site run build
       - name: Install Playwright browsers
         working-directory: web
         run: pnpm --filter @ppoker/site exec playwright install --with-deps chromium webkit
@@ -120,3 +117,72 @@ jobs:
             web/apps/site/test-results
             web/apps/site/playwright-report
           retention-days: 7
+      - name: Validate deployment configuration
+        working-directory: web
+        env:
+          VITE_PPOKER_ENDPOINT: wss://pp.discordia.network/
+        run: pnpm --filter @ppoker/site run validate:endpoint
+      - name: Build static site
+        working-directory: web
+        env:
+          VITE_PPOKER_ENDPOINT: wss://pp.discordia.network/
+          VITE_PPOKER_ROUTER_MODE: hash
+        run: pnpm --filter @ppoker/site run build
+      - name: Upload Pages artifact
+        if: ${{ github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: web/apps/site/dist
+
+  live-native:
+    name: Native
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run native real-upstream participant test
+        run: cargo test --locked --package ppoker --bin ppoker web::client::tests::real_upstream_accepts_native_participants -- --ignored --exact --nocapture
+
+  live-browser:
+    name: Browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CHROME_BIN: google-chrome
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/package.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@wasm-pack
+      - name: Run browser real-upstream participant test
+        working-directory: web
+        run: pnpm run test:wasm:live
+
+  deploy:
+    name: Deploy site
+    if: ${{ github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    needs: [rust, web, live-native, live-browser]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+      - name: Deploy to Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
