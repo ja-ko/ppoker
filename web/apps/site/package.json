@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "validate:endpoint": "node scripts/validate-endpoint.mjs",
     "prepare:ort": "node scripts/prepare-ort-assets.mjs",
     "predev": "pnpm run prepare:ort",
     "dev": "pnpm --filter @ppoker/web-client run build && vite",

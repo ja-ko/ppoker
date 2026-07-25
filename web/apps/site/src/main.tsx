@@ -1,6 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, RouterProvider } from "react-router";
+import {
+  createBrowserRouter,
+  createHashRouter,
+  RouterProvider,
+} from "react-router";
 
 import { bindSessionsToRouter, createSiteRoutes } from "./app-router";
 import { createBroadcastSessionManager } from "./broadcast-session";
@@ -21,7 +25,11 @@ const pageDependencies = {
 };
 const broadcastSessions = createBroadcastSessionManager(pageDependencies);
 const votingSessions = createVotingSessionManager(pageDependencies);
-const router = createBrowserRouter(
+const createRouter =
+  import.meta.env.VITE_PPOKER_ROUTER_MODE === "hash"
+    ? createHashRouter
+    : createBrowserRouter;
+const router = createRouter(
   createSiteRoutes({
     broadcastSessions,
     endpoint: import.meta.env.VITE_PPOKER_ENDPOINT,
