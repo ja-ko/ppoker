@@ -20,6 +20,17 @@ describe("buildVotingUrl", () => {
     ).toBe("https://board.example/vote?room=next%26room%3Dvalue%23fragment");
   });
 
+  it("preserves a Pages base path and builds a hash voting route", () => {
+    expect(
+      buildVotingUrl(
+        "next&room=value#fragment",
+        "https://board.example/ppoker/#/room?room=planning",
+      ),
+    ).toBe(
+      "https://board.example/ppoker/#/vote?room=next%26room%3Dvalue%23fragment",
+    );
+  });
+
   it("encodes Unicode room codes into distinct URLs", () => {
     const baseUrl = "https://board.example/current";
 

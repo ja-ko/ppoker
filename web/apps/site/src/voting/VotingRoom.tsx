@@ -908,7 +908,11 @@ export function VotingRoom({
             Connection {connectionLabel}
           </span>
           <span>Recognizer {recognizerStatus.readiness}</span>
-          <a href="/legal/PRODUCTION_DEPENDENCIES.txt">Notices</a>
+          <a
+            href={`${import.meta.env.BASE_URL}legal/PRODUCTION_DEPENDENCIES.txt`}
+          >
+            Notices
+          </a>
         </div>
       </footer>
       <p

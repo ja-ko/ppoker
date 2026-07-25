@@ -5,10 +5,16 @@ export function buildVotingUrl(
   baseUrl: VotingUrlBase,
 ): string {
   const url = new URL(typeof baseUrl === "string" ? baseUrl : baseUrl.href);
+  const search = `?room=${encodeURIComponent(roomCode)}`;
 
-  url.pathname = "/vote";
-  url.search = `?room=${encodeURIComponent(roomCode)}`;
-  url.hash = "";
+  if (url.hash.startsWith("#/")) {
+    url.search = "";
+    url.hash = `#/vote${search}`;
+  } else {
+    url.pathname = "/vote";
+    url.search = search;
+    url.hash = "";
+  }
 
   return url.href;
 }
