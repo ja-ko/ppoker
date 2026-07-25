@@ -1,0 +1,25 @@
+---
+source: src/ui/voting/tests/mod.rs
+assertion_line: 759
+expression: terminal.backend()
+---
+"╭Overview──────────────────────────────────────────────────────────────────────╮"
+"│Name: test | Room: Planning Room | Server: wss://mocked | State: Playing |    │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
+"╭Players───────╮╭Your vote───────────────╮                                      "
+"│Name   Vote   ││        ██████          │                                      "
+"│              ││        ██              │                                      "
+"│test   5      ││        █████           │                                      "
+"│              ││            ██          │                                      "
+"│              ││            ██          │                                      "
+"│              ││        ██  ██          │                                      "
+"│              ││         ████           │                                      "
+"│              │╰────────────────────────╯                                      "
+"│              │╭Log───────────────────────────────────────────────────────────╮"
+"│              ││[Server]: test joined the room                                │"
+"│              ││[Server]: test played a card                                  │"
+"│              ││                                                              │"
+"╰──────────────╯╰──────────────────────────────────────────────────────────────╯"
+"                                                                                "
+" Vote | Reveal | History | Name change | Chat | Quit                            "
+"                                                                                "

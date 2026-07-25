@@ -1,0 +1,290 @@
+{
+  "schemaVersion": 2,
+  "model": {
+    "name": "CRNN Tiny EMNIST digit-sequence candidate",
+    "path": "digits-crnn.onnx",
+    "sha256": "bea69199be71c01a35f4485ad853ef6fd11608c616c452598cb3f330922db9af",
+    "bytes": 1714986,
+    "onnxOpset": 17,
+    "modificationNotice": "Modified 2026-07-16 from the Apache-2.0 CRNN Tiny architecture: input width changed from 160 to 128, labels changed to canonical one-to-three-digit sequences, the model was fine-tuned on EMNIST compositions, and it was exported as static batch-one ONNX; see upstreamReference for initialization-audit scope."
+  },
+  "upstreamReference": {
+    "repository": "https://github.com/zjykzj/crnn-ctc",
+    "release": "v1.3.0",
+    "revision": "aeceea3a2ab7e973b40d871ff628b327df31a045",
+    "checkpoint": "crnn_tiny-emnist.pth",
+    "checkpointUrl": "https://github.com/zjykzj/crnn-ctc/releases/download/v1.3.0/crnn_tiny-emnist.pth",
+    "checkpointSha256": "6d2a653513fd71f9d5de1fc238311dc017d285f0bbc55e09da7ed9eea80479c9",
+    "license": "Apache-2.0",
+    "copyright": "Copyright 2023 zjykzj",
+    "role": "Architecture and reported initialization reference; see initializationAudit for verification scope.",
+    "initializationAudit": {
+      "reportedPath": "artifacts/upstream/crnn_tiny-emnist.pth",
+      "expectedSha256": "6d2a653513fd71f9d5de1fc238311dc017d285f0bbc55e09da7ed9eea80479c9",
+      "observedSha256": "6d2a653513fd71f9d5de1fc238311dc017d285f0bbc55e09da7ed9eea80479c9",
+      "verifiedBeforeTraining": false,
+      "verificationStatus": "not captured at training time; retained file verified only after the run",
+      "postRunVerificationAtUtc": "2026-07-16T13:08:45+00:00"
+    }
+  },
+  "input": {
+    "name": "input",
+    "dtype": "float32",
+    "shape": [
+      1,
+      1,
+      32,
+      128
+    ],
+    "range": [
+      0.0,
+      1.0
+    ],
+    "polarity": "white ink on black",
+    "preprocessingVersion": "digits-model-input-v1",
+    "contract": "row-major NCHW; preserve aspect ratio inside approximately 120x26 and center on a black 128x32 raster"
+  },
+  "output": {
+    "name": "output",
+    "dtype": "float32",
+    "shape": [
+      1,
+      63,
+      11
+    ],
+    "values": "natural-log probabilities",
+    "classes": "0123456789",
+    "blankIndex": 10,
+    "rawPredictionContract": "CTC decoding is unconstrained and may produce empty, leading-zero, overlength, or greater-than-255 text.",
+    "acceptanceContract": "Preserve raw text for diagnostics, then require canonical unsigned decimal 0..255 and downstream deck membership before automatic acceptance or commit.",
+    "rejectionContract": "Provisional rejection or dismissal may still act on raw output under the separately documented confidence and timing policy."
+  },
+  "training": {
+    "seed": 72016,
+    "epochs_completed": 10,
+    "samples_per_epoch": 100000,
+    "total_training_compositions": 1000000,
+    "batch_size": 256,
+    "optimizer": "AdamW",
+    "learning_rate": 0.0001,
+    "weight_decay": 1e-05,
+    "scheduler": "CosineAnnealingLR eta_min=learning_rate/10",
+    "best_epoch": 8,
+    "selected_checkpoint_sha256": "07b5cad2087000d381c99944889593fffba033c4363a7a6ef7be2d47557a26bb"
+  },
+  "data": {
+    "dataset": "NIST-hosted EMNIST Digits",
+    "archiveSha256": "fb9bb67e33772a9cc0b895e4ecf36d2cf35be8b709693c3564cea2a019fcda8e",
+    "compositionVersion": "digits-compose-v2",
+    "manifestVersion": "digits-manifests-v2",
+    "separation": "official train glyphs for training; disjoint official test-glyph pools for selection and calibration; the untouched v1 reserve pool is v2 final; the observed v1 final pool is retired",
+    "finalPool": "Previously untouched v1 reserve glyphs, first composed for the v2 remediation final evaluation.",
+    "remainingUntouchedReserveGlyphs": 0
+  },
+  "metrics": {
+    "modelSelection": {
+      "decoder": "greedy CTC",
+      "raw_prediction_contract": "Unconstrained CTC text; may be empty, noncanonical, or outside 0..255.",
+      "greedy_noncanonical_predictions": 16,
+      "overall": {
+        "correct": 5909,
+        "total": 6000,
+        "accuracy": 0.9848333333333333
+      },
+      "by_length": {
+        "1": {
+          "correct": 1992,
+          "total": 2000,
+          "accuracy": 0.996
+        },
+        "2": {
+          "correct": 1969,
+          "total": 2000,
+          "accuracy": 0.9845
+        },
+        "3": {
+          "correct": 1948,
+          "total": 2000,
+          "accuracy": 0.974
+        }
+      },
+      "repeated_digits": {
+        "correct": 804,
+        "total": 832,
+        "accuracy": 0.9663461538461539
+      }
+    },
+    "calibration": {
+      "manifest": "calibration",
+      "compositionCount": 9000,
+      "overall": {
+        "correct": 8859,
+        "total": 9000,
+        "accuracy": 0.9843333333333333
+      },
+      "by_length": {
+        "1": {
+          "correct": 2984,
+          "total": 3000,
+          "accuracy": 0.9946666666666667
+        },
+        "2": {
+          "correct": 2951,
+          "total": 3000,
+          "accuracy": 0.9836666666666667
+        },
+        "3": {
+          "correct": 2924,
+          "total": 3000,
+          "accuracy": 0.9746666666666667
+        }
+      },
+      "repeated_digits": {
+        "correct": 1187,
+        "total": 1217,
+        "accuracy": 0.9753492193919474
+      },
+      "beamWidth10": {
+        "correct": 8859,
+        "total": 9000,
+        "accuracy": 0.9843333333333333
+      },
+      "confidenceExperiments": {
+        "top_score_per_step": {
+          "raw_threshold": -2.1431021438241666e-05,
+          "false_accepts": 1,
+          "false_rejects": 2518,
+          "incorrect_total": 141,
+          "correct_total": 8859,
+          "noncanonical_predictions": 23,
+          "incorrect_acceptance_rate": 0.0070921985815602835,
+          "false_rejection_rate": 0.2842307258155548
+        },
+        "margin": {
+          "raw_threshold": 6.916724525481752,
+          "false_accepts": 1,
+          "false_rejects": 2060,
+          "incorrect_total": 141,
+          "correct_total": 8859,
+          "noncanonical_predictions": 23,
+          "incorrect_acceptance_rate": 0.0070921985815602835,
+          "false_rejection_rate": 0.23253188847499717
+        },
+        "combined": {
+          "raw_threshold": 0.3458625599112471,
+          "false_accepts": 1,
+          "false_rejects": 2061,
+          "incorrect_total": 141,
+          "correct_total": 8859,
+          "noncanonical_predictions": 23,
+          "incorrect_acceptance_rate": 0.0070921985815602835,
+          "false_rejection_rate": 0.2326447680325093
+        }
+      }
+    },
+    "reportedFinal": {
+      "manifest": "final_test",
+      "historicalPreFinalFreezeIndependentlyProven": false,
+      "compositionCount": 15000,
+      "overall": {
+        "correct": 14791,
+        "total": 15000,
+        "accuracy": 0.9860666666666666
+      },
+      "by_length": {
+        "1": {
+          "correct": 4974,
+          "total": 5000,
+          "accuracy": 0.9948
+        },
+        "2": {
+          "correct": 4928,
+          "total": 5000,
+          "accuracy": 0.9856
+        },
+        "3": {
+          "correct": 4889,
+          "total": 5000,
+          "accuracy": 0.9778
+        }
+      },
+      "repeated_digits": {
+        "correct": 1989,
+        "total": 2038,
+        "accuracy": 0.9759568204121688
+      },
+      "beamWidth10": {
+        "correct": 14794,
+        "total": 15000,
+        "accuracy": 0.9862666666666666
+      },
+      "confidence": {
+        "data_role": "untouched final evaluation",
+        "heuristic": "margin",
+        "formula": "1 - exp(-max(top-minus-second CTC sequence log-score margin, 0))",
+        "raw_threshold": 6.916724525481752,
+        "confidence_threshold": 0.9990089291427978,
+        "false_accepts": 9,
+        "false_rejects": 3253,
+        "incorrect_total": 206,
+        "correct_total": 14794,
+        "noncanonical_predictions": 26,
+        "incorrect_acceptance_rate": 0.043689320388349516,
+        "false_rejection_rate": 0.2198864404488306,
+        "acceptance_contract": "Automatic acceptance or commit requires canonical 0..255 text, confidence threshold, and downstream deck validation; provisional rejection or dismissal may still use raw output.",
+        "warning": "Synthetic-only heuristic; not a probability and not production-safe."
+      }
+    }
+  },
+  "confidence": {
+    "decoder": "CTC prefix beam width 10",
+    "heuristic": "margin",
+    "formula": "1 - exp(-max(top-minus-second CTC sequence log-score margin, 0))",
+    "raw_threshold": 6.916724525481752,
+    "confidence_threshold": 0.9990089291427978,
+    "canonicalValidationRequiredForAcceptance": true,
+    "deckValidationRequiredForAcceptance": true,
+    "comparedHeuristics": [
+      "top sequence log score / 63",
+      "top-minus-second sequence log-score margin",
+      "top score / 63 + 0.05 * min(margin, 20)"
+    ],
+    "selectionRule": "minimize correct false rejections subject to <=1% acceptance among incorrect synthetic calibration predictions",
+    "warning": "Provisional synthetic-only heuristic, not a calibrated correctness probability and not production-safe."
+  },
+  "cpuBenchmark": {
+    "device": "cpu",
+    "batchSize": 256,
+    "torchThreads": 16,
+    "dataLoaderWorkers": 8,
+    "measuredSamples": 5120,
+    "seconds": 5.730129619943909,
+    "samplesPerSecond": 893.522544791948
+  },
+  "parity": {
+    "fixtureCount": 8,
+    "rtol": 0.001,
+    "atol": 1e-05,
+    "maximumAbsoluteDifference": 1.52587890625e-05,
+    "decodedParity": true
+  },
+  "provenance": {
+    "runManifest": "ml/digits/reports/run-manifest.json",
+    "stageTimestampOrderValidated": true,
+    "pipelineSourceUnchangedDuringTraining": null,
+    "pipelineSourceUnchangedFromTrainingCompletionThroughOriginalExport": true,
+    "sourceHashAuditScope": "The v2 training code captured hashes only at training completion. Equality through the original export is auditable; unchanged source during training is not.",
+    "currentEvaluationReportConsistencyValidated": true,
+    "historicalPreFinalFreezeIndependentlyProven": false,
+    "calibrationReportSha256": "052a1b564c5796c0139a13a1991a06f61a170271942abfae631b2318d05291e6"
+  },
+  "reports": "ml/digits/reports/",
+  "limitations": [
+    "EMNIST scanned glyph compositions do not establish accuracy on finger handwriting.",
+    "Synthetic confidence does not cover scribbles, partial digits, letters, signs, or other out-of-distribution input.",
+    "No user handwriting was collected or retained.",
+    "Browser rasterization, latency, physical-device behavior, and production-safe automatic actions remain unverified.",
+    "The neural output is not constrained to canonical 0..255 text; downstream canonical and deck validation are mandatory before automatic acceptance or commit.",
+    "The prior reserve pool was consumed for this untouched final evaluation; no official-test reserve remains for another model iteration."
+  ]
+}

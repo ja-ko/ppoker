@@ -13,11 +13,11 @@ pub use history::HistoryPage;
 pub use log::LogPage;
 pub use voting::VotingPage;
 
+pub mod changelog;
 mod history;
 mod log;
-mod voting;
 mod text_input;
-pub mod changelog;
+mod voting;
 
 #[derive(Debug, PartialEq, Clone, Copy, Hash, Ord, PartialOrd, Eq, Sequence)]
 pub enum UiPage {
@@ -112,12 +112,15 @@ fn footer_entries(entries: Vec<FooterEntry>) -> Paragraph<'static> {
             let mut result = vec![Span::raw(" ")];
 
             // Check if the name contains the shortcut letter
-            if let Some(pos) = name.to_lowercase().find(shortcut.to_lowercase().next().unwrap_or(shortcut)) {
+            if let Some(pos) = name
+                .to_lowercase()
+                .find(shortcut.to_lowercase().next().unwrap_or(shortcut))
+            {
                 let mut char_indices = name.char_indices();
                 let shortcut_char_start = pos;
                 let shortcut_char_end = char_indices
                     .find(|(idx, _)| *idx == pos)
-                    .and_then(|(_, c)| Some(pos + c.len_utf8()))
+                    .map(|(_, c)| pos + c.len_utf8())
                     .unwrap_or(pos + 1);
 
                 if shortcut_char_start > 0 {
@@ -126,7 +129,7 @@ fn footer_entries(entries: Vec<FooterEntry>) -> Paragraph<'static> {
 
                 result.push(Span::styled(
                     name[shortcut_char_start..shortcut_char_end].to_string(),
-                    shortcut_style
+                    shortcut_style,
                 ));
 
                 // Add the rest of the name
@@ -137,19 +140,19 @@ fn footer_entries(entries: Vec<FooterEntry>) -> Paragraph<'static> {
                 // The shortcut isn't in the string, so we add (shortcut) at the end
                 result.push(Span::raw(name.to_string()));
                 result.push(Span::raw(" ("));
-                result.push(Span::styled(
-                    shortcut.to_string(),
-                    shortcut_style
-                ));
+                result.push(Span::styled(shortcut.to_string(), shortcut_style));
                 result.push(Span::raw(")"));
             }
 
             if entry.highlight {
-                result = result.into_iter().map(|span| {
-                    let content = span.content.to_string();
-                    let new_style = span.style.fg(Color::Yellow);
-                    Span::styled(content, new_style)
-                }).collect();
+                result = result
+                    .into_iter()
+                    .map(|span| {
+                        let content = span.content.to_string();
+                        let new_style = span.style.fg(Color::Yellow);
+                        Span::styled(content, new_style)
+                    })
+                    .collect();
             }
             result.push(Span::raw(" |"));
 
@@ -179,24 +182,5 @@ fn format_duration(duration: &Duration) -> String {
     }
 }
 
-
 #[cfg(test)]
-pub mod tests {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::backend::TestBackend;
-    use super::*;
-    pub fn send_input<P: Page>(key: KeyCode, terminal: &mut Terminal<TestBackend>, page: &mut P, app: &mut App) {
-        page.input(app, KeyEvent::new(key, KeyModifiers::empty())).unwrap();
-        tick(terminal, page, app);
-    }
-
-    pub fn send_input_with_modifiers<P: Page>(key: KeyCode, modifier: KeyModifiers, terminal: &mut Terminal<TestBackend>, page: &mut P, app: &mut App) {
-        page.input(app, KeyEvent::new(key, modifier)).unwrap();
-        tick(terminal, page, app);
-    }
-
-    pub fn tick<P: Page>(terminal: &mut Terminal<TestBackend>, page: &mut P, app: &mut App) {
-        app.update().unwrap();
-        terminal.draw(|frame| page.render(app, frame)).unwrap();
-    }
-}
+pub mod tests;

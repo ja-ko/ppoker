@@ -4,12 +4,12 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Cell, Row, Table, TableState};
 use ratatui::Frame;
 
-use crate::app::{App, AppResult, HistoryEntry};
-use crate::models::GamePhase;
+use crate::app::{App, AppResult};
+use crate::models::{GamePhase, HistoryEntry};
 use crate::ui::voting::{format_vote, render_overview, render_own_vote};
 use crate::ui::{
-    colored_box_style, footer_entries, FooterEntry, format_duration, render_box, render_box_colored, Page,
-    UIAction, UiPage,
+    colored_box_style, footer_entries, format_duration, render_box, render_box_colored,
+    FooterEntry, Page, UIAction, UiPage,
 };
 
 pub struct HistoryPage {
@@ -26,7 +26,7 @@ impl HistoryPage {
 
 impl Page for HistoryPage {
     fn render(&mut self, app: &mut App, frame: &mut Frame) {
-        if self.history_state.selected().is_none() && app.history.len() > 0 {
+        if self.history_state.selected().is_none() && !app.history().is_empty() {
             self.history_state.select(Some(0));
         }
 
@@ -44,8 +44,8 @@ impl Page for HistoryPage {
         self.render_footer(app, footer, frame);
     }
 
-    fn input(&mut self, _app: &mut App, event: KeyEvent) -> AppResult<UIAction> {
-        return Ok(match event.code {
+    fn input(&mut self, app: &mut App, event: KeyEvent) -> AppResult<UIAction> {
+        Ok(match event.code {
             KeyCode::Char('q') => UIAction::Quit,
             KeyCode::Esc => UIAction::ChangeView(UiPage::Voting),
             KeyCode::Char(c) if c == 'v' || c == '-' || c == 'h' || c.is_ascii_digit() => {
@@ -54,8 +54,8 @@ impl Page for HistoryPage {
             KeyCode::Down => {
                 if let Some(s) = self.history_state.selected() {
                     let mut new_index = s.saturating_add(1);
-                    if new_index >= _app.history.len() {
-                        new_index = _app.history.len().saturating_sub(1);
+                    if new_index >= app.history().len() {
+                        new_index = app.history().len().saturating_sub(1);
                     }
                     self.history_state.select(Some(new_index));
                 }
@@ -68,7 +68,7 @@ impl Page for HistoryPage {
                 UIAction::Continue
             }
             _ => UIAction::Continue,
-        });
+        })
     }
 }
 
@@ -81,12 +81,12 @@ impl HistoryPage {
         let [vote_summary, players] =
             Layout::vertical([Constraint::Length(9), Constraint::Fill(1)]).areas(detail);
 
-        let current_entry = self.history_state.selected().map(|idx| &app.history[idx]);
+        let current_entry = self.history_state.selected().map(|idx| &app.history()[idx]);
 
         if let Some(current_entry) = current_entry {
             render_own_vote(
                 &current_entry.votes,
-                current_entry.average,
+                current_entry.average.unwrap_or(f32::NAN),
                 GamePhase::Revealed,
                 &current_entry.own_vote,
                 &current_entry.deck,
@@ -94,17 +94,33 @@ impl HistoryPage {
                 frame,
             );
 
-            render_player_list(&current_entry, players, frame);
+            render_player_list(current_entry, players, frame);
         }
         self.render_history(app, history, frame);
     }
 
     fn render_footer(&mut self, app: &mut App, rect: Rect, frame: &mut Frame) {
         let entries = vec![
-            FooterEntry { name: "Vote".to_string(), shortcut: 'V', highlight: app.has_updates },
-            FooterEntry { name: "↑".to_string(), shortcut: '↑', highlight: false },
-            FooterEntry { name: "↓".to_string(), shortcut: '↓', highlight: false },
-            FooterEntry { name: "Quit".to_string(), shortcut: 'Q', highlight: false },
+            FooterEntry {
+                name: "Vote".to_string(),
+                shortcut: 'V',
+                highlight: app.has_updates,
+            },
+            FooterEntry {
+                name: "↑".to_string(),
+                shortcut: '↑',
+                highlight: false,
+            },
+            FooterEntry {
+                name: "↓".to_string(),
+                shortcut: '↓',
+                highlight: false,
+            },
+            FooterEntry {
+                name: "Quit".to_string(),
+                shortcut: 'Q',
+                highlight: false,
+            },
         ];
 
         let footer = footer_entries(entries);
@@ -115,13 +131,18 @@ impl HistoryPage {
         let inner = render_box("History", rect, frame);
 
         let rows: Vec<Row> = app
-            .history
+            .history()
             .iter()
-            .map(|entry| {
+            .enumerate()
+            .map(|(index, entry)| {
+                let duration = app.history_duration(index);
                 Row::new(vec![
                     Cell::from(Span::raw(entry.round_number.to_string())),
-                    Cell::from(Span::raw(format!("{:.1}", entry.average))),
-                    Cell::from(Span::raw(format_duration(&entry.length))),
+                    Cell::from(Span::raw(format!(
+                        "{:.1}",
+                        entry.average.unwrap_or(f32::NAN)
+                    ))),
+                    Cell::from(Span::raw(format_duration(&duration))),
                 ])
             })
             .collect();
@@ -185,64 +206,4 @@ fn render_player_list(entry: &HistoryEntry, rect: Rect, frame: &mut Frame) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::app::tests::create_test_app;
-    use crate::ui::tests::{send_input, tick};
-    use crate::web::client::tests::LocalMockPokerClient;
-    use crate::web::client::PokerClient;
-    use insta::assert_snapshot;
-    use ratatui::backend::TestBackend;
-
-    #[test]
-    fn test_render_page() {
-        let mut page = HistoryPage::new();
-        let mut app = create_test_app(Box::new(LocalMockPokerClient::new("test")));
-        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
-        tick(&mut terminal, &mut page, &mut app);
-
-        assert_snapshot!("Empty history page", terminal.backend());
-    }
-
-    #[test]
-    fn test_render_page_with_history() {
-        let mut page = HistoryPage::new();
-        let mut client = LocalMockPokerClient::new("Alice");
-
-        // Add other players
-        let bob_id = client.add_user("Bob");
-        let charlie_id = client.add_user("Charlie");
-
-        // First round: Everyone votes numbers
-        client.vote(Some("5")).unwrap();
-        client.user_vote(&bob_id, Some("3"));
-        client.user_vote(&charlie_id, Some("8"));
-        client.reveal().unwrap();
-        client.reset().unwrap();
-
-        // Second round: Mix of numbers and special votes
-        client.vote(Some("13")).unwrap();
-        client.user_vote(&bob_id, Some("?"));
-        client.user_vote(&charlie_id, Some("8"));
-        client.reveal().unwrap();
-        client.reset().unwrap();
-
-        // Third round: Some abstentions
-        client.vote(Some("3")).unwrap();
-        client.user_vote(&bob_id, Some("5"));
-        // Charlie doesn't vote
-        client.reveal().unwrap();
-        client.reset().unwrap();
-
-        let mut app = create_test_app(Box::new(client));
-
-        // Render and snapshot the history page
-        let mut terminal = Terminal::new(TestBackend::new(90, 30)).unwrap();
-        tick(&mut terminal, &mut page, &mut app);
-
-        assert_snapshot!("History page with multiple rounds", terminal.backend());
-
-        send_input(KeyCode::Down, &mut terminal, &mut page, &mut app);
-        assert_snapshot!("History page after pressing down", terminal.backend());
-    }
-}
+mod tests;

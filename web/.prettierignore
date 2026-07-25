@@ -1,0 +1,17 @@
+node_modules
+coverage
+dist
+src/generated
+apps/*/dist
+apps/*/node_modules
+apps/*/playwright-report
+apps/*/public/ort
+apps/site/public/models/digits-crnn.json
+apps/*/test-results
+packages/*/coverage
+packages/*/dist
+packages/*/node_modules
+packages/*/src/generated
+packages/*/*.tgz
+pnpm-lock.yaml
+*.tgz

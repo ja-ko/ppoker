@@ -1,0 +1,41 @@
+{
+  "name": "@ppoker/site",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "validate:endpoint": "node scripts/validate-endpoint.mjs",
+    "prepare:ort": "node scripts/prepare-ort-assets.mjs",
+    "predev": "pnpm run prepare:ort",
+    "dev": "pnpm --filter @ppoker/web-client run build && vite",
+    "prebuild": "pnpm run prepare:ort",
+    "build": "tsc --noEmit && vite build",
+    "pretest:e2e": "pnpm run prepare:ort",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@noble/hashes": "2.2.0",
+    "@ppoker/web-client": "workspace:*",
+    "motion": "12.42.2",
+    "onnxruntime-web": "1.27.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-router": "7.18.1",
+    "uqr": "0.1.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1",
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/react": "16.3.2",
+    "@types/node": "26.1.1",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.3",
+    "jsdom": "29.1.1",
+    "typescript": "5.9.3",
+    "vite": "8.1.4",
+    "vitest": "4.1.10"
+  }
+}

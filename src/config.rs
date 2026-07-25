@@ -8,7 +8,7 @@ use figment::Figment;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Parser)]
+#[derive(Default, Serialize, Parser)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
     /// Name to use for this session.
@@ -47,20 +47,6 @@ pub struct Cli {
     pub(crate) changelog_from: Option<String>,
 }
 
-impl Default for Cli {
-    fn default() -> Self {
-        Self {
-            name: None,
-            server: None,
-            room: None,
-            disable_auto_reveal: false,
-            disable_notifications: false,
-            skip_update_check: false,
-            changelog_from: None,
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
     pub name: String,
@@ -91,7 +77,7 @@ impl Default for Config {
 }
 
 fn create_projdirs() -> ProjectDirs {
-    return ProjectDirs::from("dev.jko", "", "ppoker").expect("Failed to get OS directories");
+    ProjectDirs::from("dev.jko", "", "ppoker").expect("Failed to get OS directories")
 }
 
 pub fn get_configdir() -> PathBuf {
@@ -100,7 +86,7 @@ pub fn get_configdir() -> PathBuf {
     if !dir.exists() {
         fs::create_dir_all(dir).expect("Failed to create config directory");
     }
-    return dir.to_owned();
+    dir.to_owned()
 }
 
 pub fn get_logdir() -> PathBuf {
@@ -108,7 +94,7 @@ pub fn get_logdir() -> PathBuf {
     if !dir.exists() {
         fs::create_dir_all(&dir).expect("Failed to create log directory");
     }
-    return dir.to_owned();
+    dir.to_owned()
 }
 
 fn parse_cli() -> Cli {
@@ -131,82 +117,11 @@ pub fn get_config() -> Config {
         .merge(Serialized::defaults(parse_cli()));
 
     let result = figment.extract();
-    return result.unwrap_or_else(|e| {
+    result.unwrap_or_else(|e| {
         error!("Failed to load config: {}", e);
         Config::default()
-    });
+    })
 }
 
 #[cfg(test)]
-mod config_tests {
-    use super::*;
-    use std::fs::File;
-    use std::io::Write;
-    use temp_env::with_var;
-    use tempfile::TempDir;
-    
-    #[test]
-    fn test_get_config_from_toml() {
-        // Create temporary directory for test
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-
-        // Set HOME to our temporary directory for this test
-        with_var("HOME", Some(temp_dir.path().to_str().unwrap()), || {
-            // Create config directory
-            let config_dir = get_configdir();
-            std::fs::create_dir_all(&config_dir).expect("Failed to create config directory");
-
-            // Create config file
-            let config_file = config_dir.join("config.toml");
-            let mut file = File::create(&config_file).expect("Failed to create config file");
-
-            // Write test configuration
-            writeln!(file, "name = \"NebulaNomad\"").unwrap();
-            writeln!(file, "server = \"wss://test.example.com/\"").unwrap();
-            writeln!(file, "room = \"test-room\"").unwrap();
-            writeln!(file, "skip_update_check = true").unwrap();
-            file.flush().unwrap();
-
-            // Get config
-            let config = get_config();
-
-            // Verify values are loaded from TOML
-            assert_eq!(config.name, "NebulaNomad");
-            assert_eq!(config.server, "wss://test.example.com/");
-            assert_eq!(config.room, "test-room");
-            assert_eq!(config.skip_update_check, true);
-            assert_eq!(config.disable_notifications, false); // Default value not overridden
-        });
-    }
-
-    #[test]
-    fn test_env_vars_override_toml() {
-        // Create temporary directory for test
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-
-        // Set HOME and env vars for the test
-        with_var("HOME", Some(temp_dir.path().to_str().unwrap()), || {
-            with_var("PPOKER_NAME", Some("EnvUser"), || {
-                with_var("PPOKER_SERVER", Some("wss://env.example.com/"), || {
-                    // Create config directory and file
-                    let config_dir = get_configdir();
-                    std::fs::create_dir_all(&config_dir).expect("Failed to create config directory");
-                    let config_file = config_dir.join("config.toml");
-                    let mut file = File::create(&config_file).expect("Failed to create config file");
-
-                    // Write TOML configuration
-                    writeln!(file, "name = \"TomlUser\"").unwrap();
-                    writeln!(file, "server = \"wss://toml.example.com/\"").unwrap();
-                    file.flush().unwrap();
-
-                    // Get config
-                    let config = get_config();
-
-                    // Verify env vars override TOML
-                    assert_eq!(config.name, "EnvUser");
-                    assert_eq!(config.server, "wss://env.example.com/");
-                });
-            });
-        });
-    }
-}
+mod config_tests;

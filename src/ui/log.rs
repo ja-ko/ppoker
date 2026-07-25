@@ -78,7 +78,7 @@ impl Page for LogPage {
     }
 
     fn input(&mut self, _app: &mut App, event: KeyEvent) -> AppResult<UIAction> {
-        match event.code.into() {
+        match event.code {
             KeyCode::Char('q') => return Ok(UIAction::Quit),
             KeyCode::Char(' ') => self.state.transition(TuiWidgetEvent::SpaceKey),
             KeyCode::Esc => self.state.transition(TuiWidgetEvent::EscapeKey),
@@ -93,7 +93,7 @@ impl Page for LogPage {
             KeyCode::Char('l') => return Ok(UIAction::ChangeView(UiPage::Voting)),
             _ => {}
         }
-        return Ok(UIAction::Continue);
+        Ok(UIAction::Continue)
     }
 }
 

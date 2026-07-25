@@ -5,8 +5,8 @@ use std::process;
 
 use crate::config::Config;
 use log::{debug, error, info};
-use self_update::{cargo_crate_version, Extract};
 use self_update::update::{Release, ReleaseAsset, ReleaseUpdate};
+use self_update::{cargo_crate_version, Extract};
 use semver::Version;
 use snafu::Snafu;
 
@@ -32,7 +32,7 @@ pub enum UpdateError {
     #[snafu(display("The current release does not contain a binary for this target."))]
     NoCompatibleAssetFound,
     #[snafu(display("An unknown error occured during the update: {error}"))]
-    UpdateError { error: self_update::errors::Error },
+    Backend { error: self_update::errors::Error },
     #[snafu(display("An io error occured during the update: {error}"))]
     Io { error: std::io::Error },
     #[snafu(display("Failed to parse semver: {error}"))]
@@ -41,7 +41,7 @@ pub enum UpdateError {
 
 impl From<self_update::errors::Error> for UpdateError {
     fn from(value: self_update::errors::Error) -> Self {
-        UpdateError::UpdateError { error: value }
+        UpdateError::Backend { error: value }
     }
 }
 impl From<std::io::Error> for UpdateError {
@@ -166,7 +166,7 @@ impl UpdateOperations for DefaultUpdateOperations {
 
 #[cfg_attr(test, automock)]
 pub trait Restarter {
-    fn restart(&self, exe_path: &PathBuf);
+    fn restart(&self, exe_path: &Path);
 }
 
 struct DefaultRestarter;
@@ -178,11 +178,11 @@ impl Default for DefaultRestarter {
 }
 
 impl Restarter for DefaultRestarter {
-    fn restart(&self, exe_path: &PathBuf) {
+    fn restart(&self, exe_path: &Path) {
         println!("{}", exe_path.to_str().unwrap());
         Exec::cmd(exe_path)
             .arg("--changelog-from")
-            .arg(format!("{}", cargo_crate_version!()))
+            .arg(cargo_crate_version!())
             .detached()
             .start()
             .expect("Failed to start new binary");
@@ -198,8 +198,8 @@ pub fn self_update(config: &Config) -> Result<UpdateResult, UpdateError> {
         &mut stdout(),
         &mut BufReader::new(stdin()),
         &update,
-        &DefaultBinaryOperations::default(),
-        &DefaultRestarter::default(),
+        &DefaultBinaryOperations,
+        &DefaultRestarter,
     )
 }
 
@@ -237,7 +237,7 @@ fn self_update_impl<W: std::io::Write, R: std::io::BufRead>(
             latest_release.name,
             update.target().as_str()
         );
-        return Err(UpdateError::NoCompatibleAssetFound.into());
+        return Err(UpdateError::NoCompatibleAssetFound);
     };
 
     writeln!(stdout, "\nNew release found:")?;
@@ -270,7 +270,10 @@ fn self_update_impl<W: std::io::Write, R: std::io::BufRead>(
             return Err(UpdateError::UserCanceled);
         }
     } else {
-        writeln!(stdout, "\nAutomatic update enabled, proceeding with update...")?;
+        writeln!(
+            stdout,
+            "\nAutomatic update enabled, proceeding with update..."
+        )?;
         info!("Automatic update in progress");
     }
 
@@ -302,150 +305,5 @@ fn self_update_impl<W: std::io::Write, R: std::io::BufRead>(
     Ok(result)
 }
 
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use mockall::predicate;
-    use std::io::Cursor;
-
-    fn mock_update(current_version: &str, latest_version: &str) -> MockUpdateOperations {
-        let target = self_update::get_target().to_owned();
-        let latest_version = latest_version.to_owned();
-        let mut update = MockUpdateOperations::new();
-        update
-            .expect_current_version()
-            .return_const(current_version.to_owned());
-        update.expect_target().return_const(target.clone());
-        update
-            .expect_bin_name()
-            .return_const(GITHUB_REPO.to_owned());
-        update
-            .expect_bin_install_path()
-            .returning(|| std::env::current_exe().unwrap());
-        update.expect_get_latest_release().return_once(move || {
-            Ok(Release {
-                name: "Test release".to_owned(),
-                version: latest_version,
-                assets: vec![ReleaseAsset {
-                    download_url: "https://example.com/ppoker.tar.gz".to_owned(),
-                    name: format!("ppoker-{target}.tar.gz"),
-                }],
-                ..Release::default()
-            })
-        });
-        update
-    }
-
-    #[test]
-    fn test_self_update() {
-        let mut mock_config = Config::default();
-        mock_config.keep_backup_on_update = true;
-
-        let mut output = Vec::new();
-
-        let mut mock_update = mock_update("0.0.1", "1.0.0");
-        mock_update
-            .expect_download_and_extract()
-            .times(1)
-            .returning(|_, tmp_dir, filename| {
-                let binary = tmp_dir.join(filename);
-                fs::create_dir_all(binary.parent().unwrap())?;
-                fs::write(&binary, b"test binary")?;
-                Ok(binary)
-            });
-        let mut mock_binary_ops = MockBinaryOperations::default();
-        let mut mock_restarter = MockRestarter::new();
-        let mut input = Cursor::new("y\n");
-        let exe_path = std::env::current_exe().unwrap();
-
-        mock_binary_ops
-            .expect_backup_binary()
-            .times(1)
-            .returning(|_| Ok(()));
-
-        mock_binary_ops
-            .expect_self_replace()
-            .times(1)
-            .with(predicate::function(|p: &Path| {
-                p.exists() && p.metadata().map(|m| m.len() > 0).unwrap_or(false)
-            }))
-            .returning(|_| Ok(()));
-
-        // Expect restart to be called exactly once with the correct executable path
-        mock_restarter
-            .expect_restart()
-            .times(1)
-            .with(predicate::eq(exe_path))
-            .returning(|_| ());
-
-        let result = self_update_impl(
-            &mock_config,
-            &mut output,
-            &mut input,
-            &mock_update,
-            &mock_binary_ops,
-            &mock_restarter,
-        );
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), UpdateResult::Updated);
-
-        let output_str = String::from_utf8(output).unwrap();
-        assert!(output_str.contains("Do you want to continue?"));
-    }
-
-    #[test]
-    fn test_self_update_up_to_date() {
-        let mock_config = Config::default();
-        let mut output = Vec::new();
-
-        let mock_update = mock_update("999.0.0", "1.0.0");
-        let mock_binary_ops = MockBinaryOperations::default();
-        let mock_restarter = MockRestarter::new();
-        let mut input = Cursor::new("");
-
-        let result = self_update_impl(
-            &mock_config,
-            &mut output,
-            &mut input,
-            &mock_update,
-            &mock_binary_ops,
-            &mock_restarter,
-        );
-
-        assert_eq!(result.unwrap(), UpdateResult::UpToDate);
-
-        let output_str = String::from_utf8(output).unwrap();
-        assert!(output_str.is_empty());
-    }
-
-    #[test]
-    fn test_self_update_user_canceled() {
-        let mock_config = Config::default();
-        let mut output = Vec::new();
-
-        let mock_update = mock_update("0.0.1", "1.0.0");
-        let mut mock_binary_ops = MockBinaryOperations::default();
-        mock_binary_ops
-            .expect_self_replace()
-            .times(0)
-            .returning(|_| Ok(()));
-
-        let mock_restarter = MockRestarter::new();
-        let mut input = Cursor::new("n\n");
-
-        let result = self_update_impl(
-            &mock_config,
-            &mut output,
-            &mut input,
-            &mock_update,
-            &mock_binary_ops,
-            &mock_restarter,
-        );
-
-        assert!(matches!(result, Err(UpdateError::UserCanceled)));
-
-        let output_str = String::from_utf8(output).unwrap();
-        assert!(output_str.contains("Do you want to continue?"));
-    }
-}
+mod tests;
