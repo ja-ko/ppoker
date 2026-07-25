@@ -4,6 +4,7 @@ export type {
   InkPadHandle,
   InkPadProps,
   InkStats,
+  InkSurfaceBounds,
   InkSurfaceSize,
   InkVisualBounds,
   StrokeCancellationReason,

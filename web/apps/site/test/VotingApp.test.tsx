@@ -24,6 +24,12 @@ let testVisualBounds: InkVisualBounds | null = null;
 const getCanonicalInkLocus = vi.fn<InkPadHandle["getCanonicalInkLocus"]>(
   () => null,
 );
+const getSurfaceBounds = vi.fn<InkPadHandle["getSurfaceBounds"]>(() => ({
+  height: 640,
+  left: 0,
+  top: 0,
+  width: 320,
+}));
 
 vi.mock("../src/voting/handwriting/InkPad", async () => {
   const { forwardRef, useImperativeHandle } = await import("react");
@@ -39,6 +45,7 @@ vi.mock("../src/voting/handwriting/InkPad", async () => {
         getLatestPointTime: () => Date.now(),
         getStats: () => ({ pointCount: 4, strokeCount: 1 }),
         getStrokes: () => [],
+        getSurfaceBounds,
         getVisualBounds: () => testVisualBounds,
         isPointerActive: () => false,
         rasterize: () => testRaster,
@@ -638,7 +645,7 @@ describe("VotingApp phase actions", () => {
 });
 
 describe("VotingApp handwriting command boundaries", () => {
-  it("marks only committed handwriting as the handwritten vote source", async () => {
+  it("uses the same result font class for handwriting and card votes", async () => {
     testRaster = raster();
     const runtime = createRuntime((_input, revision) =>
       Promise.resolve(recognition("8", revision)),
@@ -654,7 +661,7 @@ describe("VotingApp handwriting command boundaries", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(675);
     });
-    expect(screen.getByLabelText("Current vote 8").className).toContain(
+    expect(screen.getByLabelText("Current vote 8").className).not.toContain(
       "vote-result--handwritten",
     );
 
@@ -735,10 +742,6 @@ describe("VotingApp handwriting command boundaries", () => {
       surfaceWidth: 320,
       width: 80,
     };
-    getCanonicalInkLocus.mockReturnValue({
-      center: { x: 80, y: 160 },
-      coordinateSpace: { height: 640, width: 320 },
-    });
     const runtime = createRuntime((_input, revision) =>
       Promise.resolve(recognition("8", revision)),
     );
@@ -771,9 +774,8 @@ describe("VotingApp handwriting command boundaries", () => {
     expect(client.vote.mock.calls.map(([card]) => card)).toEqual(["5", "8"]);
     expect(screen.getByRole("button", { name: "Reveal in 3" })).toBeTruthy();
     const stage = screen.getByTestId("drawing-stage");
-    expect(stage.style.getPropertyValue("--vote-ink-origin-x")).toBe("25%");
-    expect(stage.style.getPropertyValue("--vote-ink-translate-x")).toBe("25%");
-    expect(getCanonicalInkLocus).toHaveBeenCalled();
+    expect(stage.style.getPropertyValue("--vote-ink-origin-x")).toBe("");
+    expect(getCanonicalInkLocus).not.toHaveBeenCalled();
   });
 
   it("hands off an already-effective handwritten vote without duplicate command", async () => {
@@ -915,6 +917,7 @@ beforeEach(() => {
   testVisualBounds = null;
   getCanonicalInkLocus.mockReset();
   getCanonicalInkLocus.mockReturnValue(null);
+  getSurfaceBounds.mockClear();
 });
 
 afterEach(() => {

@@ -21,6 +21,7 @@ import {
   parseVotingConfig,
   type ConfigError,
 } from "./config";
+import { useScreenWakeLock } from "./voting/screen-wake-lock";
 import { VotingApp } from "./voting/VotingApp";
 import { VotingStatus } from "./voting/VotingStatus";
 import type {
@@ -269,6 +270,8 @@ function VotingScreen({
 }: {
   readonly sessions: VotingSessionManager;
 }) {
+  const isPresent = useIsPresent();
+  useScreenWakeLock(isPresent);
   const data = useLoaderData<RoomRouteData>();
   const session = useSyncExternalStore(
     sessions.subscribe,

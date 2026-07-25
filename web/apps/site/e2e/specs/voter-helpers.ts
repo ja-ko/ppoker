@@ -318,7 +318,7 @@ export async function canvasInkCenter(page: Page): Promise<{
   readonly y: number;
 }> {
   return page
-    .locator("canvas.vote-ink")
+    .locator("canvas.ink-canvas--base")
     .evaluate((canvas: HTMLCanvasElement) => {
       const context = canvas.getContext("2d");
       if (context === null) {

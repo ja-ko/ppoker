@@ -51,6 +51,7 @@ beforeEach(() => {
         clearRect: vi.fn(),
         drawImage: vi.fn(),
         fill: vi.fn(),
+        fillRect: vi.fn(),
         moveTo: vi.fn(),
         quadraticCurveTo: vi.fn(),
         restore: vi.fn(),
@@ -196,6 +197,12 @@ describe("InkPad surface API", () => {
       centerY: 130,
       surfaceWidth: 320,
       surfaceHeight: 640,
+    });
+    expect(ref.current?.getSurfaceBounds()).toEqual({
+      height: 640,
+      left: 0,
+      top: 0,
+      width: 320,
     });
     expect(ref.current?.getCanonicalInkLocus()).toEqual({
       center: { x: 70, y: 130 },
