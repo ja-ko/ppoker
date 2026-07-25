@@ -1,7 +1,4 @@
 node_modules
-coverage
-dist
-src/generated
 apps/*/dist
 apps/*/node_modules
 apps/*/playwright-report

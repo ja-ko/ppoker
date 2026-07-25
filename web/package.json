@@ -23,8 +23,7 @@
     "test:wasm:live": "pnpm --filter @ppoker/web-client run test:wasm:live",
     "build": "pnpm --recursive --if-present run build",
     "package:verify": "pnpm --filter @ppoker/web-client run package:verify",
-    "check": "pnpm --filter @ppoker/web-client run check",
-    "check:coverage": "pnpm --filter @ppoker/web-client run check:coverage"
+    "check": "pnpm --filter @ppoker/web-client run check"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

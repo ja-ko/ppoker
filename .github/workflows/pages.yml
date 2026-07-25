@@ -20,7 +20,6 @@ jobs:
   build:
     name: Build site
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -55,7 +54,6 @@ jobs:
   deploy:
     name: Deploy site
     needs: build
-    timeout-minutes: 10
     permissions:
       pages: write
       id-token: write

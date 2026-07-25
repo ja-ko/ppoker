@@ -2,10 +2,6 @@ import { defineConfig, devices } from "@playwright/test";
 
 const port = 4321;
 const baseURL = `http://127.0.0.1:${port.toString()}`;
-const clientBuild =
-  process.env["PPOKER_E2E_REUSE_CLIENT_BUILD"] === "1"
-    ? ""
-    : "pnpm --filter @ppoker/web-client run build && ";
 
 export default defineConfig({
   expect: { timeout: 5_000 },
@@ -35,7 +31,7 @@ export default defineConfig({
     video: "on-first-retry",
   },
   webServer: {
-    command: `${clientBuild}pnpm exec vite --host 127.0.0.1 --port ${port.toString()} --strictPort`,
+    command: `pnpm --filter @ppoker/web-client run build && pnpm exec vite --host 127.0.0.1 --port ${port.toString()} --strictPort`,
     reuseExistingServer: false,
     timeout: 120_000,
     url: `${baseURL}/e2e/harness/`,

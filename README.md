@@ -1,6 +1,6 @@
 # ppoker - Planning Poker in your terminal
 
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/ja-ko/ppoker/ci.yml)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/ja-ko/ppoker/build.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/ja-ko/ppoker)](https://github.com/ja-ko/ppoker/releases)
 [![codecov](https://codecov.io/gh/ja-ko/ppoker/graph/badge.svg?token=FGE02UNPW4)](https://codecov.io/gh/ja-ko/ppoker)
 ![GitHub License](https://img.shields.io/github/license/ja-ko/ppoker?color=%23003399)

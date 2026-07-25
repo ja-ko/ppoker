@@ -28,8 +28,7 @@
     "test:wasm:live": "node ./scripts/test-wasm.mjs --live",
     "build": "node ./scripts/build.mjs",
     "package:verify": "node ./scripts/verify-package.mjs",
-    "check": "node ./scripts/check.mjs",
-    "check:coverage": "node ./scripts/check.mjs --coverage"
+    "check": "node ./scripts/check.mjs"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0"
