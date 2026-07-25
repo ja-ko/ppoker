@@ -52,7 +52,7 @@ import {
   type PendingLocalVoteIntent,
 } from "./local-vote-commands";
 import {
-  fitRectToRect,
+  fitRectPreservingAspect,
   type InkMorphTransform,
   type MorphRect,
 } from "./handwriting/ink/morph";
@@ -184,7 +184,7 @@ export function VotingRoom({
         setMorphGeometry(
           source === null || target === null
             ? null
-            : fitRectToRect(source, target),
+            : fitRectPreservingAspect(source, target),
         );
       }
       return;
@@ -647,10 +647,9 @@ export function VotingRoom({
       : ({
           "--vote-ink-origin-x": `${String(morphGeometry.originX)}px`,
           "--vote-ink-origin-y": `${String(morphGeometry.originY)}px`,
+          "--vote-ink-scale": String(morphGeometry.scale),
           "--vote-ink-translate-x": `${String(morphGeometry.translateX)}px`,
           "--vote-ink-translate-y": `${String(morphGeometry.translateY)}px`,
-          "--vote-ink-scale-x": String(morphGeometry.scaleX),
-          "--vote-ink-scale-y": String(morphGeometry.scaleY),
         } as CSSProperties);
   const connectionLabel = snapshot.status === "open" ? "live" : snapshot.status;
   const renderedVote =
@@ -686,7 +685,9 @@ export function VotingRoom({
       (Math.abs(pending.bounds.surfaceWidth - surface.width) >= 0.5 ||
         Math.abs(pending.bounds.surfaceHeight - surface.height) >= 0.5);
     setMorphGeometry(
-      source === null || target === null ? null : fitRectToRect(source, target),
+      source === null || target === null
+        ? null
+        : fitRectPreservingAspect(source, target),
     );
   }, [
     voteInput.effectMotion,

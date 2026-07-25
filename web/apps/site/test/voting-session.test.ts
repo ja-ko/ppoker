@@ -106,6 +106,69 @@ describe("voting session manager", () => {
     expect(sessions.getSnapshot()).toEqual({ status: "idle" });
   });
 
+  it("reconnects with a fresh lifecycle while preserving the room and voter name", async () => {
+    const firstClient = createFakeClient().client;
+    const secondClient = createFakeClient().client;
+    const secondStart = deferred<ClientStartResult>();
+    const first = fakeLifecycle(
+      Promise.resolve({ client: firstClient, connectError: null }),
+    );
+    const second = fakeLifecycle(secondStart.promise);
+    const lifecycles = [first, second];
+    const firstUnbind = vi.fn<() => void>();
+    const secondUnbind = vi.fn<() => void>();
+    const unbinds = [firstUnbind, secondUnbind];
+    let voterName = "Calm Otter";
+    const nameSession = fakeNameSession(() => voterName);
+    const createLifecycle = vi.fn(
+      () => lifecycles.shift() as PokerClientLifecycle,
+    );
+    const sessions = createManager({
+      bindLifecycle: () => unbinds.shift() as () => void,
+      createLifecycle,
+      createNameSession: () => nameSession,
+    });
+    sessions.start(planning);
+    await settle();
+    expect(sessions.getSnapshot()).toMatchObject({
+      client: firstClient,
+      status: "ready",
+    });
+
+    voterName = "Bright Fox";
+    sessions.reconnect();
+    sessions.reconnect();
+
+    expect(first.close).toHaveBeenCalledOnce();
+    expect(firstUnbind).toHaveBeenCalledOnce();
+    expect(createLifecycle).toHaveBeenCalledTimes(2);
+    expect(createLifecycle).toHaveBeenNthCalledWith(2, {
+      endpoint: planning.endpoint,
+      name: "Bright Fox",
+      role: "participant",
+      room: planning.room,
+    });
+    expect(nameSession.load).toHaveBeenCalledTimes(2);
+    expect(sessions.getSnapshot()).toMatchObject({
+      initialName: "Bright Fox",
+      room: planning.room,
+      status: "starting",
+    });
+
+    secondStart.resolve({ client: secondClient, connectError: null });
+    await settle();
+    expect(sessions.getSnapshot()).toMatchObject({
+      client: secondClient,
+      initialName: "Bright Fox",
+      room: planning.room,
+      status: "ready",
+    });
+
+    sessions.dispose();
+    expect(second.close).toHaveBeenCalledOnce();
+    expect(secondUnbind).toHaveBeenCalledOnce();
+  });
+
   it("ignores late success and failure from replaced or closed sessions", async () => {
     const first = deferred<ClientStartResult>();
     const second = deferred<ClientStartResult>();

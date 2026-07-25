@@ -44,13 +44,18 @@ test("iPhone handwriting header and countdown text remain interactive and contai
           x: headingBounds.left + headingBounds.width / 2,
           y: headingBounds.top + headingBounds.height / 2,
         },
+        headingHeight: headingBounds.height,
         headingHitsSurface: hit === surface || surface.contains(hit),
         headingPointerEvents: getComputedStyle(heading).pointerEvents,
+        headingTop: Math.abs(headingBounds.top - stageBounds.top),
+        stageHeight: stageBounds.height,
       };
     });
   expect(geometry.headingChildrenIgnorePointers).toBe(true);
   expect(geometry.headingHitsSurface).toBe(true);
   expect(geometry.headingPointerEvents).toBe("none");
+  expect(geometry.headingTop).toBeLessThanOrEqual(1.5);
+  expect(geometry.headingHeight).toBeLessThan(geometry.stageHeight / 2);
   expect(Object.values(geometry.edges).every((gap) => gap <= 1.5)).toBe(true);
 
   await page.touchscreen.tap(
@@ -89,6 +94,42 @@ test("iPhone handwriting header and countdown text remain interactive and contai
     right: true,
     top: true,
   });
+});
+
+test("iPhone commit morph keeps the painted digit aspect ratio", async ({
+  page,
+}) => {
+  await gotoVoterFixture(page, "playing");
+  await drawCard(page, "5");
+  const drawingStage = page.getByTestId("drawing-stage");
+  await expect(drawingStage).toHaveClass(/vote-draw-stage--committing/u);
+
+  const scales = await page.locator(".ink-visual").evaluate((visual) => {
+    const animation = visual.getAnimations()[0];
+    if (animation === undefined) {
+      throw new Error("Commit transform animation is missing.");
+    }
+    const state = {
+      currentTime: animation.currentTime,
+      playState: animation.playState,
+    };
+    animation.pause();
+    animation.currentTime = 460;
+    const matrix = new DOMMatrixReadOnly(getComputedStyle(visual).transform);
+    const result = {
+      x: Math.hypot(matrix.a, matrix.b),
+      y: Math.hypot(matrix.c, matrix.d),
+    };
+    animation.currentTime = state.currentTime;
+    if (state.playState === "running") {
+      animation.play();
+    }
+    return result;
+  });
+
+  expect(scales.x).toBeGreaterThan(0);
+  expect(scales.y).toBeGreaterThan(0);
+  expect(Math.abs(scales.x - scales.y)).toBeLessThanOrEqual(0.001);
 });
 
 test("iPhone touch input stays aligned without document scrolling", async ({

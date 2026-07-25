@@ -38,6 +38,7 @@ export interface VotingSessionManager {
   close(): void;
   dispose(): void;
   readonly getSnapshot: () => VotingSessionSnapshot;
+  readonly reconnect: () => void;
   start(config: VotingConfig): void;
   readonly subscribe: (listener: () => void) => () => void;
 }
@@ -79,6 +80,7 @@ export function createVotingSessionManager(
   let active: ActiveSession | undefined;
   let disposed = false;
   let nameSession: VoterNameSession | undefined;
+  let requestedConfig: VotingConfig | undefined;
   let snapshot: VotingSessionSnapshot = IDLE_SNAPSHOT;
 
   const getSnapshot = (): VotingSessionSnapshot => snapshot;
@@ -115,6 +117,7 @@ export function createVotingSessionManager(
     }
   };
   const close = (): void => {
+    requestedConfig = undefined;
     teardownActive();
     publish(IDLE_SNAPSHOT);
   };
@@ -142,11 +145,16 @@ export function createVotingSessionManager(
     }
     publish(Object.freeze({ error, room: session.room, status: "error" }));
   };
-  const start = (config: VotingConfig): void => {
+  const begin = (config: VotingConfig, replace: boolean): void => {
     if (disposed) {
       return;
     }
-    if (active?.endpoint === config.endpoint && active.room === config.room) {
+    requestedConfig = config;
+    if (
+      !replace &&
+      active?.endpoint === config.endpoint &&
+      active.room === config.room
+    ) {
       return;
     }
 
@@ -204,15 +212,29 @@ export function createVotingSessionManager(
       }
     }
   };
+  const start = (config: VotingConfig): void => {
+    begin(config, false);
+  };
+  const reconnect = (): void => {
+    if (
+      disposed ||
+      requestedConfig === undefined ||
+      snapshot.status === "starting"
+    ) {
+      return;
+    }
+    begin(requestedConfig, true);
+  };
   const dispose = (): void => {
     if (disposed) {
       return;
     }
     disposed = true;
+    requestedConfig = undefined;
     teardownActive();
     publish(IDLE_SNAPSHOT);
     listeners.clear();
   };
 
-  return { close, dispose, getSnapshot, start, subscribe };
+  return { close, dispose, getSnapshot, reconnect, start, subscribe };
 }

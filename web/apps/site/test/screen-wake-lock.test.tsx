@@ -65,6 +65,7 @@ describe("useScreenWakeLock", () => {
       setVisibility("hidden");
       first.releaseFromPlatform();
     });
+    expect(first.release).toHaveBeenCalledOnce();
     expect(request).toHaveBeenCalledOnce();
 
     act(() => {
@@ -169,6 +170,30 @@ describe("useScreenWakeLock", () => {
       expect(request).toHaveBeenCalledTimes(2);
     });
 
+    view.unmount();
+  });
+
+  it("retries a denied initial request from the next user activation", async () => {
+    const sentinel = new FakeWakeLockSentinel();
+    const request = wakeLockRequest();
+    request
+      .mockRejectedValueOnce(new DOMException("Denied", "NotAllowedError"))
+      .mockResolvedValueOnce(asSentinel(sentinel));
+    installWakeLock(request);
+    const view = render(<WakeLockProbe />);
+    await waitFor(() => {
+      expect(request).toHaveBeenCalledOnce();
+    });
+    await act(() => Promise.resolve());
+
+    act(() => {
+      document.dispatchEvent(new Event("pointerup", { bubbles: true }));
+    });
+
+    await waitFor(() => {
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(sentinel.listenerCount).toBe(1);
+    });
     view.unmount();
   });
 

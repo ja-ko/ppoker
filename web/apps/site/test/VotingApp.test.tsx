@@ -97,7 +97,16 @@ describe("VotingApp status shells", () => {
 
   it("unmounts a retained room when the transport closes cleanly", () => {
     const runtime = createRuntime(() => new Promise(() => undefined));
-    const { publish } = renderAppWithRuntime(roomSnapshot(), () => runtime);
+    const onReconnect = vi.fn<() => void>();
+    const { publish } = renderApp(
+      roomSnapshot(),
+      createVoterNameSession({
+        generateName: () => "Calm Otter",
+        storage: null,
+      }),
+      () => runtime,
+      onReconnect,
+    );
 
     act(() => {
       publish(roomSnapshot({ revision: 2, status: "closed" }));
@@ -108,6 +117,42 @@ describe("VotingApp status shells", () => {
     );
     expect(screen.queryByTestId("drawing-stage")).toBeNull();
     expect(runtime.dispose).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    expect(onReconnect).toHaveBeenCalledOnce();
+  });
+
+  it("offers in-place reconnect for terminal transport errors", () => {
+    const onReconnect = vi.fn<() => void>();
+    renderApp(
+      makeSnapshot({
+        status: "closed",
+        terminalError: { code: "Transport", message: "socket lost" },
+      }),
+      undefined,
+      undefined,
+      onReconnect,
+    );
+
+    expect(screen.getByRole("alert").textContent).toContain("socket lost");
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    expect(onReconnect).toHaveBeenCalledOnce();
+  });
+
+  it("offers in-place reconnect when the initial connection fails", () => {
+    const onReconnect = vi.fn<() => void>();
+    renderApp(
+      makeSnapshot({ status: "disconnected" }),
+      undefined,
+      undefined,
+      onReconnect,
+      new Error("WebSocket connection could not be created."),
+    );
+
+    expect(screen.getByRole("alert").textContent).toContain(
+      "WebSocket connection could not be created.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    expect(onReconnect).toHaveBeenCalledOnce();
   });
 
   it("uses assertive atomic announcements for alert status", () => {
@@ -931,6 +976,8 @@ function renderApp(
     storage: null,
   }),
   createRecognitionRuntime: () => RecognitionRuntime = createReadyRuntime,
+  onReconnect = vi.fn<() => void>(),
+  connectError: unknown = null,
 ) {
   const fake = createFakeClient(snapshot);
   render(
@@ -943,10 +990,11 @@ function renderApp(
         setTimeout: (callback, delay) => setTimeout(callback, delay),
       }}
       client={fake.client}
-      connectError={null}
+      connectError={connectError}
       createRecognitionRuntime={createRecognitionRuntime}
       initialName="Calm Otter"
       nameSession={nameSession}
+      onReconnect={onReconnect}
       room="planning"
     />,
   );

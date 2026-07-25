@@ -33,6 +33,7 @@ createRoot(rootElement).render(
       connectError={null}
       initialName={nameSession.load()}
       nameSession={nameSession}
+      onReconnect={() => undefined}
       room="VOTER-E2E"
     />
   </StrictMode>,

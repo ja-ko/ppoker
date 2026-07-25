@@ -8,13 +8,12 @@ export interface MorphRect {
 export interface InkMorphTransform {
   readonly originX: number;
   readonly originY: number;
+  readonly scale: number;
   readonly translateX: number;
   readonly translateY: number;
-  readonly scaleX: number;
-  readonly scaleY: number;
 }
 
-export function fitRectToRect(
+export function fitRectPreservingAspect(
   source: MorphRect,
   target: MorphRect,
 ): InkMorphTransform | null {
@@ -22,19 +21,23 @@ export function fitRectToRect(
     return null;
   }
 
-  const scaleX = target.width / source.width;
-  const scaleY = target.height / source.height;
-  if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY)) {
+  const scale = Math.min(
+    target.width / source.width,
+    target.height / source.height,
+  );
+  if (!Number.isFinite(scale)) {
     return null;
   }
+
+  const targetLeft = target.left + (target.width - source.width * scale) / 2;
+  const targetTop = target.top + (target.height - source.height * scale) / 2;
 
   return {
     originX: source.left,
     originY: source.top,
-    translateX: target.left - source.left,
-    translateY: target.top - source.top,
-    scaleX,
-    scaleY,
+    scale,
+    translateX: targetLeft - source.left,
+    translateY: targetTop - source.top,
   };
 }
 

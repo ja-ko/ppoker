@@ -20,6 +20,7 @@ const surface = (page: Page) =>
   page.getByRole("region", { name: /Handwriting surface/u });
 
 async function commitMorphGeometry(page: Page): Promise<{
+  readonly aspectRatioError: number;
   readonly firstTransform: string | null;
   readonly layerBlend: { readonly base: string; readonly tint: string };
   readonly layerOpacity: {
@@ -28,12 +29,12 @@ async function commitMorphGeometry(page: Page): Promise<{
     readonly start: { readonly base: number; readonly tint: number };
   };
   readonly originError: { readonly left: number; readonly top: number };
-  readonly scale: { readonly x: number; readonly y: number };
+  readonly scale: number;
   readonly targetError: {
-    readonly height: number;
-    readonly left: number;
-    readonly top: number;
-    readonly width: number;
+    readonly centerX: number;
+    readonly centerY: number;
+    readonly overflowHeight: number;
+    readonly overflowWidth: number;
   };
   readonly tint: {
     readonly blue: number;
@@ -72,10 +73,7 @@ async function commitMorphGeometry(page: Page): Promise<{
     };
     const originX = number("--vote-ink-origin-x");
     const originY = number("--vote-ink-origin-y");
-    const translateX = number("--vote-ink-translate-x");
-    const translateY = number("--vote-ink-translate-y");
-    const scaleX = number("--vote-ink-scale-x");
-    const scaleY = number("--vote-ink-scale-y");
+    const scale = number("--vote-ink-scale");
 
     const context = base.getContext("2d");
     const tintContext = tint.getContext("2d");
@@ -151,12 +149,59 @@ async function commitMorphGeometry(page: Page): Promise<{
       throw new Error("Tint canvas is empty.");
     }
 
-    const animation = visual.getAnimations()[0];
-    const effect = animation?.effect;
+    const visualAnimation = visual.getAnimations()[0];
+    const effect = visualAnimation?.effect;
     const firstTransform =
       effect instanceof KeyframeEffect
         ? String(effect.getKeyframes()[0]?.["transform"] ?? "")
         : null;
+    if (visualAnimation === undefined) {
+      throw new Error("Commit transform animation is missing.");
+    }
+    const visualAnimationState = {
+      currentTime: visualAnimation.currentTime,
+      playState: visualAnimation.playState,
+    };
+    visualAnimation.pause();
+    visualAnimation.currentTime = 460;
+    const visualStyle = getComputedStyle(visual);
+    const matrix = new DOMMatrixReadOnly(visualStyle.transform);
+    const transformOrigin = visualStyle.transformOrigin.split(" ");
+    const transformOriginX = Number.parseFloat(transformOrigin[0] ?? "");
+    const transformOriginY = Number.parseFloat(transformOrigin[1] ?? "");
+    if (
+      !Number.isFinite(transformOriginX) ||
+      !Number.isFinite(transformOriginY)
+    ) {
+      throw new Error("Commit transform origin is not finite.");
+    }
+    const projectPoint = (x: number, y: number) => ({
+      x:
+        transformOriginX +
+        matrix.a * (x - transformOriginX) +
+        matrix.c * (y - transformOriginY) +
+        matrix.e,
+      y:
+        transformOriginY +
+        matrix.b * (x - transformOriginX) +
+        matrix.d * (y - transformOriginY) +
+        matrix.f,
+    });
+    const projectedTopLeft = projectPoint(source.left, source.top);
+    const projectedBottomRight = projectPoint(
+      source.left + source.width,
+      source.top + source.height,
+    );
+    const projected = {
+      height: Math.abs(projectedBottomRight.y - projectedTopLeft.y),
+      left: Math.min(projectedTopLeft.x, projectedBottomRight.x),
+      top: Math.min(projectedTopLeft.y, projectedBottomRight.y),
+      width: Math.abs(projectedBottomRight.x - projectedTopLeft.x),
+    };
+    visualAnimation.currentTime = visualAnimationState.currentTime;
+    if (visualAnimationState.playState === "running") {
+      visualAnimation.play();
+    }
     const baseAnimation = base.getAnimations()[0];
     const tintAnimation = tint.getAnimations()[0];
     if (baseAnimation === undefined || tintAnimation === undefined) {
@@ -192,6 +237,9 @@ async function commitMorphGeometry(page: Page): Promise<{
       }
     }
     return {
+      aspectRatioError: Math.abs(
+        projected.width / projected.height - source.width / source.height,
+      ),
       firstTransform,
       layerBlend: {
         base: getComputedStyle(base).mixBlendMode,
@@ -202,12 +250,20 @@ async function commitMorphGeometry(page: Page): Promise<{
         left: Math.abs(originX - source.left),
         top: Math.abs(originY - source.top),
       },
-      scale: { x: scaleX, y: scaleY },
+      scale,
       targetError: {
-        left: Math.abs(originX + translateX - target.left),
-        top: Math.abs(originY + translateY - target.top),
-        width: Math.abs(source.width * scaleX - target.width),
-        height: Math.abs(source.height * scaleY - target.height),
+        centerX: Math.abs(
+          projected.left +
+            projected.width / 2 -
+            (target.left + target.width / 2),
+        ),
+        centerY: Math.abs(
+          projected.top +
+            projected.height / 2 -
+            (target.top + target.height / 2),
+        ),
+        overflowHeight: Math.max(0, projected.height - target.height),
+        overflowWidth: Math.max(0, projected.width - target.width),
       },
       tint: {
         red: tintPixels[tintOffset - 3] ?? 0,
@@ -349,9 +405,11 @@ async function expectUsableHandwritingSurface(page: Page): Promise<void> {
     );
     return {
       bottom: Math.abs(surfaceBounds.bottom - stageBounds.bottom),
+      headingHeight: headingBounds.height,
       headingHitsSurface:
         headingHit === element || element.contains(headingHit),
       headingPointerEvents: getComputedStyle(heading).pointerEvents,
+      headingTop: Math.abs(headingBounds.top - stageBounds.top),
       left: Math.abs(surfaceBounds.left - stageBounds.left),
       right: Math.abs(surfaceBounds.right - stageBounds.right),
       top: Math.abs(surfaceBounds.top - stageBounds.top),
@@ -359,6 +417,8 @@ async function expectUsableHandwritingSurface(page: Page): Promise<void> {
   });
   expect(coverage.headingHitsSurface).toBe(true);
   expect(coverage.headingPointerEvents).toBe("none");
+  expect(coverage.headingTop).toBeLessThanOrEqual(1.5);
+  expect(coverage.headingHeight).toBeLessThan(bounds.height / 2);
   expect(coverage.left).toBeLessThanOrEqual(1.5);
   expect(coverage.right).toBeLessThanOrEqual(1.5);
   expect(coverage.top).toBeLessThanOrEqual(1.5);
@@ -443,7 +503,7 @@ test.describe("voter real recognition", () => {
     await expect
       .poll(() =>
         stage(page).evaluate((element) =>
-          getComputedStyle(element).getPropertyValue("--vote-ink-scale-x"),
+          getComputedStyle(element).getPropertyValue("--vote-ink-scale"),
         ),
       )
       .not.toBe("");
@@ -464,12 +524,12 @@ test.describe("voter real recognition", () => {
     expect(morph.layerOpacity.end).toEqual({ base: 0, tint: 1 });
     expect(morph.originError.left).toBeLessThanOrEqual(1);
     expect(morph.originError.top).toBeLessThanOrEqual(1);
-    expect(morph.targetError.left).toBeLessThanOrEqual(0.5);
-    expect(morph.targetError.top).toBeLessThanOrEqual(0.5);
-    expect(morph.targetError.width).toBeLessThanOrEqual(1);
-    expect(morph.targetError.height).toBeLessThanOrEqual(1);
-    expect(morph.scale.x).toBeGreaterThan(0);
-    expect(morph.scale.y).toBeGreaterThan(0);
+    expect(morph.aspectRatioError).toBeLessThanOrEqual(0.001);
+    expect(morph.targetError.centerX).toBeLessThanOrEqual(0.5);
+    expect(morph.targetError.centerY).toBeLessThanOrEqual(0.5);
+    expect(morph.targetError.overflowWidth).toBeLessThanOrEqual(1);
+    expect(morph.targetError.overflowHeight).toBeLessThanOrEqual(1);
+    expect(morph.scale).toBeGreaterThan(0);
     expect(morph.tint).toEqual({ blue: 31, green: 75, red: 255 });
     await expect(stage(page)).toHaveClass(/vote-draw-stage--committed/u);
     await expect(page.getByLabel("Current vote 5")).toBeVisible();

@@ -4,37 +4,67 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  fitRectToRect,
+  fitRectPreservingAspect,
   type InkMorphTransform,
   type MorphRect,
 } from "../../../src/voting/handwriting/ink/morph";
 
 describe("handwriting commit morph", () => {
-  it("fits the complete source rectangle to the final text rectangle", () => {
+  it("centers the source inside the final text without changing its aspect ratio", () => {
     const source = { left: 40, top: 120, width: 80, height: 100 };
     const target = { left: 130, top: 210, width: 220, height: 70 };
-    const transform = fitRectToRect(source, target);
+    const transform = fitRectPreservingAspect(source, target);
 
     expect(transform).toEqual({
       originX: 40,
       originY: 120,
-      translateX: 90,
+      scale: 0.7,
+      translateX: 172,
       translateY: 90,
-      scaleX: 2.75,
-      scaleY: 0.7,
     });
     if (transform === null) {
       throw new Error("Expected valid morph geometry.");
     }
     expect(projectRect(source, transform, 0)).toEqual(source);
-    expect(projectRect(source, transform, 1)).toEqual(target);
+    const projected = projectRect(source, transform, 1);
+    expect(projected).toEqual({
+      height: 70,
+      left: 212,
+      top: 210,
+      width: 56,
+    });
+    expect(rectCenter(projected)).toEqual(rectCenter(target));
+    expect(projected.width / projected.height).toBe(
+      source.width / source.height,
+    );
   });
 
   it("rejects unavailable and degenerate source or destination geometry", () => {
     const rect = { left: 0, top: 0, width: 10, height: 20 };
-    expect(fitRectToRect({ ...rect, width: 0 }, rect)).toBeNull();
-    expect(fitRectToRect(rect, { ...rect, height: 0 })).toBeNull();
-    expect(fitRectToRect({ ...rect, left: Number.NaN }, rect)).toBeNull();
+    expect(fitRectPreservingAspect({ ...rect, width: 0 }, rect)).toBeNull();
+    expect(fitRectPreservingAspect(rect, { ...rect, height: 0 })).toBeNull();
+    expect(
+      fitRectPreservingAspect({ ...rect, left: Number.NaN }, rect),
+    ).toBeNull();
+  });
+
+  it("centers a width-constrained source without stretching it vertically", () => {
+    const source = { left: 10, top: 20, width: 80, height: 100 };
+    const target = { left: 100, top: 200, width: 50, height: 200 };
+    const transform = fitRectPreservingAspect(source, target);
+    if (transform === null) {
+      throw new Error("Expected valid morph geometry.");
+    }
+
+    expect(transform.scale).toBe(0.625);
+    const projected = projectRect(source, transform, 1);
+    expect(projected).toEqual({
+      height: 62.5,
+      left: 100,
+      top: 268.75,
+      width: 50,
+    });
+    expect(rectCenter(projected)).toEqual(rectCenter(target));
   });
 
   it("keeps the glyph appearance animation and morph effect contract", async () => {
@@ -63,9 +93,7 @@ describe("handwriting commit morph", () => {
     expect(commit).toContain("filter: blur(4px);");
     expect(commit).toContain("opacity: 0.72;");
     expect(commit).toContain("opacity: 0;");
-    expect(commit).toContain(
-      "scale(var(--vote-ink-scale-x, 1), var(--vote-ink-scale-y, 1))",
-    );
+    expect(commit).toContain("scale(var(--vote-ink-scale, 1))");
     expect(commit).not.toContain("scale(1.2)");
     expect(commit).not.toContain("scale(1.38)");
     expect(keyframes(css, "vote-ink-light-out")).toContain(`from {
@@ -93,7 +121,9 @@ describe("handwriting commit morph", () => {
     expect(css).toMatch(
       /\.vote-route \.ink-surface \{[\s\S]*?position: absolute;[\s\S]*?inset: 0;/u,
     );
-    expect(css).toMatch(/\.vote-draw-heading \{[\s\S]*?pointer-events: none;/u);
+    expect(css).toMatch(
+      /\.vote-draw-heading \{[\s\S]*?position: absolute;[\s\S]*?top: 0;[\s\S]*?pointer-events: none;/u,
+    );
     expect(inkPad).toContain('tintContext.fillStyle = "#ff4b1f";');
   });
 });
@@ -103,21 +133,28 @@ function projectRect(
   transform: InkMorphTransform,
   progress: number,
 ): MorphRect {
-  const scaleX = 1 + (transform.scaleX - 1) * progress;
-  const scaleY = 1 + (transform.scaleY - 1) * progress;
+  const scale = 1 + (transform.scale - 1) * progress;
   const translateX = transform.translateX * progress;
   const translateY = transform.translateY * progress;
   return {
     left:
       transform.originX +
       translateX +
-      (source.left - transform.originX) * scaleX,
+      (source.left - transform.originX) * scale,
     top:
-      transform.originY +
-      translateY +
-      (source.top - transform.originY) * scaleY,
-    width: source.width * scaleX,
-    height: source.height * scaleY,
+      transform.originY + translateY + (source.top - transform.originY) * scale,
+    width: source.width * scale,
+    height: source.height * scale,
+  };
+}
+
+function rectCenter(rect: MorphRect): {
+  readonly x: number;
+  readonly y: number;
+} {
+  return {
+    x: rect.left + rect.width / 2,
+    y: rect.top + rect.height / 2,
   };
 }
 
