@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use ppoker_core::client::{ClientError, ClientSnapshot, TransportEvent};
 use ppoker_core::models::{
-    GamePhase, HistoryEntry, LogEntry, LogLevel, LogSource, Player, Room, UserType, Vote, VoteData,
+    GamePhase, HistoryEntry, LogEntry, LogLevel, LogSource, Player, Room, RoomEvent,
+    RoomEventEntry, UserType, Vote, VoteData,
 };
 
 use super::*;
@@ -23,7 +24,7 @@ impl Clock for ManualClock {
 #[derive(Default)]
 struct FakeTransportState {
     events: Option<EventSink>,
-    sent: usize,
+    sent: Vec<String>,
     closes: usize,
 }
 
@@ -34,8 +35,8 @@ impl Transport for FakeTransport {
         None
     }
 
-    fn send_text(&mut self, _message: String) -> Result<(), String> {
-        self.0.borrow_mut().sent += 1;
+    fn send_text(&mut self, message: String) -> Result<(), String> {
+        self.0.borrow_mut().sent.push(message);
         Ok(())
     }
 
@@ -75,6 +76,21 @@ fn invalid_options(options: ClientOptions) -> InvalidOptionsError {
         .expect("options should be rejected")
 }
 
+fn facade_with_state() -> (WasmPokerClient, Rc<RefCell<FakeTransportState>>) {
+    let state = Rc::new(RefCell::new(FakeTransportState::default()));
+    let transport_state = state.clone();
+    let facade = WasmPokerClient::from_options(
+        options(ConnectionRole::Participant),
+        Rc::new(ManualClock::default()),
+        Box::new(move |_, events| {
+            transport_state.borrow_mut().events = Some(events);
+            Ok(Box::new(FakeTransport(transport_state.clone())))
+        }),
+    )
+    .unwrap();
+    (facade, state)
+}
+
 #[test]
 fn options_accept_both_roles_and_report_precise_validation_errors() {
     for role in [ConnectionRole::Participant, ConnectionRole::Spectator] {
@@ -112,17 +128,7 @@ fn options_accept_both_roles_and_report_precise_validation_errors() {
 
 #[test]
 fn host_facade_delegates_each_export_once_and_closes_once() {
-    let state = Rc::new(RefCell::new(FakeTransportState::default()));
-    let transport_state = state.clone();
-    let mut facade = WasmPokerClient::from_options(
-        options(ConnectionRole::Participant),
-        Rc::new(ManualClock::default()),
-        Box::new(move |_, events| {
-            transport_state.borrow_mut().events = Some(events);
-            Ok(Box::new(FakeTransport(transport_state.clone())))
-        }),
-    )
-    .unwrap();
+    let (mut facade, state) = facade_with_state();
 
     facade.connect().unwrap();
     facade.connect().unwrap();
@@ -132,19 +138,83 @@ fn host_facade_delegates_each_export_once_and_closes_once() {
     facade.retract_vote().unwrap();
     facade.rename("Alicia".to_string()).unwrap();
     facade.chat("hello".to_string()).unwrap();
+    facade.announce_auto_reveal(3000.0).unwrap();
     facade.reveal().unwrap();
     dispatch(
         &state,
         TransportEvent::Text(room_payload("CARDS_REVEALED", "5")),
     );
     facade.start_new_round().unwrap();
-    assert_eq!(state.borrow().sent, 6);
+    assert_eq!(state.borrow().sent.len(), 7);
+    assert_eq!(
+        state.borrow().sent[4],
+        r#"{"requestType":"ClientBroadcast","payload":"{\"protocol\":\"ppoker\",\"version\":1,\"event\":{\"kind\":\"autoRevealAnnounced\",\"value\":{\"countdownMs\":3000}}}"}"#
+    );
     dispatch(&state, TransportEvent::Text("not json".to_string()));
     assert_eq!(facade.client.borrow().status(), ConnectionStatus::Closed);
 
     facade.close();
     facade.close();
     assert_eq!(state.borrow().closes, 1);
+}
+
+#[test]
+fn auto_reveal_countdown_preserves_core_readiness_error_precedence() {
+    let (mut facade, state) = facade_with_state();
+    assert_eq!(
+        facade.announce_auto_reveal_checked(-1.0).unwrap_err().code,
+        ClientErrorCode::NotReady
+    );
+
+    facade.connect().unwrap();
+    assert_eq!(
+        facade
+            .announce_auto_reveal_checked(f64::NAN)
+            .unwrap_err()
+            .code,
+        ClientErrorCode::NotReady
+    );
+
+    dispatch(&state, TransportEvent::Opened);
+    assert_eq!(
+        facade
+            .announce_auto_reveal_checked(f64::INFINITY)
+            .unwrap_err()
+            .code,
+        ClientErrorCode::Protocol
+    );
+
+    facade.close();
+    assert_eq!(
+        facade
+            .announce_auto_reveal_checked(f64::from(u32::MAX) + 1.0)
+            .unwrap_err()
+            .code,
+        ClientErrorCode::Closed
+    );
+    assert!(state.borrow().sent.is_empty());
+}
+
+#[test]
+fn auto_reveal_countdown_rejects_lossy_javascript_numbers() {
+    for invalid in [
+        -1.0,
+        1.5,
+        f64::NAN,
+        f64::INFINITY,
+        f64::from(u32::MAX) + 1.0,
+    ] {
+        let error = auto_reveal_countdown_from_js(invalid).unwrap_err();
+        assert_eq!(error.code, ClientErrorCode::Protocol, "value: {invalid}");
+    }
+    assert_eq!(
+        auto_reveal_countdown_from_js(3000.0).unwrap(),
+        Duration::from_millis(3000)
+    );
+    assert_eq!(
+        auto_reveal_countdown_from_js(f64::from(u32::MAX)).unwrap(),
+        Duration::from_millis(u64::from(u32::MAX))
+    );
 }
 
 #[test]
@@ -226,6 +296,8 @@ fn generated_declarations_are_strongly_typed_and_match_null_runtime_values() {
         Vote::DECL,
         Player::DECL,
         Room::DECL,
+        RoomEvent::DECL,
+        RoomEventEntry::DECL,
         LogLevel::DECL,
         LogSource::DECL,
         LogEntry::DECL,
@@ -241,12 +313,17 @@ fn generated_declarations_are_strongly_typed_and_match_null_runtime_values() {
         "role: ConnectionRole",
         "export type Vote",
         "export interface Room",
+        "export type RoomEvent",
+        "countdownMs: number",
+        "export interface RoomEventEntry",
+        "event: RoomEvent",
         "export interface ClientSnapshot",
         "revision: number",
         "InvalidCard",
         "InvalidState",
         "terminalError: ClientError | null",
         "room: Room | null",
+        "roomEvents: RoomEventEntry[]",
         "average: number | null",
     ];
     let missing = expected

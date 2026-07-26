@@ -58,6 +58,7 @@ describe("generated WASM integration", () => {
         localName: role,
         localVote: null,
         log: [],
+        roomEvents: [],
         roundNumber: 0,
         history: [],
         average: null,

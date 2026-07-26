@@ -147,6 +147,20 @@ fn invoke_message(socket: &JsValue, data: impl AsRef<str>) {
 }
 
 fn room_payload_with(room: &str, phase: &str, vote: &str) -> String {
+    room_payload_with_logs(
+        room,
+        phase,
+        vote,
+        vec![serde_json::json!({ "level": "INFO", "message": "joined" })],
+    )
+}
+
+fn room_payload_with_logs(
+    room: &str,
+    phase: &str,
+    vote: &str,
+    log: Vec<serde_json::Value>,
+) -> String {
     serde_json::json!({
         "roomId": room,
         "deck": ["1", "3", "5", "?", "-"],
@@ -158,7 +172,7 @@ fn room_payload_with(room: &str, phase: &str, vote: &str) -> String {
             "cardValue": vote
         }],
         "average": if vote.is_empty() { "0" } else { vote },
-        "log": [{ "level": "INFO", "message": "joined" }]
+        "log": log
     })
     .to_string()
 }
@@ -341,6 +355,7 @@ fn javascript_abi_is_lazy_typed_and_exposes_every_command() {
     for name in ["terminalError", "room", "localVote", "average"] {
         assert!(property(&initial, name).is_null());
     }
+    assert_eq!(Array::from(&property(&initial, "roomEvents")).length(), 0);
 
     client
         .connect(on_change.as_ref().unchecked_ref::<Function>().clone())
@@ -364,6 +379,7 @@ fn javascript_abi_is_lazy_typed_and_exposes_every_command() {
     client.retract_vote().unwrap();
     client.rename("Alicia".to_string()).unwrap();
     client.chat("hello".to_string()).unwrap();
+    client.announce_auto_reveal(3000.0).unwrap();
     client.reveal().unwrap();
     invoke_room(&socket, "typed room", "CARDS_REVEALED", "5");
     assert_eq!(changes.get(), 3);
@@ -374,6 +390,7 @@ fn javascript_abi_is_lazy_typed_and_exposes_every_command() {
         r#"{"requestType":"PlayCard","cardValue":null}"#,
         r#"{"requestType":"ChangeName","name":"Alicia"}"#,
         r#"{"requestType":"ChatMessage","message":"hello"}"#,
+        r#"{"requestType":"ClientBroadcast","payload":"{\"protocol\":\"ppoker\",\"version\":1,\"event\":{\"kind\":\"autoRevealAnnounced\",\"value\":{\"countdownMs\":3000}}}"}"#,
         r#"{"requestType":"RevealCards"}"#,
         r#"{"requestType":"StartNewRound"}"#,
     ]
@@ -397,7 +414,165 @@ fn javascript_abi_is_lazy_typed_and_exposes_every_command() {
     assert_js_error(client.connect(noop()).unwrap_err(), "Closed");
     assert_js_error(client.vote("5").unwrap_err(), "Closed");
     assert_js_error(client.chat("late".to_string()).unwrap_err(), "Closed");
-    assert_sent_count(&socket, 6);
+    assert_sent_count(&socket, 7);
+}
+
+#[wasm_bindgen_test]
+fn announce_auto_reveal_js_abi_rejects_lossy_numbers_and_preserves_valid_output() {
+    let _guard = FakeWebSocketGuard::install();
+    let client: JsValue = construct(options(ConnectionRole::Participant)).into();
+    property(&client, "connect")
+        .dyn_into::<Function>()
+        .unwrap()
+        .call1(&client, &noop())
+        .unwrap();
+    let socket = socket(0);
+    invoke_event(&socket, "onopen");
+    invoke_room(&socket, "typed room", "PLAYING", "");
+
+    let announce = property(&client, "announceAutoReveal")
+        .dyn_into::<Function>()
+        .unwrap();
+    for invalid in [
+        -1.0,
+        1.5,
+        f64::NAN,
+        f64::INFINITY,
+        f64::from(u32::MAX) + 1.0,
+    ] {
+        let error = announce
+            .call1(&client, &JsValue::from_f64(invalid))
+            .unwrap_err();
+        assert_js_error(error, "Protocol");
+    }
+    assert_sent_count(&socket, 0);
+
+    announce.call1(&client, &JsValue::from_f64(3000.0)).unwrap();
+    let sent = Array::from(&property(&socket, "sent"));
+    assert_eq!(
+        sent.get(0).as_string().as_deref(),
+        Some(
+            r#"{"requestType":"ClientBroadcast","payload":"{\"protocol\":\"ppoker\",\"version\":1,\"event\":{\"kind\":\"autoRevealAnnounced\",\"value\":{\"countdownMs\":3000}}}"}"#
+        )
+    );
+    assert_string(
+        &property(&client, "snapshot")
+            .dyn_into::<Function>()
+            .unwrap()
+            .call0(&client)
+            .unwrap(),
+        "status",
+        "open",
+    );
+}
+
+#[wasm_bindgen_test]
+fn announce_auto_reveal_js_abi_preserves_core_readiness_error_precedence() {
+    let _guard = FakeWebSocketGuard::install();
+    let client: JsValue = construct(options(ConnectionRole::Participant)).into();
+    let announce = property(&client, "announceAutoReveal")
+        .dyn_into::<Function>()
+        .unwrap();
+
+    assert_js_error(
+        announce
+            .call1(&client, &JsValue::from_f64(-1.0))
+            .unwrap_err(),
+        "NotReady",
+    );
+
+    property(&client, "connect")
+        .dyn_into::<Function>()
+        .unwrap()
+        .call1(&client, &noop())
+        .unwrap();
+    let socket = socket(0);
+    assert_js_error(
+        announce
+            .call1(&client, &JsValue::from_f64(f64::NAN))
+            .unwrap_err(),
+        "NotReady",
+    );
+
+    invoke_event(&socket, "onopen");
+    assert_js_error(
+        announce
+            .call1(&client, &JsValue::from_f64(f64::INFINITY))
+            .unwrap_err(),
+        "Protocol",
+    );
+
+    property(&client, "close")
+        .dyn_into::<Function>()
+        .unwrap()
+        .call0(&client)
+        .unwrap();
+    assert_js_error(
+        announce
+            .call1(&client, &JsValue::from_f64(f64::from(u32::MAX) + 1.0))
+            .unwrap_err(),
+        "Closed",
+    );
+    assert_sent_count(&socket, 0);
+}
+
+#[wasm_bindgen_test]
+fn browser_snapshot_round_trips_room_events_and_soft_ignores_malformed_payloads() {
+    let _guard = FakeWebSocketGuard::install();
+    let mut client = construct(options(ConnectionRole::Participant));
+    let changes = Rc::new(Cell::new(0));
+    let callback_changes = changes.clone();
+    let on_change: Closure<dyn FnMut()> =
+        Closure::new(move || callback_changes.set(callback_changes.get() + 1));
+    client
+        .connect(on_change.as_ref().unchecked_ref::<Function>().clone())
+        .unwrap();
+    let socket = socket(0);
+    invoke_event(&socket, "onopen");
+    invoke_room(&socket, "typed room", "PLAYING", "");
+    assert_eq!(changes.get(), 2);
+
+    let event_payload = serde_json::json!({
+        "protocol": "ppoker",
+        "version": 1,
+        "event": {
+            "kind": "autoRevealAnnounced",
+            "value": { "countdownMs": 3000 }
+        }
+    })
+    .to_string();
+    let logs = vec![
+        serde_json::json!({ "level": "INFO", "message": "joined" }),
+        serde_json::json!({ "level": "CLIENT_BROADCAST", "message": event_payload }),
+    ];
+    invoke_message(
+        &socket,
+        room_payload_with_logs("typed room", "PLAYING", "", logs.clone()),
+    );
+
+    let snapshot = client.snapshot().unwrap();
+    assert_eq!(changes.get(), 3);
+    assert_string(&snapshot, "status", "open");
+    let room_events = Array::from(&property(&snapshot, "roomEvents"));
+    assert_eq!(room_events.length(), 1);
+    let entry = room_events.get(0);
+    assert_number(&entry, "sequence", 1.0);
+    let event = property(&entry, "event");
+    assert_string(&event, "kind", "autoRevealAnnounced");
+    assert_number(&property(&event, "value"), "countdownMs", 3000.0);
+    let revision = property(&snapshot, "revision").as_f64();
+
+    let mut malformed_logs = logs;
+    malformed_logs.push(serde_json::json!({ "level": "CLIENT_BROADCAST", "message": "not json" }));
+    invoke_message(
+        &socket,
+        room_payload_with_logs("typed room", "PLAYING", "", malformed_logs),
+    );
+    let unchanged = client.snapshot().unwrap();
+    assert_string(&unchanged, "status", "open");
+    assert_eq!(property(&unchanged, "revision").as_f64(), revision);
+    assert_eq!(Array::from(&property(&unchanged, "roomEvents")).length(), 1);
+    assert_eq!(changes.get(), 3);
 }
 
 #[wasm_bindgen_test]

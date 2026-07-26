@@ -41,6 +41,30 @@ fn payload_with_users(users: Value) -> String {
     .to_string()
 }
 
+fn payload_with_logs(log: Vec<Value>) -> String {
+    json!({
+        "roomId": "event-room",
+        "deck": ["1", "3", "5"],
+        "gamePhase": "PLAYING",
+        "users": [],
+        "average": "0",
+        "log": log
+    })
+    .to_string()
+}
+
+fn auto_reveal_payload(countdown_ms: u32) -> String {
+    json!({
+        "protocol": "ppoker",
+        "version": 1,
+        "event": {
+            "kind": "autoRevealAnnounced",
+            "value": { "countdownMs": countdown_ms }
+        }
+    })
+    .to_string()
+}
+
 fn wire_user(username: &str, user_type: &str, your_user: bool, card_value: &str) -> Value {
     json!({
         "username": username,
@@ -57,6 +81,7 @@ const RENAME: &str = r#"{"requestType":"ChangeName","name":"Ålice 東京"}"#;
 const CHAT: &str = r#"{"requestType":"ChatMessage","message":"hello \"world\"\n世界"}"#;
 const REVEAL: &str = r#"{"requestType":"RevealCards"}"#;
 const RESTART: &str = r#"{"requestType":"StartNewRound"}"#;
+const AUTO_REVEAL_BROADCAST: &str = r#"{"requestType":"ClientBroadcast","payload":"{\"protocol\":\"ppoker\",\"version\":1,\"event\":{\"kind\":\"autoRevealAnnounced\",\"value\":{\"countdownMs\":3000}}}"}"#;
 
 #[test]
 fn wire_room_json_structure_is_preserved() {
@@ -119,6 +144,7 @@ fn full_room_payload_decodes_as_authoritative_snapshot_in_wire_order() {
         Vote::Revealed(VoteData::Special("☕".to_string()))
     );
     assert_eq!(snapshot.room.players[2].vote, Vote::Missing);
+    assert!(snapshot.room_events.is_empty());
     assert_eq!(
         snapshot
             .log
@@ -131,6 +157,99 @@ fn full_room_payload_decodes_as_authoritative_snapshot_in_wire_order() {
             (2, AppLogLevel::Error, "problem"),
         ]
     );
+}
+
+#[test]
+fn client_broadcasts_decode_as_typed_events_without_entering_activity_log() {
+    let additive_payload = json!({
+        "protocol": "ppoker",
+        "version": 1,
+        "futureEnvelopeField": true,
+        "event": {
+            "kind": "autoRevealAnnounced",
+            "value": {
+                "countdownMs": 5000,
+                "futureValueField": { "nested": true }
+            }
+        }
+    })
+    .to_string();
+    let payload = payload_with_logs(vec![
+        json!({ "level": "INFO", "message": "first" }),
+        json!({ "level": "CLIENT_BROADCAST", "message": auto_reveal_payload(3000) }),
+        json!({ "level": "FUTURE_LEVEL", "message": "unknown" }),
+        json!({ "level": "CHAT", "message": "fourth" }),
+        json!({ "level": "CLIENT_BROADCAST", "message": "not json" }),
+        json!({ "level": "CLIENT_BROADCAST", "message": additive_payload }),
+    ]);
+
+    let snapshot = decode_room_snapshot(&payload).unwrap();
+
+    assert_eq!(
+        snapshot
+            .log
+            .iter()
+            .map(|entry| (entry.server_index, entry.message.as_str()))
+            .collect::<Vec<_>>(),
+        [(0, "first"), (3, "fourth")]
+    );
+    assert_eq!(
+        snapshot.room_events,
+        [
+            RoomEventEntry {
+                sequence: 1,
+                event: RoomEvent::AutoRevealAnnounced { countdown_ms: 3000 },
+            },
+            RoomEventEntry {
+                sequence: 5,
+                event: RoomEvent::AutoRevealAnnounced { countdown_ms: 5000 },
+            },
+        ]
+    );
+}
+
+#[test]
+fn unsupported_client_broadcast_payloads_are_soft_ignored() {
+    let payloads = [
+        "not json".to_string(),
+        r#"{"protocol":"ppoker""#.to_string(),
+        json!({
+            "protocol": "another-client",
+            "version": 1,
+            "event": { "kind": "autoRevealAnnounced", "value": { "countdownMs": 3000 } }
+        })
+        .to_string(),
+        json!({
+            "protocol": "ppoker",
+            "version": 2,
+            "event": { "kind": "autoRevealAnnounced", "value": { "countdownMs": 3000 } }
+        })
+        .to_string(),
+        json!({
+            "protocol": "ppoker",
+            "version": 1,
+            "event": { "kind": "futureEvent", "value": {} }
+        })
+        .to_string(),
+        json!({
+            "protocol": "ppoker",
+            "version": 1,
+            "event": { "kind": "autoRevealAnnounced", "value": { "countdownMs": -1 } }
+        })
+        .to_string(),
+    ];
+    let payload = payload_with_logs(
+        payloads
+            .into_iter()
+            .map(|message| json!({ "level": "CLIENT_BROADCAST", "message": message }))
+            .collect(),
+    );
+
+    let snapshot = decode_room_snapshot(&payload).unwrap();
+
+    assert_eq!(snapshot.room.name, "event-room");
+    assert!(snapshot.log.is_empty());
+    assert!(snapshot.room_events.is_empty());
 }
 
 #[test]
@@ -203,6 +322,13 @@ fn unknown_wire_enums_never_panic_and_unsafe_logs_are_skipped() {
 fn malformed_room_payloads_are_rejected() {
     assert!(decode_room_snapshot("not json").is_err());
     assert!(decode_room_snapshot(r#"{"roomId":"missing-fields"}"#).is_err());
+
+    for invalid_log in [
+        json!({ "level": "CLIENT_BROADCAST", "message": null }),
+        json!({ "level": "CLIENT_BROADCAST" }),
+    ] {
+        assert!(decode_room_snapshot(&payload_with_logs(vec![invalid_log])).is_err());
+    }
 }
 
 #[test]
@@ -219,6 +345,30 @@ fn every_command_keeps_its_exact_json_contract() {
     for (command, expected) in commands {
         assert_eq!(command.unwrap(), expected);
     }
+}
+
+#[test]
+fn auto_reveal_broadcast_keeps_its_exact_nested_json_contract() {
+    let request =
+        encode_client_broadcast(&RoomEvent::AutoRevealAnnounced { countdown_ms: 3000 }).unwrap();
+
+    assert_eq!(request, AUTO_REVEAL_BROADCAST);
+}
+
+#[test]
+fn client_broadcast_payload_validation_counts_utf16_code_units() {
+    assert!(matches!(
+        validate_client_broadcast_payload(" \n\t"),
+        Err(ClientBroadcastEncodeError::BlankPayload)
+    ));
+    assert!(validate_client_broadcast_payload(&"a".repeat(10_000)).is_ok());
+    assert!(validate_client_broadcast_payload(&"😀".repeat(5_000)).is_ok());
+    assert!(matches!(
+        validate_client_broadcast_payload(&"😀".repeat(5_001)),
+        Err(ClientBroadcastEncodeError::PayloadTooLong {
+            utf16_code_units: 10_002
+        })
+    ));
 }
 
 #[test]

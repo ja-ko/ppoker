@@ -18,6 +18,7 @@ export function makeSnapshot(
     localName,
     localVote: null,
     log: [],
+    roomEvents: [],
     roundNumber: 0,
     history: [],
     average: null,
@@ -56,6 +57,12 @@ export function makeRichSnapshot(revision = 3): ClientSnapshot {
         message: "connection lost",
         source: "client",
         serverIndex: null,
+      },
+    ],
+    roomEvents: [
+      {
+        sequence: 7,
+        event: { kind: "autoRevealAnnounced", value: { countdownMs: 3_000 } },
       },
     ],
     roundNumber: 2,
@@ -97,6 +104,7 @@ export function createFakeClient(initial = makeSnapshot()) {
     retractVote: vi.fn<() => void>(),
     rename: vi.fn<(name: string) => void>(),
     chat: vi.fn<(message: string) => void>(),
+    announceAutoReveal: vi.fn<(countdownMs: number) => void>(),
     reveal: vi.fn<() => void>(),
     startNewRound: vi.fn<() => void>(),
     close: vi.fn<() => void>(),

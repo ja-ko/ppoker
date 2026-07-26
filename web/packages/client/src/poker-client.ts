@@ -18,6 +18,8 @@ import type {
   LogSource,
   Player as GeneratedPlayer,
   Room as GeneratedRoom,
+  RoomEvent as GeneratedRoomEvent,
+  RoomEventEntry as GeneratedRoomEventEntry,
   UserType,
   Vote as GeneratedVote,
   VoteData as GeneratedVoteData,
@@ -39,6 +41,8 @@ export type InvalidOptionsDetails = Immutable<GeneratedInvalidOptionsDetails>;
 export type LogEntry = Immutable<GeneratedLogEntry>;
 export type Player = Immutable<GeneratedPlayer>;
 export type Room = Immutable<GeneratedRoom>;
+export type RoomEvent = Immutable<GeneratedRoomEvent>;
+export type RoomEventEntry = Immutable<GeneratedRoomEventEntry>;
 export type Vote = Immutable<GeneratedVote>;
 export type VoteData = Immutable<GeneratedVoteData>;
 export type {
@@ -71,6 +75,7 @@ export interface PokerClient {
   retractVote(): void;
   rename(name: string): void;
   chat(message: string): void;
+  announceAutoReveal(countdownMs: number): void;
   reveal(): void;
   startNewRound(): void;
   close(): void;
@@ -161,6 +166,12 @@ class AuthoredPokerClient implements PokerClient {
   chat(message: string): void {
     this.#run((client) => {
       client.chat(message);
+    });
+  }
+
+  announceAutoReveal(countdownMs: number): void {
+    this.#run((client) => {
+      client.announceAutoReveal(countdownMs);
     });
   }
 

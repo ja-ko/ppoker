@@ -2,6 +2,7 @@ import type { ClientSnapshot, PokerClient } from "@ppoker/web-client";
 
 export const voterCommandNames = [
   "connect",
+  "announceAutoReveal",
   "vote",
   "retractVote",
   "rename",
@@ -54,6 +55,10 @@ export class FakeVoterPokerClient implements PokerClient {
 
   connect(): void {
     this.#record("connect");
+  }
+
+  announceAutoReveal(countdownMs: number): void {
+    this.#record("announceAutoReveal", String(countdownMs));
   }
 
   vote(value: string): void {

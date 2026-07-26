@@ -663,6 +663,29 @@ describe("VotingApp phase actions", () => {
     expect(client.reveal).toHaveBeenCalledTimes(2);
   });
 
+  it("reports an auto-reveal announcement error without stopping the countdown", async () => {
+    const { client } = renderApp(
+      roomSnapshot({
+        players: [player("Local", "missing", true), player("Peer", "hidden")],
+      }),
+    );
+    vi.mocked(client.announceAutoReveal).mockImplementationOnce(() => {
+      throw new Error("announcement rejected");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Vote 5" }));
+    expect(client.announceAutoReveal).toHaveBeenCalledWith(3_000);
+    expect(screen.getByRole("alert").textContent).toContain(
+      "announcement rejected",
+    );
+    expect(screen.getByRole("button", { name: "Reveal in 3" })).toBeTruthy();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+    expect(client.reveal).toHaveBeenCalledOnce();
+  });
+
   it("shows and cancels the automatic countdown, including on drawing start", async () => {
     renderApp(
       roomSnapshot({
@@ -936,6 +959,33 @@ describe("VotingApp voter name", () => {
     expect(
       within(dialog).getByRole("button", { name: "Save name" }),
     ).toBeTruthy();
+  });
+
+  it("keeps an optimistic rename across a room-event-only revision", () => {
+    const { publish } = renderApp(roomSnapshot());
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Display name" }), {
+      target: { value: "Bright Fox" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+
+    act(() => {
+      publish({
+        ...roomSnapshot({ revision: 2 }),
+        roomEvents: [
+          {
+            sequence: 4,
+            event: {
+              kind: "autoRevealAnnounced",
+              value: { countdownMs: 3_000 },
+            },
+          },
+        ],
+      });
+    });
+
+    expect(screen.getByText("Bright Fox")).toBeTruthy();
+    expect(screen.queryByText("autoRevealAnnounced")).toBeNull();
   });
 
   it("yields an optimistic rename to a newer authoritative name", () => {

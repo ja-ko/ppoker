@@ -30,7 +30,9 @@ export interface MonotonicScheduler {
 }
 
 export interface AutoRevealControllerOptions {
+  readonly announceAutoReveal: (countdownMs: number) => void;
   readonly getSnapshot: () => ClientSnapshot;
+  readonly onAnnouncementError?: (error: unknown) => void;
   readonly onRevealError?: (error: unknown) => void;
   readonly scheduler?: MonotonicScheduler;
   readonly sendReveal: () => void;
@@ -53,6 +55,7 @@ interface Countdown {
   readonly context: RoundContext;
   readonly deadline: number;
   readonly generation: number;
+  readonly validationFingerprint: string | null;
   readonly validationRevision: number;
 }
 
@@ -74,8 +77,10 @@ export function createDrawingIntent(): DrawingIntent {
 }
 
 export class AutoRevealController {
+  readonly #announceAutoReveal: (countdownMs: number) => void;
   readonly #getSnapshot: () => ClientSnapshot;
   readonly #listeners = new Set<() => void>();
+  readonly #onAnnouncementError: ((error: unknown) => void) | undefined;
   readonly #onRevealError: ((error: unknown) => void) | undefined;
   readonly #processedIntents = new WeakSet<object>();
   readonly #scheduler: MonotonicScheduler;
@@ -90,7 +95,9 @@ export class AutoRevealController {
   #timer: unknown;
 
   constructor(options: AutoRevealControllerOptions) {
+    this.#announceAutoReveal = options.announceAutoReveal;
     this.#getSnapshot = options.getSnapshot;
+    this.#onAnnouncementError = options.onAnnouncementError;
     this.#onRevealError = options.onRevealError;
     this.#scheduler = options.scheduler ?? browserScheduler();
     this.#sendReveal = options.sendReveal;
@@ -122,17 +129,22 @@ export class AutoRevealController {
       this.#revealedContext = undefined;
     }
 
-    if (
-      this.#countdown !== undefined &&
-      !canContinueCountdown(snapshot, this.#countdown)
-    ) {
-      this.#cancelCountdown();
+    if (this.#countdown !== undefined) {
+      if (!canContinueCountdown(snapshot, this.#countdown)) {
+        this.#cancelCountdown();
+      } else {
+        this.#countdown = advanceCountdownValidation(this.#countdown, snapshot);
+      }
     }
-    if (
-      this.#drawing?.restartFrom !== undefined &&
-      !canContinueCountdown(snapshot, this.#drawing.restartFrom)
-    ) {
-      this.#drawing.restartFrom = undefined;
+    if (this.#drawing?.restartFrom !== undefined) {
+      if (!canContinueCountdown(snapshot, this.#drawing.restartFrom)) {
+        this.#drawing.restartFrom = undefined;
+      } else {
+        this.#drawing.restartFrom = advanceCountdownValidation(
+          this.#drawing.restartFrom,
+          snapshot,
+        );
+      }
     }
     if (
       this.#drawing !== undefined &&
@@ -300,6 +312,11 @@ export class AutoRevealController {
     this.#timer = this.#scheduler.setTimeout(() => {
       this.#timerExpired(generation);
     }, AUTO_REVEAL_DELAY_MS);
+    try {
+      this.#announceAutoReveal(AUTO_REVEAL_DELAY_MS);
+    } catch (error: unknown) {
+      this.#onAnnouncementError?.(error);
+    }
   }
 
   #timerExpired(generation: number): void {
@@ -377,7 +394,11 @@ function firstFinalVoteCountdown(
 ): Omit<Countdown, "deadline" | "generation"> | undefined {
   const context = roundContext(snapshot);
   return context !== null && isLocalSoleMissingVoter(snapshot)
-    ? { context, validationRevision: snapshot.revision }
+    ? {
+        context,
+        validationFingerprint: votingRoomFingerprint(snapshot),
+        validationRevision: snapshot.revision,
+      }
     : undefined;
 }
 
@@ -388,12 +409,19 @@ function countdownFromSnapshot(
   if (context === null) {
     throw new Error("An auto-reveal countdown requires a room snapshot.");
   }
-  return { context, validationRevision: snapshot.revision };
+  return {
+    context,
+    validationFingerprint: votingRoomFingerprint(snapshot),
+    validationRevision: snapshot.revision,
+  };
 }
 
 function canContinueCountdown(
   snapshot: ClientSnapshot,
-  countdown: Pick<Countdown, "context" | "validationRevision">,
+  countdown: Pick<
+    Countdown,
+    "context" | "validationFingerprint" | "validationRevision"
+  >,
 ): boolean {
   const context = roundContext(snapshot);
   const coverage = votingCoverage(snapshot);
@@ -409,11 +437,26 @@ function canContinueCountdown(
   }
 
   // The command API is non-optimistic. Its pre-command snapshot can still show
-  // the local voter as missing until a strictly newer revision is observed.
+  // the local voter as missing. Unrelated retained events may advance revision
+  // without changing the authoritative voting state.
   return (
     snapshot.revision === countdown.validationRevision ||
-    coverage.allVotersCovered
+    coverage.allVotersCovered ||
+    votingRoomFingerprint(snapshot) === countdown.validationFingerprint
   );
+}
+
+function advanceCountdownValidation(
+  countdown: Countdown,
+  snapshot: ClientSnapshot,
+): Countdown {
+  return snapshot.revision === countdown.validationRevision
+    ? countdown
+    : {
+        ...countdown,
+        validationFingerprint: votingRoomFingerprint(snapshot),
+        validationRevision: snapshot.revision,
+      };
 }
 
 function canContinueDrawing(
@@ -450,6 +493,24 @@ function roundContext(snapshot: ClientSnapshot): RoundContext | null {
         roundNumber: snapshot.roundNumber,
         status: snapshot.status,
       };
+}
+
+function votingRoomFingerprint(snapshot: ClientSnapshot): string | null {
+  const room = snapshot.room;
+  return room === null
+    ? null
+    : JSON.stringify([
+        snapshot.status,
+        snapshot.roundNumber,
+        room.name,
+        room.phase,
+        room.deck,
+        room.players.map((player) => [
+          player.isYou,
+          player.userType,
+          player.vote,
+        ]),
+      ]);
 }
 
 function sameContext(

@@ -16,6 +16,7 @@ interface RawClient {
   retractVote: ReturnType<typeof vi.fn<() => void>>;
   rename: ReturnType<typeof vi.fn<(name: string) => void>>;
   chat: ReturnType<typeof vi.fn<(message: string) => void>>;
+  announceAutoReveal: ReturnType<typeof vi.fn<(countdownMs: number) => void>>;
   reveal: ReturnType<typeof vi.fn<() => void>>;
   startNewRound: ReturnType<typeof vi.fn<() => void>>;
   close: ReturnType<typeof vi.fn<() => void>>;
@@ -42,6 +43,7 @@ vi.mock("../src/generated/ppoker-wasm/ppoker_wasm.js", () => ({
     retractVote = vi.fn<() => void>();
     rename = vi.fn<(name: string) => void>();
     chat = vi.fn<(message: string) => void>();
+    announceAutoReveal = vi.fn<(countdownMs: number) => void>();
     reveal = vi.fn<() => void>();
     startNewRound = vi.fn<() => void>();
     close = vi.fn<() => void>(() => {
@@ -72,7 +74,8 @@ const options: ClientOptions = {
 
 type Operation =
   | readonly ["connect" | "retractVote" | "reveal" | "startNewRound"]
-  | readonly ["vote" | "rename" | "chat", string];
+  | readonly ["vote" | "rename" | "chat", string]
+  | readonly ["announceAutoReveal", number];
 
 const OPERATIONS = [
   ["connect"],
@@ -80,6 +83,7 @@ const OPERATIONS = [
   ["retractVote"],
   ["rename", "Grace"],
   ["chat", "hello"],
+  ["announceAutoReveal", 3_000],
   ["reveal"],
   ["startNewRound"],
 ] as const satisfies readonly Operation[];
@@ -288,6 +292,10 @@ describe("PokerClient snapshots", () => {
       snapshot.localVote,
       snapshot.log,
       snapshot.log[0],
+      snapshot.roomEvents,
+      snapshot.roomEvents[0],
+      snapshot.roomEvents[0]?.event,
+      snapshot.roomEvents[0]?.event.value,
       snapshot.history,
       snapshot.history[0],
       snapshot.history[0]?.votes,

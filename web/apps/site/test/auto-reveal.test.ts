@@ -23,9 +23,13 @@ describe("AutoRevealController", () => {
       deadline: null,
       status: "idle",
     });
+    expect(fixture.announceAutoReveal).not.toHaveBeenCalled();
 
     fixture.controller.submitVote(createCommandIntent(), fixture.sendVote);
     expect(fixture.sendVote).toHaveBeenCalledOnce();
+    expect(fixture.announceAutoReveal).toHaveBeenCalledWith(
+      AUTO_REVEAL_DELAY_MS,
+    );
     expect(fixture.controller.getState()).toEqual({
       deadline: AUTO_REVEAL_DELAY_MS,
       status: "counting",
@@ -51,6 +55,28 @@ describe("AutoRevealController", () => {
     fixture.controller.observe(fixture.current.value);
     expect(fixture.controller.getState().status).toBe("counting");
 
+    fixture.clock.advance(AUTO_REVEAL_DELAY_MS);
+    expect(fixture.sendReveal).toHaveBeenCalledOnce();
+  });
+
+  it("keeps counting across a room-event-only revision", () => {
+    const fixture = setup(soleLocalMissing());
+    fixture.controller.submitVote(createCommandIntent(), fixture.sendVote);
+    fixture.publish({
+      ...fixture.current.value,
+      revision: 2,
+      roomEvents: [
+        {
+          sequence: 4,
+          event: {
+            kind: "autoRevealAnnounced",
+            value: { countdownMs: AUTO_REVEAL_DELAY_MS },
+          },
+        },
+      ],
+    });
+
+    expect(fixture.controller.getState().status).toBe("counting");
     fixture.clock.advance(AUTO_REVEAL_DELAY_MS);
     expect(fixture.sendReveal).toHaveBeenCalledOnce();
   });
@@ -388,6 +414,52 @@ describe("AutoRevealController", () => {
     expect(fixture.sendReveal).toHaveBeenCalledTimes(2);
   });
 
+  it("announces every actual arm without announcing observations or cancellations", () => {
+    const fixture = setup(soleLocalMissing());
+    fixture.controller.observe(fixture.current.value);
+    expect(fixture.announceAutoReveal).not.toHaveBeenCalled();
+
+    fixture.controller.submitVote(createCommandIntent(), fixture.sendVote);
+    fixture.publish(allCovered(2));
+    fixture.controller.observe(fixture.current.value);
+    expect(fixture.announceAutoReveal).toHaveBeenCalledTimes(1);
+
+    fixture.controller.submitVote(createCommandIntent(), fixture.sendVote);
+    const drawing = fixture.controller.startDrawing();
+    fixture.controller.submitDrawingVote(drawing, 5, vi.fn());
+    expect(fixture.announceAutoReveal).toHaveBeenCalledTimes(3);
+    expect(fixture.announceAutoReveal).toHaveBeenNthCalledWith(
+      1,
+      AUTO_REVEAL_DELAY_MS,
+    );
+    expect(fixture.announceAutoReveal).toHaveBeenNthCalledWith(
+      2,
+      AUTO_REVEAL_DELAY_MS,
+    );
+    expect(fixture.announceAutoReveal).toHaveBeenNthCalledWith(
+      3,
+      AUTO_REVEAL_DELAY_MS,
+    );
+
+    fixture.controller.cancel();
+    fixture.controller.observe(fixture.current.value);
+    expect(fixture.announceAutoReveal).toHaveBeenCalledTimes(3);
+  });
+
+  it("reports announcement errors without interrupting the local countdown", () => {
+    const failure = new Error("announcement failed");
+    const fixture = setup(soleLocalMissing(), vi.fn(), () => {
+      throw failure;
+    });
+
+    fixture.controller.submitVote(createCommandIntent(), fixture.sendVote);
+    expect(fixture.onAnnouncementError).toHaveBeenCalledWith(failure);
+    expect(fixture.controller.getState().status).toBe("counting");
+
+    fixture.clock.advance(AUTO_REVEAL_DELAY_MS);
+    expect(fixture.sendReveal).toHaveBeenCalledOnce();
+  });
+
   it("is idempotent under duplicate observations and disposal", () => {
     const fixture = setup(soleLocalMissing());
     const listener = vi.fn();
@@ -454,14 +526,22 @@ class FakeClock implements MonotonicScheduler {
   }
 }
 
-function setup(initial: ClientSnapshot, reveal: () => void = vi.fn()) {
+function setup(
+  initial: ClientSnapshot,
+  reveal: () => void = vi.fn(),
+  announce: (countdownMs: number) => void = vi.fn(),
+) {
   const clock = new FakeClock();
   const current = { value: initial };
+  const announceAutoReveal = vi.fn(announce);
+  const onAnnouncementError = vi.fn<(error: unknown) => void>();
   const sendReveal = vi.fn(reveal);
   const onRevealError = vi.fn<(error: unknown) => void>();
   const sendVote = vi.fn();
   const controller = new AutoRevealController({
+    announceAutoReveal,
     getSnapshot: () => current.value,
+    onAnnouncementError,
     onRevealError,
     scheduler: clock,
     sendReveal,
@@ -471,9 +551,11 @@ function setup(initial: ClientSnapshot, reveal: () => void = vi.fn()) {
     controller.observe(snapshot);
   };
   return {
+    announceAutoReveal,
     clock,
     controller,
     current,
+    onAnnouncementError,
     onRevealError,
     publish,
     sendReveal,
