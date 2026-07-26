@@ -8,8 +8,9 @@ use js_sys::{Error as JsError, Reflect};
 #[cfg(any(test, target_arch = "wasm32"))]
 use ppoker_core::client::Clock;
 use ppoker_core::client::{
-    Client, ClientError, ClientErrorCode, ConnectionStatus, Transport, TransportEvent,
+    Client, ClientError, ClientErrorCode, ClientUpdate, ConnectionStatus, Transport, TransportEvent,
 };
+use ppoker_core::models::RoomEvent;
 #[cfg(any(test, target_arch = "wasm32"))]
 use ppoker_core::protocol::build_room_url;
 use ppoker_core::protocol::ConnectionRole;
@@ -57,7 +58,7 @@ impl InvalidOptionsError {
 }
 
 type EventSink = Rc<dyn Fn(TransportEvent)>;
-type ChangeNotifier = Rc<dyn Fn()>;
+type ChangeNotifier = Rc<dyn Fn(Vec<RoomEvent>)>;
 type TransportFactory = Box<dyn FnMut(&str, EventSink) -> Result<Box<dyn Transport>, String>>;
 
 #[cfg(target_arch = "wasm32")]
@@ -162,14 +163,25 @@ fn event_sink(client: Weak<RefCell<Client>>, notifier: ChangeNotifier) -> EventS
         let Some(client) = client.upgrade() else {
             return;
         };
-        let changed = {
+        let notification = {
             let mut client = client.borrow_mut();
             let revision = client.revision();
-            let _ = client.handle_transport_event(event);
-            client.revision() != revision
+            let room_events = client
+                .handle_transport_event(event)
+                .map(|outcome| {
+                    outcome
+                        .updates
+                        .into_iter()
+                        .flat_map(|update| match update {
+                            ClientUpdate::Room(transition) => transition.new_room_events,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            (client.revision() != revision).then_some(room_events)
         };
-        if changed {
-            notifier();
+        if let Some(room_events) = notification {
+            notifier(room_events);
         }
     })
 }
@@ -256,16 +268,19 @@ impl WasmPokerClient {
     #[cfg(target_arch = "wasm32")]
     pub fn connect(
         &mut self,
-        #[wasm_bindgen(unchecked_param_type = "() => void")] on_change: Function,
+        #[wasm_bindgen(unchecked_param_type = "(roomEvents: RoomEvent[]) => void")]
+        on_change: Function,
     ) -> Result<(), JsValue> {
-        self.connect_with_notifier(Rc::new(move || {
-            let _ = on_change.call0(&JsValue::UNDEFINED);
+        self.connect_with_notifier(Rc::new(move |room_events| {
+            let room_events = serialize_js(&room_events)
+                .expect("room events always serialize to JavaScript values");
+            let _ = on_change.call1(&JsValue::UNDEFINED, &room_events);
         }))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn connect(&mut self) -> Result<(), JsValue> {
-        self.connect_with_notifier(Rc::new(|| {}))
+        self.connect_with_notifier(Rc::new(|_| {}))
     }
 
     #[wasm_bindgen(unchecked_return_type = "ClientSnapshot")]

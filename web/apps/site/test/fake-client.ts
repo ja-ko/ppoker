@@ -36,12 +36,22 @@ export function createFakeClient(initial = makeSnapshot()) {
   const listeners = new Set<() => void>();
   const client = {
     getSnapshot: vi.fn<() => ClientSnapshot>(() => state.value),
+    getRoomEvents: ((kind: string) =>
+      state.value.roomEvents
+        .filter((event) => event.kind === kind)
+        .map((event) => event.value)) as PokerClient["getRoomEvents"],
     subscribe: vi.fn<(listener: () => void) => () => void>((listener) => {
       listeners.add(listener);
       return () => {
         listeners.delete(listener);
       };
     }),
+    subscribeRoomEvent: vi.fn(
+      () => () => undefined,
+    ) as PokerClient["subscribeRoomEvent"],
+    subscribeRoomEvents: vi.fn(
+      () => () => undefined,
+    ) as PokerClient["subscribeRoomEvents"],
     connect: vi.fn<() => void>(),
     vote: vi.fn<(value: string) => void>(),
     retractVote: vi.fn<() => void>(),

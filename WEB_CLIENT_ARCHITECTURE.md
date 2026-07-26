@@ -36,11 +36,12 @@ unprojected events; they are not a raw extension mechanism or a dynamic custom
 event API.
 
 `room_events` is retained cumulative history without timestamps or sender
-identity. Consumers using snapshot history for live one-shot behavior must
-baseline or ignore events present in the initial snapshot. For ordered polling,
-each `RoomTransition.new_room_events` contains only events newly retained from
-that room snapshot; an initial transition (`previous_room == None`) can contain
-historical events and must be treated as a baseline as well.
+identity. Initial snapshot events populate this history but are excluded from
+live delivery. Each non-initial `RoomTransition.new_room_events` contains only
+events newly retained from that room snapshot, while an initial transition
+(`previous_room == None`) has no transition events. Generic Rust subscriptions
+start at their originating client's current live-event position; a read against
+a different client is rejected without advancing the subscription.
 
 Malformed embedded payload strings, foreign protocol markers, unsupported
 versions, unknown event kinds, and invalid embedded event values are ignored.
@@ -92,9 +93,12 @@ generated facade; importing the package has no WASM or socket side effects.
 
 That client owns the generated instance, immutable cached snapshot,
 subscriptions, command delegation, and close/dispose lifecycle. Transport
-change signals schedule one coalesced microtask that refreshes the snapshot
-independently of subscriber count. There is no public polling API, second store,
-read-only wrapper, or alternative lifecycle.
+change signals carry exact live room-event deltas and schedule one coalesced
+microtask that refreshes the snapshot independently of subscriber count. Every
+successful refresh publishes the cached snapshot before delivering its pending
+delta prefix exactly once, including recovery through a synchronous command
+refresh. Kind-filtered and all-event subscriptions are live-only. There is no
+public polling API, second store, read-only wrapper, or alternative lifecycle.
 
 React provides only a non-owning provider and hooks over the same client.
 Provider mount and unmount do not connect or close it.

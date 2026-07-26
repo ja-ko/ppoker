@@ -16,7 +16,8 @@ import {
   type PokerClientConfig,
   type Room,
   type RoomEvent,
-  type RoomEventEntry,
+  type RoomEventKind,
+  type RoomEventPayload,
   type UserType,
   type Vote,
   type VoteData,
@@ -53,9 +54,9 @@ type AllDeepTyped<Values extends readonly unknown[]> = false extends {
   ? false
   : true;
 // prettier-ignore
-type PublicShapes = [ClientError, ClientOptions, ClientSnapshot, HistoryEntry, LogEntry, Player, Room, RoomEvent, RoomEventEntry, Vote, VoteData];
+type PublicShapes = [ClientError, ClientOptions, ClientSnapshot, HistoryEntry, LogEntry, Player, Room, RoomEvent, RoomEventPayload<"autoRevealAnnounced">, Vote, VoteData];
 // prettier-ignore
-type GeneratedShapes = [Generated.ClientError, Generated.ClientOptions, Generated.ClientSnapshot, Generated.HistoryEntry, Generated.LogEntry, Generated.Player, Generated.Room, Generated.RoomEvent, Generated.RoomEventEntry, Generated.Vote, Generated.VoteData];
+type GeneratedShapes = [Generated.ClientError, Generated.ClientOptions, Generated.ClientSnapshot, Generated.HistoryEntry, Generated.LogEntry, Generated.Player, Generated.Room, Generated.RoomEvent, Generated.Vote, Generated.VoteData];
 
 function inspectVote(vote: Vote | Generated.Vote): number | string | null {
   switch (vote.state) {
@@ -108,20 +109,38 @@ client.startNewRound();
 client.close();
 client[Symbol.dispose]();
 inspectVote(snapshot.room?.players[0]?.vote ?? { state: "missing" });
-const roomEvent: RoomEvent | undefined = snapshot.roomEvents[0]?.event;
-const roomEventEntry: RoomEventEntry | undefined = snapshot.roomEvents[0];
+const roomEvent: RoomEvent | undefined = snapshot.roomEvents[0];
 if (roomEvent?.kind === "autoRevealAnnounced") {
   const countdownMs: number = roomEvent.value.countdownMs;
   // @ts-expect-error room event values are deeply readonly
   roomEvent.value.countdownMs = 1_000;
   void countdownMs;
 }
+const roomEventKind: RoomEventKind = "autoRevealAnnounced";
+const historicalAnnouncements: readonly RoomEventPayload<"autoRevealAnnounced">[] =
+  client.getRoomEvents("autoRevealAnnounced");
+const unsubscribeAnnouncement = client.subscribeRoomEvent(
+  "autoRevealAnnounced",
+  ({ countdownMs }) => {
+    const countdown: number = countdownMs;
+    void countdown;
+    // @ts-expect-error narrowed listeners receive the payload, not the union
+    void countdownMs.kind;
+  },
+);
+const unsubscribeAllEvents = client.subscribeRoomEvents((event) => {
+  const union: RoomEvent = event;
+  void union;
+});
 void [
   generatedOptionsAsPublic,
   generatedSnapshotAsPublic,
   expectedValues,
   client.getSnapshot(),
-  roomEventEntry,
+  roomEventKind,
+  historicalAnnouncements,
+  unsubscribeAnnouncement,
+  unsubscribeAllEvents,
 ];
 
 const createdClient: Promise<PokerClient> = createPokerClient(
@@ -138,7 +157,7 @@ if (firstPlayer !== undefined) {
 // @ts-expect-error snapshot collections are deeply readonly
 snapshot.history[0] = {} as HistoryEntry;
 // @ts-expect-error room events are deeply readonly
-snapshot.roomEvents[0] = {} as RoomEventEntry;
+snapshot.roomEvents[0] = {} as RoomEvent;
 
 const providerProperties: ComponentProps<typeof PokerClientProvider> = {
   client,
@@ -153,7 +172,7 @@ void [
   hookSnapshot.history[0]?.votes[0]?.name,
   hookSnapshot.terminalError?.message,
   hookSnapshot.log[0]?.message,
-  hookSnapshot.roomEvents[0]?.event,
+  hookSnapshot.roomEvents[0],
 ];
 
 export type TypeContracts = Assert<
@@ -165,6 +184,7 @@ export type TypeContracts = Assert<
     Missing<Generated.HistoryEntry, "lengthMs">,
     Missing<ClientSnapshot, "roundStartedAtMs">,
     Missing<Generated.ClientSnapshot, "roundStartedAtMs">,
+    Missing<RoomEvent, "sequence">,
     AllDeepTyped<PublicShapes>,
     AllDeepTyped<GeneratedShapes>,
     NotAny<ReactClientSnapshot>,

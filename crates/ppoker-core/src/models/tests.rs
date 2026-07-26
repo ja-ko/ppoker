@@ -77,19 +77,13 @@ fn web_serialization_uses_core_names_safe_milliseconds_and_nulls() {
 
 #[test]
 fn room_event_serialization_is_typed_and_camel_case() {
-    let entry = RoomEventEntry {
-        sequence: 4,
-        event: RoomEvent::AutoRevealAnnounced { countdown_ms: 3000 },
-    };
+    let event = RoomEvent::AutoRevealAnnounced(AutoRevealAnnounced { countdown_ms: 3000 });
 
     assert_eq!(
-        serde_json::to_value(entry).unwrap(),
+        serde_json::to_value(event).unwrap(),
         serde_json::json!({
-            "sequence": 4,
-            "event": {
-                "kind": "autoRevealAnnounced",
-                "value": { "countdownMs": 3000 }
-            }
+            "kind": "autoRevealAnnounced",
+            "value": { "countdownMs": 3000 }
         })
     );
 }
@@ -99,14 +93,12 @@ fn room_event_serialization_is_typed_and_camel_case() {
 fn room_event_typescript_declarations_are_typed_and_camel_case() {
     use tsify::Tsify;
 
-    let declarations = [RoomEvent::DECL, RoomEventEntry::DECL].join("\n");
+    let declarations = [AutoRevealAnnounced::DECL, RoomEvent::DECL].join("\n");
     for expected in [
+        "export interface AutoRevealAnnounced",
         "export type RoomEvent",
         "autoRevealAnnounced",
         "countdownMs: number",
-        "export interface RoomEventEntry",
-        "sequence: number",
-        "event: RoomEvent",
     ] {
         assert!(
             declarations.contains(expected),
@@ -114,4 +106,5 @@ fn room_event_typescript_declarations_are_typed_and_camel_case() {
         );
     }
     assert!(!declarations.contains("countdown_ms"));
+    assert!(!declarations.contains("sequence"));
 }

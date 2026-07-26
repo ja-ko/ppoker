@@ -520,17 +520,21 @@ fn announce_auto_reveal_js_abi_preserves_core_readiness_error_precedence() {
 fn browser_snapshot_round_trips_room_events_and_soft_ignores_malformed_payloads() {
     let _guard = FakeWebSocketGuard::install();
     let mut client = construct(options(ConnectionRole::Participant));
-    let changes = Rc::new(Cell::new(0));
-    let callback_changes = changes.clone();
-    let on_change: Closure<dyn FnMut()> =
-        Closure::new(move || callback_changes.set(callback_changes.get() + 1));
+    let deltas = Rc::new(RefCell::new(Vec::new()));
+    let callback_deltas = deltas.clone();
+    let on_change: Closure<dyn FnMut(JsValue)> =
+        Closure::new(move |events| callback_deltas.borrow_mut().push(events));
     client
         .connect(on_change.as_ref().unchecked_ref::<Function>().clone())
         .unwrap();
     let socket = socket(0);
     invoke_event(&socket, "onopen");
     invoke_room(&socket, "typed room", "PLAYING", "");
-    assert_eq!(changes.get(), 2);
+    assert_eq!(deltas.borrow().len(), 2);
+    assert!(deltas
+        .borrow()
+        .iter()
+        .all(|events| Array::from(events).length() == 0));
 
     let event_payload = serde_json::json!({
         "protocol": "ppoker",
@@ -551,15 +555,17 @@ fn browser_snapshot_round_trips_room_events_and_soft_ignores_malformed_payloads(
     );
 
     let snapshot = client.snapshot().unwrap();
-    assert_eq!(changes.get(), 3);
+    assert_eq!(deltas.borrow().len(), 3);
     assert_string(&snapshot, "status", "open");
     let room_events = Array::from(&property(&snapshot, "roomEvents"));
     assert_eq!(room_events.length(), 1);
-    let entry = room_events.get(0);
-    assert_number(&entry, "sequence", 1.0);
-    let event = property(&entry, "event");
+    let event = room_events.get(0);
     assert_string(&event, "kind", "autoRevealAnnounced");
     assert_number(&property(&event, "value"), "countdownMs", 3000.0);
+    let delta = Array::from(&deltas.borrow()[2]);
+    assert_eq!(delta.length(), 1);
+    assert_string(&delta.get(0), "kind", "autoRevealAnnounced");
+    assert_number(&property(&delta.get(0), "value"), "countdownMs", 3000.0);
     let revision = property(&snapshot, "revision").as_f64();
 
     let mut malformed_logs = logs;
@@ -572,7 +578,7 @@ fn browser_snapshot_round_trips_room_events_and_soft_ignores_malformed_payloads(
     assert_string(&unchanged, "status", "open");
     assert_eq!(property(&unchanged, "revision").as_f64(), revision);
     assert_eq!(Array::from(&property(&unchanged, "roomEvents")).length(), 1);
-    assert_eq!(changes.get(), 3);
+    assert_eq!(deltas.borrow().len(), 3);
 }
 
 #[wasm_bindgen_test]
