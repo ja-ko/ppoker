@@ -2,6 +2,7 @@ import type { ClientSnapshot, PokerClient } from "@ppoker/web-client";
 
 export const commandNames = [
   "connect",
+  "announceAutoReveal",
   "vote",
   "retractVote",
   "rename",
@@ -17,6 +18,7 @@ export type CommandCounts = Readonly<Record<CommandName, number>>;
 
 export class FakePokerClient implements PokerClient {
   readonly #counts: Record<CommandName, number> = {
+    announceAutoReveal: 0,
     chat: 0,
     close: 0,
     connect: 0,
@@ -56,6 +58,11 @@ export class FakePokerClient implements PokerClient {
 
   connect(): void {
     this.#counts.connect += 1;
+  }
+
+  announceAutoReveal(countdownMs: number): void {
+    void countdownMs;
+    this.#counts.announceAutoReveal += 1;
   }
 
   vote(value: string): void {

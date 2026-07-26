@@ -181,7 +181,7 @@ impl App {
         }
     }
 
-    fn handle_session_update(&mut self, update: ClientUpdate) {
+    fn handle_session_update(&mut self, update: ClientUpdate) -> AppResult<()> {
         let ClientUpdate::Room(update) = update;
         Self::merge_round_timing(
             &update,
@@ -199,8 +199,10 @@ impl App {
                 self.has_updates = true;
             }
             if !self.config.disable_auto_reveal && Self::confirms_last_missing_vote(old, room) {
+                let countdown = Duration::from_secs(3);
+                self.client.announce_auto_reveal(countdown)?;
                 debug!("Starting auto-reveal timer.");
-                self.auto_reveal_at = Some(Instant::now() + Duration::from_secs(3));
+                self.auto_reveal_at = Some(Instant::now() + countdown);
             }
         }
 
@@ -230,6 +232,8 @@ impl App {
             debug!("Auto-reveal cancelled because of invalid state");
             self.auto_reveal_at = None;
         }
+
+        Ok(())
     }
 
     #[cfg(test)]
@@ -237,6 +241,7 @@ impl App {
         self.merge_snapshot(RoomSnapshot {
             room: update,
             log: vec![],
+            room_events: vec![],
         });
     }
 
@@ -306,7 +311,7 @@ impl App {
         let outcome = self.client.poll()?;
         for update in outcome.updates {
             debug!("room update: {:?}", update);
-            self.handle_session_update(update);
+            self.handle_session_update(update)?;
         }
         self.local_log_position = self.client.log().len();
 
@@ -321,7 +326,11 @@ impl App {
 
     #[cfg(test)]
     pub fn set_room_for_test(&mut self, room: Room) {
-        self.queue_test_snapshot(RoomSnapshot { room, log: vec![] });
+        self.queue_test_snapshot(RoomSnapshot {
+            room,
+            log: vec![],
+            room_events: vec![],
+        });
         self.client
             .poll()
             .expect("test client update should succeed");
@@ -422,7 +431,11 @@ impl App {
 
 #[cfg(test)]
 pub(crate) fn encode_test_snapshot(snapshot: RoomSnapshot) -> String {
-    let RoomSnapshot { room, log } = snapshot;
+    let RoomSnapshot {
+        room,
+        log,
+        room_events: _,
+    } = snapshot;
     let phase = match room.phase {
         GamePhase::Playing => "PLAYING",
         GamePhase::Revealed => "CARDS_REVEALED",
@@ -480,7 +493,11 @@ pub(crate) fn test_snapshot_event(snapshot: RoomSnapshot) -> TransportEvent {
 
 #[cfg(test)]
 pub(crate) fn test_room_event(room: Room) -> TransportEvent {
-    test_snapshot_event(RoomSnapshot { room, log: vec![] })
+    test_snapshot_event(RoomSnapshot {
+        room,
+        log: vec![],
+        room_events: vec![],
+    })
 }
 
 #[cfg(test)]

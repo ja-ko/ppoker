@@ -187,6 +187,7 @@ describe("poker client hooks", () => {
     expect(serverSnapshots[1]).toBe(serverSnapshots[0]);
     expect(Object.isFrozen(serverSnapshots[0])).toBe(true);
     expect(Object.isFrozen(serverSnapshots[0]?.log)).toBe(true);
+    expect(Object.isFrozen(serverSnapshots[0]?.roomEvents)).toBe(true);
     expect(Object.isFrozen(serverSnapshots[0]?.history)).toBe(true);
     expect(first.client.getSnapshot).not.toHaveBeenCalled();
     expect(second.client.getSnapshot).not.toHaveBeenCalled();

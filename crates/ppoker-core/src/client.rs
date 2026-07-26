@@ -8,11 +8,12 @@ use log::warn;
 use serde::Serialize;
 
 use crate::models::{
-    duration_ms, GamePhase, HistoryEntry, LogEntry, LogSource, Room, Vote, VoteData,
+    duration_ms, GamePhase, HistoryEntry, LogEntry, LogSource, Room, RoomEvent, RoomEventEntry,
+    Vote, VoteData,
 };
 use crate::protocol::{
-    decode_room_snapshot, encode_change_name, encode_chat_message, encode_retract_vote,
-    encode_reveal_cards, encode_start_new_round, encode_vote, RoomSnapshot,
+    decode_room_snapshot, encode_change_name, encode_chat_message, encode_client_broadcast,
+    encode_retract_vote, encode_reveal_cards, encode_start_new_round, encode_vote, RoomSnapshot,
 };
 
 pub trait Clock {
@@ -114,6 +115,7 @@ pub struct ClientSnapshot {
     pub local_name: String,
     pub local_vote: Option<VoteData>,
     pub log: Vec<LogEntry>,
+    pub room_events: Vec<RoomEventEntry>,
     pub round_number: u32,
     pub history: Vec<HistoryEntry>,
     pub average: Option<f32>,
@@ -138,6 +140,7 @@ pub trait Transport {
 pub struct RoomTransition {
     pub previous_room: Option<Room>,
     pub room: Room,
+    pub new_room_events: Vec<RoomEventEntry>,
     pub history_len: usize,
 }
 
@@ -175,6 +178,7 @@ pub struct Client {
     name: String,
     room: Option<Room>,
     log: Vec<LogEntry>,
+    room_events: Vec<RoomEventEntry>,
     seen_server_log_indexes: HashSet<u32>,
     round_number: u32,
     history: Vec<HistoryEntry>,
@@ -193,6 +197,7 @@ impl Client {
             name,
             room: None,
             log: vec![],
+            room_events: vec![],
             seen_server_log_indexes: HashSet::new(),
             round_number: 0,
             history: vec![],
@@ -246,6 +251,10 @@ impl Client {
         &self.log
     }
 
+    pub fn room_events(&self) -> &[RoomEventEntry] {
+        &self.room_events
+    }
+
     pub fn round_number(&self) -> u32 {
         self.round_number
     }
@@ -274,6 +283,7 @@ impl Client {
             local_name: self.name.clone(),
             local_vote: self.vote.clone(),
             log: self.log.clone(),
+            room_events: self.room_events.clone(),
             round_number: self.round_number,
             history: self.history.clone(),
             average: snapshot_average(self.average_votes())?,
@@ -469,6 +479,17 @@ impl Client {
                 changed = true;
             }
         }
+        let mut new_room_events = Vec::new();
+        for entry in snapshot.room_events {
+            if self.seen_server_log_indexes.insert(entry.sequence) {
+                let position = self
+                    .room_events
+                    .partition_point(|retained| retained.sequence < entry.sequence);
+                self.room_events.insert(position, entry.clone());
+                new_room_events.push(entry);
+                changed = true;
+            }
+        }
         (
             RoomTransition {
                 previous_room: old,
@@ -476,6 +497,7 @@ impl Client {
                     .room
                     .clone()
                     .expect("a room snapshot installs authoritative room state"),
+                new_room_events,
                 history_len: self.history.len(),
             },
             changed,
@@ -568,6 +590,19 @@ impl Client {
                 .map_err(|error| ClientError::protocol(error.to_string()))
                 .and_then(|request| self.send_request(request))
         });
+        self.commit_operation(before, false);
+        result
+    }
+
+    pub fn announce_auto_reveal(&mut self, countdown: Duration) -> ClientResult<()> {
+        let before = self.public_state();
+        let result = (|| {
+            self.ensure_ready()?;
+            let countdown_ms = auto_reveal_countdown_ms(countdown)?;
+            let request = encode_client_broadcast(&RoomEvent::AutoRevealAnnounced { countdown_ms })
+                .map_err(|error| ClientError::protocol(error.to_string()))?;
+            self.send_request(request)
+        })();
         self.commit_operation(before, false);
         result
     }
@@ -701,6 +736,16 @@ fn snapshot_duration_ms(duration: Duration) -> ClientResult<f64> {
             "Client snapshot contains a time outside the JavaScript safe integer range.",
         )
     })
+}
+
+fn auto_reveal_countdown_ms(duration: Duration) -> ClientResult<u32> {
+    if !duration.subsec_nanos().is_multiple_of(1_000_000) || duration.as_millis() > u32::MAX as u128
+    {
+        return Err(ClientError::protocol(
+            "Auto-reveal countdown must be exactly representable as unsigned 32-bit milliseconds.",
+        ));
+    }
+    Ok(duration.as_millis() as u32)
 }
 
 impl Drop for Client {

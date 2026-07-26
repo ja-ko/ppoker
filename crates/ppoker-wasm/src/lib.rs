@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
-#[cfg(target_arch = "wasm32")]
 use std::time::Duration;
 
 #[cfg(target_arch = "wasm32")]
@@ -150,6 +149,12 @@ impl WasmPokerClient {
             .map(|_| ())
             .map_err(client_error_to_js)
     }
+
+    fn announce_auto_reveal_checked(&mut self, countdown_ms: f64) -> Result<(), ClientError> {
+        self.client.borrow().ensure_ready()?;
+        let countdown = auto_reveal_countdown_from_js(countdown_ms)?;
+        self.client.borrow_mut().announce_auto_reveal(countdown)
+    }
 }
 
 fn event_sink(client: Weak<RefCell<Client>>, notifier: ChangeNotifier) -> EventSink {
@@ -183,6 +188,23 @@ fn serialize_js(value: &impl Serialize) -> Result<JsValue, ClientError> {
             code: ClientErrorCode::Protocol,
             message: format!("Client snapshot could not be converted: {error}"),
         })
+}
+
+fn auto_reveal_countdown_from_js(countdown_ms: f64) -> Result<Duration, ClientError> {
+    if !countdown_ms.is_finite()
+        || countdown_ms < 0.0
+        || countdown_ms.fract() != 0.0
+        || countdown_ms > f64::from(u32::MAX)
+    {
+        return Err(ClientError {
+            code: ClientErrorCode::Protocol,
+            message: format!(
+                "Auto-reveal countdown must be a finite whole number of milliseconds between 0 and {}.",
+                u32::MAX
+            ),
+        });
+    }
+    Ok(Duration::from_millis(countdown_ms as u64))
 }
 
 fn client_error_to_js(error: ClientError) -> JsValue {
@@ -282,6 +304,13 @@ impl WasmPokerClient {
         self.client
             .borrow_mut()
             .chat(message)
+            .map_err(client_error_to_js)
+    }
+
+    #[wasm_bindgen(js_name = announceAutoReveal)]
+    #[allow(non_snake_case)]
+    pub fn announce_auto_reveal(&mut self, countdownMs: f64) -> Result<(), JsValue> {
+        self.announce_auto_reveal_checked(countdownMs)
             .map_err(client_error_to_js)
     }
 

@@ -26,6 +26,27 @@ use `Client::handle_transport_event()` to apply each event immediately. Both
 paths return ordered `ClientUpdate` values without owning or merging a second
 copy of shared state.
 
+### Room Events
+
+Core owns the complete list of supported typed room events. New behavior should
+ordinarily be exposed through domain methods and projected core state rather
+than asking consumers to interpret events themselves. `Client::room_events()`
+and `ClientSnapshot.room_events` are a typed fallback for one-shot or otherwise
+unprojected events; they are not a raw extension mechanism or a dynamic custom
+event API.
+
+`room_events` is retained cumulative history without timestamps or sender
+identity. Consumers using snapshot history for live one-shot behavior must
+baseline or ignore events present in the initial snapshot. For ordered polling,
+each `RoomTransition.new_room_events` contains only events newly retained from
+that room snapshot; an initial transition (`previous_room == None`) can contain
+historical events and must be treated as a baseline as well.
+
+Malformed embedded payload strings, foreign protocol markers, unsupported
+versions, unknown event kinds, and invalid embedded event values are ignored.
+They never enter the activity `LogEntry` stream. Structurally invalid outer room
+or log objects remain protocol errors under the upstream contract.
+
 ### History And Future Sharing
 
 History remains core-owned so planned future peer sharing starts from one

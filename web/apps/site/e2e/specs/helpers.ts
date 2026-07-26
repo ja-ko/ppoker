@@ -106,6 +106,7 @@ export async function expectNoCommands(page: Page): Promise<void> {
     window.__broadcastTestDriver.commandCounts(),
   );
   expect(counts).toEqual({
+    announceAutoReveal: 0,
     chat: 0,
     close: 0,
     connect: 0,

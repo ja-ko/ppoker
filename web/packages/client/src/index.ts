@@ -18,6 +18,8 @@ export {
   type PokerClientError,
   type PpokerWasmInitInput,
   type Room,
+  type RoomEvent,
+  type RoomEventEntry,
   type UserType,
   type Vote,
   type VoteData,

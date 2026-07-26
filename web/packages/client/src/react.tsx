@@ -16,6 +16,7 @@ const SERVER_SNAPSHOT: ClientSnapshot = Object.freeze({
   localName: "",
   localVote: null,
   log: Object.freeze([]),
+  roomEvents: Object.freeze([]),
   roundNumber: 0,
   history: Object.freeze([]),
   average: null,

@@ -74,6 +74,7 @@ interface ActiveDrawing {
 }
 
 interface OptimisticName {
+  readonly authoritativeFingerprint: string;
   readonly contextKey: string;
   readonly revision: number;
   readonly value: string;
@@ -223,7 +224,13 @@ export function VotingRoom({
 
   const autoRevealRef = useRef<AutoRevealController | null>(null);
   autoRevealRef.current ??= new AutoRevealController({
+    announceAutoReveal: (countdownMs) => {
+      client.announceAutoReveal(countdownMs);
+    },
     getSnapshot: client.getSnapshot,
+    onAnnouncementError: (error) => {
+      reportCommandErrorRef.current(error);
+    },
     onRevealError: (error) => {
       reportCommandErrorRef.current(error);
     },
@@ -243,6 +250,7 @@ export function VotingRoom({
   );
 
   const contextKey = votingContextKey(snapshot);
+  const renameFingerprint = authoritativeRenameFingerprint(snapshot);
   const currentVoteIntent = pendingLocalVoteIntent(voteCommands, snapshot);
   const effectiveVote = effectiveLocalVote(voteCommands, snapshot);
   effectiveVoteRef.current = effectiveVote;
@@ -347,6 +355,7 @@ export function VotingRoom({
       effectiveLocalVote(voteCommandsRef.current, latest),
       valueText,
     );
+    setCommandError(null);
     const accepted = autoReveal.submitDrawingVote(
       drawing.intent,
       value,
@@ -364,7 +373,6 @@ export function VotingRoom({
     }
     activeDrawingRef.current = null;
     setYieldedResult(false);
-    setCommandError(null);
   };
   rejectDrawingRef.current = (_rejection, revision): void => {
     const drawing = activeDrawingRef.current;
@@ -466,11 +474,18 @@ export function VotingRoom({
     if (
       optimisticName.contextKey !== contextKey ||
       authoritativeName === optimisticName.value ||
-      snapshot.revision > optimisticName.revision
+      (snapshot.revision > optimisticName.revision &&
+        optimisticName.authoritativeFingerprint !== renameFingerprint)
     ) {
       updateOptimisticName(null);
     }
-  }, [authoritativeName, contextKey, optimisticName, snapshot.revision]);
+  }, [
+    authoritativeName,
+    contextKey,
+    optimisticName,
+    renameFingerprint,
+    snapshot.revision,
+  ]);
 
   const invalidateDrawing = (showAuthoritative = true): void => {
     const drawing = activeDrawingRef.current;
@@ -503,6 +518,7 @@ export function VotingRoom({
     }
     invalidateDrawing();
     const before = client.getSnapshot();
+    setCommandError(null);
     try {
       const submitted = autoReveal.submitVote(createCommandIntent(), () => {
         client.vote(card);
@@ -511,7 +527,6 @@ export function VotingRoom({
         return;
       }
       enqueueVoteCommand(card, before, client.getSnapshot());
-      setCommandError(null);
     } catch (error: unknown) {
       reportCommandError(error);
     }
@@ -1103,6 +1118,8 @@ export function VotingRoom({
             const latestContextKey = votingContextKey(latest);
             if (latestContextKey !== null) {
               updateOptimisticName({
+                authoritativeFingerprint:
+                  authoritativeRenameFingerprint(latest),
                 contextKey: latestContextKey,
                 revision: latest.revision,
                 value: name,
@@ -1361,6 +1378,15 @@ function isVoterCovered(
     return optimisticVote.value !== null;
   }
   return voter.vote.state !== "missing";
+}
+
+function authoritativeRenameFingerprint(snapshot: ClientSnapshot): string {
+  return JSON.stringify([
+    snapshot.status,
+    snapshot.roundNumber,
+    snapshot.localName,
+    snapshot.room,
+  ]);
 }
 
 function responseSummary(

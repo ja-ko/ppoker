@@ -7,6 +7,8 @@ use ppoker_core::client::ConnectionStatus;
 use std::cell::Cell;
 use std::time::Duration;
 
+const AUTO_REVEAL_ANNOUNCEMENT: &str = r#"{"requestType":"ClientBroadcast","payload":"{\"protocol\":\"ppoker\",\"version\":1,\"event\":{\"kind\":\"autoRevealAnnounced\",\"value\":{\"countdownMs\":3000}}}"}"#;
+
 struct RecordingNotification(Cell<bool>);
 
 impl NotificationHandler for RecordingNotification {
@@ -243,6 +245,83 @@ fn reveal_errors_preserve_or_cancel_auto_reveal_at_the_command_boundary() {
 }
 
 #[test]
+fn auto_reveal_announcement_is_sent_once_when_authoritative_confirmation_arms_timer(
+) -> AppResult<()> {
+    let (mut app, state) = create_recording_app();
+    add_test_player(
+        &mut app,
+        player("Other Player", Vote::Hidden, UserType::Player),
+    );
+
+    app.merge_update(app.room().clone());
+    assert!(app.auto_reveal_at.is_none());
+    assert!(state.borrow().sent.is_empty());
+
+    app.vote("5")?;
+    assert!(app.auto_reveal_at.is_none());
+    assert_eq!(
+        state.borrow().sent,
+        [r#"{"requestType":"PlayCard","cardValue":"5"}"#]
+    );
+
+    let armed_after = Instant::now();
+    confirm_local_vote(&mut app, VoteData::Number(5));
+    let deadline = app
+        .auto_reveal_at
+        .expect("authoritative vote confirmation should arm auto-reveal");
+    assert!(deadline >= armed_after + Duration::from_secs(3));
+    assert!(deadline <= Instant::now() + Duration::from_secs(3));
+    assert_eq!(
+        state.borrow().sent,
+        [
+            r#"{"requestType":"PlayCard","cardValue":"5"}"#,
+            AUTO_REVEAL_ANNOUNCEMENT,
+        ]
+    );
+
+    app.merge_update(app.room().clone());
+    app.merge_update(app.room().clone());
+    assert_eq!(app.auto_reveal_at, Some(deadline));
+    assert_eq!(state.borrow().sent.len(), 2);
+
+    Ok(())
+}
+
+#[test]
+fn auto_reveal_announcement_errors_propagate_without_arming_the_local_timer() {
+    let (mut app, state) = create_recording_app();
+    add_test_player(
+        &mut app,
+        player("Other Player", Vote::Hidden, UserType::Player),
+    );
+    app.vote("5").unwrap();
+
+    let mut confirmed = app.room().clone();
+    confirmed
+        .players
+        .iter_mut()
+        .find(|player| player.is_you)
+        .expect("test room has a local player")
+        .vote = Vote::Revealed(VoteData::Number(5));
+    {
+        let mut state = state.borrow_mut();
+        state.events.push_back(test_room_event(confirmed));
+        state.send_error = Some("broadcast failed".to_string());
+    }
+
+    let error = app.update().unwrap_err();
+
+    assert_eq!(error.to_string(), "broadcast failed");
+    assert!(app.auto_reveal_at.is_none());
+    assert_eq!(app.client.status(), ConnectionStatus::Closed);
+    assert_eq!(state.borrow().closes, 1);
+    assert_eq!(
+        state.borrow().sent,
+        [r#"{"requestType":"PlayCard","cardValue":"5"}"#]
+    );
+}
+
+#[test]
 fn autoreveal_confirmation_covers_voters_spectators_and_disabled_config() -> AppResult<()> {
     for (case, other_vote, spectator, disabled, should_arm) in [
         ("confirmed", Vote::Hidden, false, false, true),
@@ -266,6 +345,15 @@ fn autoreveal_confirmation_covers_voters_spectators_and_disabled_config() -> App
         assert!(app.auto_reveal_at.is_none(), "{case} before confirmation");
         confirm_local_vote(&mut app, VoteData::Number(5));
         assert_eq!(app.auto_reveal_at.is_some(), should_arm, "{case}");
+        let expected_requests = if should_arm {
+            vec![
+                r#"{"requestType":"PlayCard","cardValue":"5"}"#,
+                AUTO_REVEAL_ANNOUNCEMENT,
+            ]
+        } else {
+            vec![r#"{"requestType":"PlayCard","cardValue":"5"}"#]
+        };
+        assert_eq!(state.borrow().sent, expected_requests, "{case}");
 
         if should_arm {
             let sent = state.borrow().sent.len();
@@ -395,6 +483,7 @@ fn round_timing_is_app_owned_and_history_aligned() {
     let update = RoomTransition {
         previous_room: Some(create_test_room()),
         room: revealed,
+        new_room_events: vec![],
         history_len: 1,
     };
     let mut no_start = None;

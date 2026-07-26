@@ -4,6 +4,7 @@ use crate::app::{test_room_event, test_snapshot_event, App};
 use crate::config::Config;
 use crate::models::{GamePhase, LogLevel, LogSource, Player, Room, UserType, Vote, VoteData};
 use ppoker_core::client::{Client, Transport, TransportEvent};
+use ppoker_core::models::RoomEvent;
 use ppoker_core::protocol::{RoomSnapshot, ServerLogEntry};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -14,6 +15,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const LIVE_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(12);
+const LIVE_AUTO_REVEAL_COUNTDOWN_MS: u32 = 4_321;
 
 #[derive(Debug, serde::Deserialize, PartialEq, Eq)]
 #[serde(tag = "requestType")]
@@ -28,12 +30,31 @@ enum TestClientRequest {
     ChatMessage {
         message: String,
     },
+    ClientBroadcast {
+        payload: String,
+    },
     RevealCards,
     StartNewRound,
 }
 
 fn decode_client_request(message: &str) -> Result<TestClientRequest, serde_json::Error> {
     serde_json::from_str(message)
+}
+
+#[test]
+fn local_request_dto_accepts_auto_reveal_client_broadcast() {
+    let payload = r#"{"protocol":"ppoker","version":1,"event":{"kind":"autoRevealAnnounced","value":{"countdownMs":3000}}}"#;
+    let request = r#"{"requestType":"ClientBroadcast","payload":"{\"protocol\":\"ppoker\",\"version\":1,\"event\":{\"kind\":\"autoRevealAnnounced\",\"value\":{\"countdownMs\":3000}}}"}"#;
+
+    assert_eq!(
+        decode_client_request(request).unwrap(),
+        TestClientRequest::ClientBroadcast {
+            payload: payload.to_string(),
+        }
+    );
+    LocalTestTransport::new("Alice")
+        .send_text(request.to_string())
+        .unwrap();
 }
 
 #[derive(Default)]
@@ -373,6 +394,7 @@ impl Transport for LocalTestTransport {
         Some(test_snapshot_event(RoomSnapshot {
             room,
             log: server.log_entries.clone(),
+            room_events: vec![],
         }))
     }
 
@@ -387,6 +409,7 @@ impl Transport for LocalTestTransport {
             TestClientRequest::PlayCard { card_value: None } => server.retract_vote(),
             TestClientRequest::ChangeName { name } => server.change_name(&name),
             TestClientRequest::ChatMessage { message } => server.chat(&message),
+            TestClientRequest::ClientBroadcast { payload: _ } => {}
             TestClientRequest::RevealCards => server.reveal(),
             TestClientRequest::StartNewRound => server.reset(),
         }
@@ -445,6 +468,12 @@ fn run_live_native_attempt(mut config: Config) -> Result<(), String> {
     client2
         .vote("3")
         .map_err(|error| format!("second participant vote failed: {error}"))?;
+    let expected_auto_reveal = RoomEvent::AutoRevealAnnounced {
+        countdown_ms: LIVE_AUTO_REVEAL_COUNTDOWN_MS,
+    };
+    client2
+        .announce_auto_reveal(Duration::from_millis(LIVE_AUTO_REVEAL_COUNTDOWN_MS.into()))
+        .map_err(|error| format!("second participant auto-reveal announcement failed: {error}"))?;
 
     let deadline = Instant::now() + Duration::from_secs(4);
     loop {
@@ -486,6 +515,10 @@ fn run_live_native_attempt(mut config: Config) -> Result<(), String> {
                 .players
                 .iter()
                 .any(|player| !player.is_you && player.name == first_name);
+        let auto_reveal_echo_confirmed = client2
+            .room_events()
+            .iter()
+            .any(|entry| entry.event == expected_auto_reveal);
 
         if first_room_confirmed
             && second_room_confirmed
@@ -494,6 +527,7 @@ fn run_live_native_attempt(mut config: Config) -> Result<(), String> {
             && first_vote_confirmed
             && second_vote_confirmed
             && chat_confirmed
+            && auto_reveal_echo_confirmed
         {
             return Ok(());
         }
@@ -503,8 +537,9 @@ fn run_live_native_attempt(mut config: Config) -> Result<(), String> {
                 .into_iter()
                 .map(|entry| (entry.source, entry.message.as_str()))
                 .collect::<Vec<_>>();
+            let second_room_events = client2.room_events();
             return Err(format!(
-                "timed out waiting for authoritative state in room {room_name:?}: first_room={:?} ({first_room_confirmed}), second_room={:?} ({second_room_confirmed}), first_players={:?} ({first_players_confirmed}), second_players={:?} ({second_players_confirmed}), first_vote={first_vote_confirmed}, second_vote={second_vote_confirmed}, expected_chat={expected_chat:?}, chat={chat_confirmed}, first_log={first_log:?}",
+                "timed out waiting for authoritative state in room {room_name:?}: first_room={:?} ({first_room_confirmed}), second_room={:?} ({second_room_confirmed}), first_players={:?} ({first_players_confirmed}), second_players={:?} ({second_players_confirmed}), first_vote={first_vote_confirmed}, second_vote={second_vote_confirmed}, expected_chat={expected_chat:?}, chat={chat_confirmed}, expected_auto_reveal={expected_auto_reveal:?}, auto_reveal_echo={auto_reveal_echo_confirmed}, second_room_events={second_room_events:?}, first_log={first_log:?}",
                 first_room.name,
                 second_room.name,
                 first_room.players,
@@ -562,7 +597,7 @@ fn real_upstream_accepts_native_participants() {
             }
             Err(RecvTimeoutError::Timeout) => {
                 failures.push(format!(
-                    "attempt {attempt} exceeded the {LIVE_ATTEMPT_TIMEOUT:?} hard timeout (room={room_name}, participants={participant_prefix}-first,{participant_prefix}-second); detached blocked worker"
+                    "attempt {attempt} exceeded the {LIVE_ATTEMPT_TIMEOUT:?} hard timeout (room={room_name}, participants={participant_prefix}-first,{participant_prefix}-second, expected_auto_reveal_countdown_ms={LIVE_AUTO_REVEAL_COUNTDOWN_MS}); detached blocked worker"
                 ));
                 // A detached worker cannot delay test-process exit if connect stays blocked.
                 drop(result_rx);

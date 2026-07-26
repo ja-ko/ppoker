@@ -614,8 +614,11 @@ test("final-vote countdown cancellation, replacement, and rejection stay determi
   await page.clock.runFor(700);
   await expectCommandSummary(page, [
     { args: ["5"], name: "vote" },
+    { args: ["3000"], name: "announceAutoReveal" },
     { args: ["8"], name: "vote" },
+    { args: ["3000"], name: "announceAutoReveal" },
     { args: ["5"], name: "vote" },
+    { args: ["3000"], name: "announceAutoReveal" },
   ]);
   await expect(page.getByRole("button", { name: "Reveal in 3" })).toBeVisible();
 
@@ -625,8 +628,11 @@ test("final-vote countdown cancellation, replacement, and rejection stay determi
   await expect(stage(page)).toHaveClass(/vote-draw-stage--rejecting/u);
   await expectCommandSummary(page, [
     { args: ["5"], name: "vote" },
+    { args: ["3000"], name: "announceAutoReveal" },
     { args: ["8"], name: "vote" },
+    { args: ["3000"], name: "announceAutoReveal" },
     { args: ["5"], name: "vote" },
+    { args: ["3000"], name: "announceAutoReveal" },
     { args: [], name: "retractVote" },
   ]);
   await page.clock.runFor(4_000);
@@ -645,11 +651,13 @@ test("countdown expiry reveals once", async ({ page }) => {
   await page.clock.runFor(3_000);
   await expectCommandSummary(page, [
     { args: ["5"], name: "vote" },
+    { args: ["3000"], name: "announceAutoReveal" },
     { args: [], name: "reveal" },
   ]);
   await page.clock.runFor(6_000);
   await expectCommandSummary(page, [
     { args: ["5"], name: "vote" },
+    { args: ["3000"], name: "announceAutoReveal" },
     { args: [], name: "reveal" },
   ]);
 });
@@ -667,6 +675,7 @@ test("manual reveal at the timeout boundary cannot duplicate", async ({
 
   await expectCommandSummary(page, [
     { args: ["8"], name: "vote" },
+    { args: ["3000"], name: "announceAutoReveal" },
     { args: [], name: "reveal" },
   ]);
 });

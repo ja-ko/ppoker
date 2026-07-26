@@ -6,9 +6,14 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::models::{
-    GamePhase as AppGamePhase, LogLevel as AppLogLevel, Player, Room as AppRoom,
-    UserType as AppUserType, Vote, VoteData,
+    GamePhase as AppGamePhase, LogLevel as AppLogLevel, Player, Room as AppRoom, RoomEvent,
+    RoomEventEntry, UserType as AppUserType, Vote, VoteData,
 };
+
+const CLIENT_BROADCAST_PROTOCOL: &str = "ppoker";
+// Additive fields and event kinds stay on v1; increment only for breaking schema changes.
+const CLIENT_BROADCAST_VERSION: u32 = 1;
+const MAX_CLIENT_BROADCAST_UTF16_CODE_UNITS: usize = 10_000;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Copy, Clone)]
 #[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
@@ -29,6 +34,56 @@ pub struct ServerLogEntry {
 pub struct RoomSnapshot {
     pub room: AppRoom,
     pub log: Vec<ServerLogEntry>,
+    pub room_events: Vec<RoomEventEntry>,
+}
+
+#[derive(Serialize)]
+struct RoomEventEnvelope<'a> {
+    protocol: &'static str,
+    version: u32,
+    event: &'a RoomEvent,
+}
+
+#[derive(Deserialize)]
+struct ReceivedRoomEventEnvelope {
+    protocol: String,
+    version: u32,
+    event: RoomEvent,
+}
+
+#[derive(Debug)]
+pub(crate) enum ClientBroadcastEncodeError {
+    Json(serde_json::Error),
+    BlankPayload,
+    PayloadTooLong { utf16_code_units: usize },
+}
+
+impl Display for ClientBroadcastEncodeError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Json(error) => write!(formatter, "failed to encode client broadcast: {error}"),
+            Self::BlankPayload => formatter.write_str("client broadcast payload must not be blank"),
+            Self::PayloadTooLong { utf16_code_units } => write!(
+                formatter,
+                "client broadcast payload has {utf16_code_units} UTF-16 code units; maximum is {MAX_CLIENT_BROADCAST_UTF16_CODE_UNITS}"
+            ),
+        }
+    }
+}
+
+impl Error for ClientBroadcastEncodeError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Json(error) => Some(error),
+            Self::BlankPayload | Self::PayloadTooLong { .. } => None,
+        }
+    }
+}
+
+impl From<serde_json::Error> for ClientBroadcastEncodeError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Json(error)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -123,6 +178,7 @@ enum LogLevel {
     Chat,
     Info,
     Error,
+    ClientBroadcast,
     #[serde(other)]
     Unknown,
 }
@@ -142,6 +198,7 @@ impl TryInto<ServerLogEntry> for &LogEntry {
             LogLevel::Chat => AppLogLevel::Chat,
             LogLevel::Info => AppLogLevel::Info,
             LogLevel::Error => AppLogLevel::Error,
+            LogLevel::ClientBroadcast => return Err(()),
             LogLevel::Unknown => {
                 warn!("Failed to convert LogLevel::Unknown to AppLogLevel");
                 return Err(());
@@ -254,27 +311,50 @@ enum UserRequest<'a> {
     ChatMessage {
         message: &'a str,
     },
+    ClientBroadcast {
+        payload: &'a str,
+    },
     RevealCards,
     StartNewRound,
 }
 
 pub fn decode_room_snapshot(payload: &str) -> Result<RoomSnapshot, serde_json::Error> {
     let room: Room = serde_json::from_str(payload)?;
-    let log = room
-        .log
-        .iter()
-        .enumerate()
-        .filter_map(|(index, entry)| {
-            let mut entry: ServerLogEntry = entry.try_into().ok()?;
-            entry.server_index = index as u32;
-            Some(entry)
-        })
-        .collect();
+    let mut log = Vec::new();
+    let mut room_events = Vec::new();
+    for (index, entry) in room.log.iter().enumerate() {
+        let server_index = index as u32;
+        if entry.level == LogLevel::ClientBroadcast {
+            if let Some(event) = decode_room_event(&entry.message) {
+                room_events.push(RoomEventEntry {
+                    sequence: server_index,
+                    event,
+                });
+            }
+            continue;
+        }
+
+        if let Ok(mut entry) = <&LogEntry as TryInto<ServerLogEntry>>::try_into(entry) {
+            entry.server_index = server_index;
+            log.push(entry);
+        }
+    }
 
     Ok(RoomSnapshot {
         room: (&room).into(),
         log,
+        room_events,
     })
+}
+
+fn decode_room_event(payload: &str) -> Option<RoomEvent> {
+    let envelope: ReceivedRoomEventEnvelope = serde_json::from_str(payload).ok()?;
+    if envelope.protocol != CLIENT_BROADCAST_PROTOCOL
+        || envelope.version != CLIENT_BROADCAST_VERSION
+    {
+        return None;
+    }
+    Some(envelope.event)
 }
 
 fn encode_request(request: UserRequest<'_>) -> Result<String, serde_json::Error> {
@@ -297,6 +377,31 @@ pub fn encode_change_name(name: &str) -> Result<String, serde_json::Error> {
 
 pub fn encode_chat_message(message: &str) -> Result<String, serde_json::Error> {
     encode_request(UserRequest::ChatMessage { message })
+}
+
+pub(crate) fn encode_client_broadcast(
+    event: &RoomEvent,
+) -> Result<String, ClientBroadcastEncodeError> {
+    let payload = serde_json::to_string(&RoomEventEnvelope {
+        protocol: CLIENT_BROADCAST_PROTOCOL,
+        version: CLIENT_BROADCAST_VERSION,
+        event,
+    })?;
+    validate_client_broadcast_payload(&payload)?;
+    Ok(encode_request(UserRequest::ClientBroadcast {
+        payload: &payload,
+    })?)
+}
+
+fn validate_client_broadcast_payload(payload: &str) -> Result<(), ClientBroadcastEncodeError> {
+    if payload.trim().is_empty() {
+        return Err(ClientBroadcastEncodeError::BlankPayload);
+    }
+    let utf16_code_units = payload.encode_utf16().count();
+    if utf16_code_units > MAX_CLIENT_BROADCAST_UTF16_CODE_UNITS {
+        return Err(ClientBroadcastEncodeError::PayloadTooLong { utf16_code_units });
+    }
+    Ok(())
 }
 
 pub fn encode_reveal_cards() -> Result<String, serde_json::Error> {

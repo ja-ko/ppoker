@@ -247,6 +247,7 @@ function baseSnapshot(overrides: Partial<ClientSnapshot> = {}): ClientSnapshot {
     localName: "Planning Poker Billboard",
     localVote: null,
     log: [],
+    roomEvents: [],
     revision: 0,
     room: null,
     roundNumber: 0,

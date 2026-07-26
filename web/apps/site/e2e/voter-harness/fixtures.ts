@@ -82,6 +82,7 @@ function playingSnapshot(options: PlayingSnapshotOptions = {}): ClientSnapshot {
     localName: "E2E Voter",
     localVote: options.localVote ?? null,
     log: [],
+    roomEvents: [],
     revision: options.revision ?? 1,
     room: {
       deck: options.deck ?? numericDeck,

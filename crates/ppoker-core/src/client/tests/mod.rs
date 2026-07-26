@@ -1,7 +1,8 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 
-use crate::models::{LogLevel, Player, UserType};
+use crate::models::{LogLevel, Player, RoomEvent, RoomEventEntry, UserType};
+use crate::protocol::decode_room_snapshot;
 
 use super::*;
 
@@ -118,6 +119,25 @@ fn room_payload(phase: &str, votes: &[(&str, &str, bool)], logs: &[(&str, &str)]
     .to_string()
 }
 
+fn room_payload_with_wire_logs(logs: Vec<serde_json::Value>) -> String {
+    let mut room: serde_json::Value =
+        serde_json::from_str(&room_payload("PLAYING", &[], &[])).unwrap();
+    room["log"] = serde_json::Value::Array(logs);
+    room.to_string()
+}
+
+fn auto_reveal_payload(countdown_ms: u32) -> String {
+    serde_json::json!({
+        "protocol": "ppoker",
+        "version": 1,
+        "event": {
+            "kind": "autoRevealAnnounced",
+            "value": { "countdownMs": countdown_ms }
+        }
+    })
+    .to_string()
+}
+
 fn snapshot(payload: String) -> RoomSnapshot {
     decode_room_snapshot(&payload).unwrap()
 }
@@ -175,6 +195,7 @@ fn assert_command_errors(playing: &mut Client, revealed: &mut Client, code: Clie
         playing.retract_vote(),
         playing.rename("Alicia".to_string()),
         playing.chat("hello".to_string()),
+        playing.announce_auto_reveal(Duration::from_secs(3)),
         playing.restart(),
         revealed.reveal(),
     ] {
@@ -200,6 +221,63 @@ fn transport_must_open_before_commands_are_handed_off() {
     client.poll().unwrap();
     client.vote("5").unwrap();
     assert_eq!(state.borrow().sent.len(), 1);
+}
+
+#[test]
+fn announce_auto_reveal_validates_readiness_and_duration_then_sends_typed_broadcast() {
+    let (mut client, state) = fake_client(vec![]);
+    let revision = client.revision();
+    assert_error_code(
+        client.announce_auto_reveal(Duration::from_secs(3)),
+        ClientErrorCode::NotReady,
+    );
+    assert_eq!(client.revision(), revision);
+    assert!(state.borrow().sent.is_empty());
+
+    enqueue(&state, TransportEvent::Opened);
+    client.poll().unwrap();
+    let revision = client.revision();
+    client
+        .announce_auto_reveal(Duration::from_millis(3000))
+        .unwrap();
+    assert_eq!(
+        state.borrow().sent,
+        [
+            r#"{"requestType":"ClientBroadcast","payload":"{\"protocol\":\"ppoker\",\"version\":1,\"event\":{\"kind\":\"autoRevealAnnounced\",\"value\":{\"countdownMs\":3000}}}"}"#
+        ]
+    );
+    assert_eq!(client.revision(), revision);
+
+    for duration in [
+        Duration::from_nanos(1),
+        Duration::from_millis(u32::MAX as u64 + 1),
+    ] {
+        let error = client.announce_auto_reveal(duration).unwrap_err();
+        assert_eq!(error.code, ClientErrorCode::Protocol);
+        assert_eq!(client.status(), ConnectionStatus::Open);
+    }
+    assert_eq!(state.borrow().sent.len(), 1);
+    assert_eq!(client.revision(), revision);
+}
+
+#[test]
+fn announce_auto_reveal_send_failure_is_terminal() {
+    let (mut client, state) = fake_client(vec![TransportEvent::Opened]);
+    client.poll().unwrap();
+    state.borrow_mut().send_error = Some("broadcast failed".to_string());
+    let revision = client.revision();
+
+    let error = client
+        .announce_auto_reveal(Duration::from_secs(3))
+        .unwrap_err();
+
+    assert_eq!(error.code, ClientErrorCode::Transport);
+    assert_eq!(error.message, "broadcast failed");
+    assert_eq!(client.status(), ConnectionStatus::Closed);
+    assert_eq!(client.terminal_error(), Some(&error));
+    assert_eq!(client.revision(), revision + 1);
+    assert_eq!(state.borrow().closes, 1);
+    assert!(state.borrow().sent.is_empty());
 }
 
 #[test]
@@ -298,6 +376,80 @@ fn poll_applies_all_available_room_snapshots_in_order() {
         "Bob"
     );
     assert_eq!(client.room().unwrap().players[0].name, "Bob");
+}
+
+#[test]
+fn poll_batch_exposes_ordered_event_deltas_and_retains_cumulative_events() {
+    let historical_logs = vec![
+        serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": auto_reveal_payload(1000)
+        }),
+        serde_json::json!({ "level": "CLIENT_BROADCAST", "message": "malformed" }),
+        serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": auto_reveal_payload(2000)
+        }),
+    ];
+    let mut second_logs = historical_logs.clone();
+    second_logs.push(serde_json::json!({
+        "level": "CLIENT_BROADCAST",
+        "message": auto_reveal_payload(3000)
+    }));
+    let mut third_logs = second_logs.clone();
+    third_logs
+        .push(serde_json::json!({ "level": "CLIENT_BROADCAST", "message": "still malformed" }));
+    third_logs.extend([
+        serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": auto_reveal_payload(5000)
+        }),
+        serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": auto_reveal_payload(6000)
+        }),
+    ]);
+    let (mut client, _) = fake_client(vec![
+        TransportEvent::Opened,
+        TransportEvent::Text(room_payload_with_wire_logs(historical_logs)),
+        TransportEvent::Text(room_payload_with_wire_logs(second_logs)),
+        TransportEvent::Text(room_payload_with_wire_logs(third_logs)),
+    ]);
+    let revision = client.revision();
+
+    let outcome = client.poll().unwrap();
+
+    assert_eq!(outcome.updates.len(), 3);
+    assert!(room_transition(&outcome.updates[0]).previous_room.is_none());
+    assert!(room_transition(&outcome.updates[1]).previous_room.is_some());
+    assert_eq!(
+        outcome
+            .updates
+            .iter()
+            .map(room_transition)
+            .map(|transition| {
+                transition
+                    .new_room_events
+                    .iter()
+                    .map(|entry| entry.sequence)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>(),
+        [vec![0, 2], vec![3], vec![5, 6]]
+    );
+    assert_eq!(
+        client
+            .room_events()
+            .iter()
+            .map(|entry| entry.sequence)
+            .collect::<Vec<_>>(),
+        [0, 2, 3, 5, 6]
+    );
+    assert_eq!(
+        client.snapshot().unwrap().room_events.as_slice(),
+        client.room_events()
+    );
+    assert_eq!(client.revision(), revision + 1);
 }
 
 #[test]
@@ -830,6 +982,215 @@ fn room_snapshots_index_sparse_logs_before_cumulative_updates() {
 }
 
 #[test]
+fn room_events_retain_original_sequence_holes_and_stay_out_of_activity_log() {
+    let additive_payload = serde_json::json!({
+        "protocol": "ppoker",
+        "version": 1,
+        "extraEnvelope": "accepted",
+        "event": {
+            "kind": "autoRevealAnnounced",
+            "value": { "countdownMs": 5000, "extraValue": true }
+        }
+    })
+    .to_string();
+    let payload = room_payload_with_wire_logs(vec![
+        serde_json::json!({ "level": "INFO", "message": "first" }),
+        serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": auto_reveal_payload(3000)
+        }),
+        serde_json::json!({ "level": "FUTURE_LEVEL", "message": "unknown" }),
+        serde_json::json!({ "level": "CHAT", "message": "fourth" }),
+        serde_json::json!({ "level": "CLIENT_BROADCAST", "message": "not json" }),
+        serde_json::json!({ "level": "CLIENT_BROADCAST", "message": additive_payload }),
+    ]);
+    let (mut client, _) = fake_client(vec![TransportEvent::Opened, TransportEvent::Text(payload)]);
+
+    let outcome = client.poll().unwrap();
+
+    assert_eq!(
+        client
+            .log()
+            .iter()
+            .map(|entry| (entry.server_index, entry.message.as_str()))
+            .collect::<Vec<_>>(),
+        [(Some(0), "first"), (Some(3), "fourth")]
+    );
+    assert_eq!(
+        client.room_events(),
+        [
+            RoomEventEntry {
+                sequence: 1,
+                event: RoomEvent::AutoRevealAnnounced { countdown_ms: 3000 },
+            },
+            RoomEventEntry {
+                sequence: 5,
+                event: RoomEvent::AutoRevealAnnounced { countdown_ms: 5000 },
+            },
+        ]
+    );
+    let transition = room_transition(&outcome.updates[0]);
+    assert!(transition.previous_room.is_none());
+    assert_eq!(transition.new_room_events.as_slice(), client.room_events());
+
+    let snapshot = client.snapshot().unwrap();
+    assert_eq!(snapshot.room_events.as_slice(), client.room_events());
+    assert_eq!(
+        serde_json::to_value(snapshot).unwrap()["roomEvents"],
+        serde_json::json!([
+            {
+                "sequence": 1,
+                "event": {
+                    "kind": "autoRevealAnnounced",
+                    "value": { "countdownMs": 3000 }
+                }
+            },
+            {
+                "sequence": 5,
+                "event": {
+                    "kind": "autoRevealAnnounced",
+                    "value": { "countdownMs": 5000 }
+                }
+            }
+        ])
+    );
+}
+
+#[test]
+fn cumulative_room_events_deduplicate_by_server_index_and_revision() {
+    let first = room_payload_with_wire_logs(vec![serde_json::json!({
+        "level": "CLIENT_BROADCAST",
+        "message": auto_reveal_payload(3000)
+    })]);
+    let second = room_payload_with_wire_logs(vec![
+        serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": auto_reveal_payload(3000)
+        }),
+        serde_json::json!({ "level": "CLIENT_BROADCAST", "message": "malformed" }),
+        serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": auto_reveal_payload(5000)
+        }),
+    ]);
+    let ignored_append = room_payload_with_wire_logs(vec![
+        serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": auto_reveal_payload(3000)
+        }),
+        serde_json::json!({ "level": "CLIENT_BROADCAST", "message": "malformed" }),
+        serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": auto_reveal_payload(5000)
+        }),
+        serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": serde_json::json!({
+                "protocol": "ppoker",
+                "version": 1,
+                "event": { "kind": "futureEvent", "value": {} }
+            }).to_string()
+        }),
+    ]);
+    let (mut client, state) =
+        fake_client(vec![TransportEvent::Opened, TransportEvent::Text(first)]);
+    client.poll().unwrap();
+    let revision = client.revision();
+
+    enqueue(&state, TransportEvent::Text(second.clone()));
+    let appended = client.poll().unwrap();
+    assert!(appended.changed);
+    assert_eq!(
+        room_transition(&appended.updates[0])
+            .new_room_events
+            .iter()
+            .map(|entry| entry.sequence)
+            .collect::<Vec<_>>(),
+        [2]
+    );
+    assert_eq!(client.revision(), revision + 1);
+    assert_eq!(
+        client
+            .room_events()
+            .iter()
+            .map(|entry| entry.sequence)
+            .collect::<Vec<_>>(),
+        [0, 2]
+    );
+
+    enqueue(&state, TransportEvent::Text(second));
+    let duplicate = client.poll().unwrap();
+    assert!(!duplicate.changed);
+    assert!(room_transition(&duplicate.updates[0])
+        .new_room_events
+        .is_empty());
+    assert_eq!(client.revision(), revision + 1);
+
+    enqueue(&state, TransportEvent::Text(ignored_append));
+    let ignored = client.poll().unwrap();
+    assert!(!ignored.changed);
+    assert!(room_transition(&ignored.updates[0])
+        .new_room_events
+        .is_empty());
+    assert_eq!(client.revision(), revision + 1);
+    assert!(client.log().is_empty());
+}
+
+#[test]
+fn invalid_client_broadcasts_do_not_fail_room_updates_or_close_client() {
+    let invalid_payloads = [
+        "not json".to_string(),
+        r#"{"protocol":"ppoker""#.to_string(),
+        serde_json::json!({
+            "protocol": "foreign",
+            "version": 1,
+            "event": { "kind": "autoRevealAnnounced", "value": { "countdownMs": 3000 } }
+        })
+        .to_string(),
+        serde_json::json!({
+            "protocol": "ppoker",
+            "version": 99,
+            "event": { "kind": "autoRevealAnnounced", "value": { "countdownMs": 3000 } }
+        })
+        .to_string(),
+        serde_json::json!({
+            "protocol": "ppoker",
+            "version": 1,
+            "event": { "kind": "futureEvent", "value": {} }
+        })
+        .to_string(),
+        serde_json::json!({
+            "protocol": "ppoker",
+            "version": 1,
+            "event": { "kind": "autoRevealAnnounced", "value": { "countdownMs": "soon" } }
+        })
+        .to_string(),
+    ];
+    let payload = room_payload_with_wire_logs(
+        invalid_payloads
+            .into_iter()
+            .map(|message| serde_json::json!({ "level": "CLIENT_BROADCAST", "message": message }))
+            .collect(),
+    );
+    let (mut client, state) =
+        fake_client(vec![TransportEvent::Opened, TransportEvent::Text(payload)]);
+
+    let outcome = client.poll().unwrap();
+
+    assert!(outcome.changed);
+    assert_eq!(outcome.updates.len(), 1);
+    assert_eq!(client.status(), ConnectionStatus::Open);
+    assert!(client.terminal_error().is_none());
+    assert!(client.room_events().is_empty());
+    assert!(client.log().is_empty());
+    assert_eq!(state.borrow().closes, 0);
+
+    enqueue(&state, room_event("PLAYING", &[("Alice", "", true)]));
+    client.poll().unwrap();
+    assert_eq!(client.status(), ConnectionStatus::Open);
+}
+
+#[test]
 fn aggregate_snapshot_is_core_owned_and_uses_safe_milliseconds() {
     let clock = Rc::new(ManualClock::default());
     let mut session = new_client(clock.clone());
@@ -864,6 +1225,7 @@ fn aggregate_snapshot_is_core_owned_and_uses_safe_milliseconds() {
     assert_eq!(aggregate.local_name, "Alice");
     assert_eq!(aggregate.local_vote, Some(VoteData::Number(5)));
     assert_eq!(aggregate.log.len(), 1);
+    assert!(aggregate.room_events.is_empty());
     assert_eq!(log.timestamp, Duration::ZERO);
     assert_eq!(log.level, LogLevel::Info);
     assert_eq!(log.message, "joined");
@@ -886,6 +1248,7 @@ fn aggregate_snapshot_is_core_owned_and_uses_safe_milliseconds() {
     assert_eq!(value["localName"], "Alice");
     assert_eq!(value["localVote"]["value"], 5);
     assert_eq!(value["log"][0]["timestampMs"], 0.0);
+    assert_eq!(value["roomEvents"], serde_json::json!([]));
     assert_eq!(value["roundNumber"], 1);
     assert!(value.get("roundStartedAtMs").is_none());
     assert!(value["history"][0].get("lengthMs").is_none());

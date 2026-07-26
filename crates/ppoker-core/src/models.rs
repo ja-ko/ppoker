@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::fmt::Formatter;
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub(crate) const MAX_SAFE_INTEGER: u128 = 9_007_199_254_740_991;
 
@@ -111,6 +111,24 @@ pub struct Room {
     pub deck: Vec<String>,
     pub phase: GamePhase,
     pub players: Vec<Player>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
+#[serde(tag = "kind", content = "value", rename_all = "camelCase")]
+pub enum RoomEvent {
+    AutoRevealAnnounced {
+        #[serde(rename = "countdownMs")]
+        countdown_ms: u32,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+#[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
+#[serde(rename_all = "camelCase")]
+pub struct RoomEventEntry {
+    pub sequence: u32,
+    pub event: RoomEvent,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize)]
