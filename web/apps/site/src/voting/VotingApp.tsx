@@ -7,6 +7,7 @@ import {
 
 import type { MonotonicScheduler } from "./auto-reveal";
 import type { RecognitionRuntime } from "./handwriting";
+import type { ScreenWakeLockControl } from "./screen-wake-lock";
 import { VotingRoom } from "./VotingRoom";
 import { VotingStatus } from "./VotingStatus";
 import type { VoterNameSession } from "./voter-session";
@@ -23,6 +24,7 @@ export interface VotingAppProps extends VotingAppDependencies {
   readonly nameSession: VoterNameSession;
   readonly onReconnect: () => void;
   readonly room: string;
+  readonly wakeLock: ScreenWakeLockControl;
 }
 
 export function VotingApp({ client, ...props }: VotingAppProps) {
@@ -41,6 +43,7 @@ export function VotingClientView({
   nameSession,
   onReconnect,
   room,
+  wakeLock,
 }: Omit<VotingAppProps, "client">) {
   const client = usePokerClient();
   const snapshot = usePokerClientSnapshot();
@@ -77,6 +80,7 @@ export function VotingClientView({
         nameSession={nameSession}
         roomCode={room}
         snapshot={snapshot}
+        wakeLock={wakeLock}
         {...(autoRevealScheduler === undefined ? {} : { autoRevealScheduler })}
         {...(createRecognitionRuntime === undefined
           ? {}

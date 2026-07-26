@@ -1,4 +1,11 @@
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -9,11 +16,24 @@ const originalVisibilityState = Object.getOwnPropertyDescriptor(
   "visibilityState",
 );
 const originalWakeLock = Object.getOwnPropertyDescriptor(navigator, "wakeLock");
+const originalUserActivation = Object.getOwnPropertyDescriptor(
+  navigator,
+  "userActivation",
+);
 let visibilityState: DocumentVisibilityState;
 
 function WakeLockProbe({ active = true }: { readonly active?: boolean }) {
-  useScreenWakeLock(active);
-  return null;
+  const wakeLock = useScreenWakeLock(active);
+  return (
+    <>
+      <output data-testid="wake-lock-status">{wakeLock.status}</output>
+      {wakeLock.status === "needs-activation" ? (
+        <button onClick={wakeLock.request} type="button">
+          Keep screen awake
+        </button>
+      ) : null}
+    </>
+  );
 }
 
 describe("useScreenWakeLock", () => {
@@ -29,6 +49,7 @@ describe("useScreenWakeLock", () => {
     cleanup();
     restoreProperty(document, "visibilityState", originalVisibilityState);
     restoreProperty(navigator, "wakeLock", originalWakeLock);
+    restoreProperty(navigator, "userActivation", originalUserActivation);
   });
 
   it("acquires a screen wake lock while initially visible", async () => {
@@ -44,6 +65,7 @@ describe("useScreenWakeLock", () => {
     });
     expect(request).toHaveBeenCalledOnce();
     expect(request).toHaveBeenCalledWith("screen");
+    expect(screen.getByTestId("wake-lock-status").textContent).toBe("held");
 
     view.unmount();
   });
@@ -149,6 +171,9 @@ describe("useScreenWakeLock", () => {
     expect(
       addEventListener.mock.calls.some(([type]) => type === "visibilitychange"),
     ).toBe(false);
+    expect(screen.getByTestId("wake-lock-status").textContent).toBe(
+      "unsupported",
+    );
     view.unmount();
   });
 
@@ -162,6 +187,9 @@ describe("useScreenWakeLock", () => {
       expect(request).toHaveBeenCalledOnce();
     });
     await act(() => Promise.resolve());
+    expect(screen.getByTestId("wake-lock-status").textContent).toBe(
+      "needs-activation",
+    );
 
     act(() => {
       setVisibility("visible");
@@ -185,6 +213,9 @@ describe("useScreenWakeLock", () => {
       expect(request).toHaveBeenCalledOnce();
     });
     await act(() => Promise.resolve());
+    expect(
+      screen.getByRole("button", { name: "Keep screen awake" }),
+    ).toBeTruthy();
 
     act(() => {
       document.dispatchEvent(new Event("pointerup", { bubbles: true }));
@@ -194,6 +225,114 @@ describe("useScreenWakeLock", () => {
       expect(request).toHaveBeenCalledTimes(2);
       expect(sentinel.listenerCount).toBe(1);
     });
+    expect(screen.getByTestId("wake-lock-status").textContent).toBe("held");
+    expect(
+      screen.queryByRole("button", { name: "Keep screen awake" }),
+    ).toBeNull();
+    view.unmount();
+  });
+
+  it("ignores a drawing release without activation and retries on the next click", async () => {
+    let isActive = false;
+    Object.defineProperty(navigator, "userActivation", {
+      configurable: true,
+      value: {
+        get isActive() {
+          return isActive;
+        },
+      },
+    });
+    const sentinel = new FakeWakeLockSentinel();
+    const request = wakeLockRequest();
+    request
+      .mockRejectedValueOnce(new DOMException("Denied", "NotAllowedError"))
+      .mockResolvedValueOnce(asSentinel(sentinel));
+    installWakeLock(request);
+    const view = render(<WakeLockProbe />);
+    await waitFor(() => {
+      expect(screen.getByTestId("wake-lock-status").textContent).toBe(
+        "needs-activation",
+      );
+    });
+
+    act(() => {
+      document.dispatchEvent(new Event("pointerup", { bubbles: true }));
+    });
+    expect(request).toHaveBeenCalledOnce();
+
+    isActive = true;
+    act(() => {
+      document.dispatchEvent(new Event("click", { bubbles: true }));
+    });
+    await waitFor(() => {
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(screen.getByTestId("wake-lock-status").textContent).toBe("held");
+    });
+
+    view.unmount();
+  });
+
+  it("lets an interactive tap reach click before requesting the lock", async () => {
+    Object.defineProperty(navigator, "userActivation", {
+      configurable: true,
+      value: { isActive: true },
+    });
+    const pending = deferred<WakeLockSentinel>();
+    const sentinel = new FakeWakeLockSentinel();
+    const request = wakeLockRequest();
+    request
+      .mockRejectedValueOnce(new DOMException("Denied", "NotAllowedError"))
+      .mockReturnValueOnce(pending.promise);
+    installWakeLock(request);
+    const view = render(<WakeLockProbe />);
+    const action = await screen.findByRole("button", {
+      name: "Keep screen awake",
+    });
+
+    fireEvent.pointerUp(action);
+    expect(request).toHaveBeenCalledOnce();
+
+    fireEvent.click(action);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("wake-lock-status").textContent).toBe(
+      "needs-activation",
+    );
+    expect(action.isConnected).toBe(true);
+
+    await act(async () => {
+      pending.resolve(asSentinel(sentinel));
+      await pending.promise;
+    });
+    expect(screen.getByTestId("wake-lock-status").textContent).toBe("held");
+    expect(action.isConnected).toBe(false);
+
+    view.unmount();
+  });
+
+  it("stops offering activation retries after an activated request fails", async () => {
+    Object.defineProperty(navigator, "userActivation", {
+      configurable: true,
+      value: { isActive: true },
+    });
+    const request = wakeLockRequest();
+    request.mockRejectedValue(new DOMException("Denied", "NotAllowedError"));
+    installWakeLock(request);
+    const view = render(<WakeLockProbe />);
+    const action = await screen.findByRole("button", {
+      name: "Keep screen awake",
+    });
+
+    fireEvent.click(action);
+    await waitFor(() => {
+      expect(screen.getByTestId("wake-lock-status").textContent).toBe(
+        "unavailable",
+      );
+    });
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(action.isConnected).toBe(false);
+
+    fireEvent.click(document);
+    expect(request).toHaveBeenCalledTimes(2);
     view.unmount();
   });
 

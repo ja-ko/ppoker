@@ -21,7 +21,10 @@ import {
   parseVotingConfig,
   type ConfigError,
 } from "./config";
-import { useScreenWakeLock } from "./voting/screen-wake-lock";
+import {
+  useScreenWakeLock,
+  type ScreenWakeLockControl,
+} from "./voting/screen-wake-lock";
 import { VotingApp } from "./voting/VotingApp";
 import { VotingStatus } from "./voting/VotingStatus";
 import type {
@@ -271,7 +274,7 @@ function VotingScreen({
   readonly sessions: VotingSessionManager;
 }) {
   const isPresent = useIsPresent();
-  useScreenWakeLock(isPresent);
+  const wakeLock = useScreenWakeLock(isPresent);
   const data = useLoaderData<RoomRouteData>();
   const session = useSyncExternalStore(
     sessions.subscribe,
@@ -287,6 +290,7 @@ function VotingScreen({
       expectedRoom={data.room}
       onReconnect={sessions.reconnect}
       session={session}
+      wakeLock={wakeLock}
     />
   );
 }
@@ -295,10 +299,12 @@ function VotingSessionView({
   expectedRoom,
   onReconnect,
   session,
+  wakeLock,
 }: {
   readonly expectedRoom: string;
   readonly onReconnect: () => void;
   readonly session: VotingSessionSnapshot;
+  readonly wakeLock: ScreenWakeLockControl;
 }) {
   if (session.status === "idle" || session.room !== expectedRoom) {
     return (
@@ -340,6 +346,7 @@ function VotingSessionView({
       nameSession={session.nameSession}
       onReconnect={onReconnect}
       room={session.room}
+      wakeLock={wakeLock}
     />
   );
 }

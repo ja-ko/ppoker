@@ -1,4 +1,17 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+
+export type ScreenWakeLockStatus =
+  | "held"
+  | "inactive"
+  | "needs-activation"
+  | "requesting"
+  | "unavailable"
+  | "unsupported";
+
+export interface ScreenWakeLockControl {
+  readonly request: () => void;
+  readonly status: ScreenWakeLockStatus;
+}
 
 interface HeldWakeLock {
   readonly onRelease: () => void;
@@ -9,12 +22,16 @@ class ScreenWakeLockCoordinator {
   #activation: object | null = null;
   #activeConsumers = 0;
   #held: HeldWakeLock | null = null;
+  readonly #listeners = new Set<() => void>();
   #requestInFlight = false;
+  #status: ScreenWakeLockStatus = "inactive";
   #userActivationArmed = false;
   #visibilityVersion = 0;
   #wakeLock: WakeLock | null = null;
 
-  readonly #handleUserActivation = (): void => {
+  readonly getStatus = (): ScreenWakeLockStatus => this.#status;
+
+  readonly requestFromUserActivation = (): void => {
     const userActivation = (
       navigator as unknown as { readonly userActivation?: UserActivation }
     ).userActivation;
@@ -22,7 +39,26 @@ class ScreenWakeLockCoordinator {
       return;
     }
     this.#disarmUserActivation();
-    this.#request();
+    this.#request(true);
+  };
+
+  readonly #handlePointerUp = (event: Event): void => {
+    const interactiveTarget =
+      event.target instanceof Element
+        ? event.target.closest(
+            "a, button, input, select, textarea, [role='button'], [role='link']",
+          )
+        : null;
+    if (interactiveTarget === null) {
+      this.requestFromUserActivation();
+    }
+  };
+
+  readonly subscribe = (listener: () => void): (() => void) => {
+    this.#listeners.add(listener);
+    return () => {
+      this.#listeners.delete(listener);
+    };
   };
 
   readonly #handleVisibilityChange = (): void => {
@@ -30,25 +66,26 @@ class ScreenWakeLockCoordinator {
       this.#visibilityVersion += 1;
       this.#disarmUserActivation();
       this.#releaseHeld();
+      this.#setStatus("inactive");
       return;
     }
     this.#request();
   };
 
   acquire(activation: object): () => void {
-    if (!("wakeLock" in navigator)) {
-      return () => undefined;
-    }
-
     this.#activeConsumers += 1;
     if (this.#activeConsumers === 1) {
       this.#activation = activation;
-      this.#wakeLock = navigator.wakeLock;
-      document.addEventListener(
-        "visibilitychange",
-        this.#handleVisibilityChange,
-      );
-      this.#request();
+      if (!("wakeLock" in navigator)) {
+        this.#setStatus("unsupported");
+      } else {
+        this.#wakeLock = navigator.wakeLock;
+        document.addEventListener(
+          "visibilitychange",
+          this.#handleVisibilityChange,
+        );
+        this.#request();
+      }
     }
 
     let released = false;
@@ -73,9 +110,10 @@ class ScreenWakeLockCoordinator {
     this.#activation = null;
     this.#wakeLock = null;
     this.#releaseHeld();
+    this.#setStatus("inactive");
   }
 
-  #request(): void {
+  #request(fromUserActivation = false): void {
     const activation = this.#activation;
     const wakeLock = this.#wakeLock;
     if (
@@ -92,13 +130,16 @@ class ScreenWakeLockCoordinator {
     const visibilityVersion = this.#visibilityVersion;
     this.#disarmUserActivation();
     this.#requestInFlight = true;
+    if (!fromUserActivation) {
+      this.#setStatus("requesting");
+    }
 
     let request: Promise<WakeLockSentinel>;
     try {
       request = wakeLock.request("screen");
     } catch {
       this.#requestInFlight = false;
-      this.#armUserActivation();
+      this.#handleRequestFailure(fromUserActivation);
       return;
     }
 
@@ -129,7 +170,7 @@ class ScreenWakeLockCoordinator {
         ) {
           this.#request();
         } else if (activeAndVisible) {
-          this.#armUserActivation();
+          this.#handleRequestFailure(fromUserActivation);
         }
       },
     );
@@ -147,6 +188,7 @@ class ScreenWakeLockCoordinator {
     };
 
     this.#held = { onRelease, sentinel };
+    this.#setStatus("held");
     sentinel.addEventListener("release", onRelease);
     if (sentinel.released) {
       onRelease();
@@ -174,8 +216,9 @@ class ScreenWakeLockCoordinator {
       return;
     }
     this.#userActivationArmed = true;
-    document.addEventListener("keydown", this.#handleUserActivation, true);
-    document.addEventListener("pointerup", this.#handleUserActivation, true);
+    document.addEventListener("click", this.requestFromUserActivation, true);
+    document.addEventListener("keydown", this.requestFromUserActivation, true);
+    document.addEventListener("pointerup", this.#handlePointerUp, true);
   }
 
   #disarmUserActivation(): void {
@@ -183,16 +226,45 @@ class ScreenWakeLockCoordinator {
       return;
     }
     this.#userActivationArmed = false;
-    document.removeEventListener("keydown", this.#handleUserActivation, true);
-    document.removeEventListener("pointerup", this.#handleUserActivation, true);
+    document.removeEventListener("click", this.requestFromUserActivation, true);
+    document.removeEventListener(
+      "keydown",
+      this.requestFromUserActivation,
+      true,
+    );
+    document.removeEventListener("pointerup", this.#handlePointerUp, true);
+  }
+
+  #handleRequestFailure(fromUserActivation: boolean): void {
+    if (fromUserActivation) {
+      this.#setStatus("unavailable");
+      return;
+    }
+    this.#setStatus("needs-activation");
+    this.#armUserActivation();
+  }
+
+  #setStatus(status: ScreenWakeLockStatus): void {
+    if (this.#status === status) {
+      return;
+    }
+    this.#status = status;
+    for (const listener of this.#listeners) {
+      listener();
+    }
   }
 }
 
 const screenWakeLock = new ScreenWakeLockCoordinator();
 
-export function useScreenWakeLock(active: boolean): void {
+export function useScreenWakeLock(active: boolean): ScreenWakeLockControl {
   const activation = useRef<object>({});
   const wasActive = useRef(false);
+  const status = useSyncExternalStore(
+    screenWakeLock.subscribe,
+    screenWakeLock.getStatus,
+    screenWakeLock.getStatus,
+  );
 
   useEffect(() => {
     if (!active) {
@@ -205,6 +277,8 @@ export function useScreenWakeLock(active: boolean): void {
     }
     return screenWakeLock.acquire(activation.current);
   }, [active]);
+
+  return { request: screenWakeLock.requestFromUserActivation, status };
 }
 
 async function releaseSilently(sentinel: WakeLockSentinel): Promise<void> {
