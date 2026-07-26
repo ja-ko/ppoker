@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::marker::PhantomData;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -8,8 +9,8 @@ use log::warn;
 use serde::Serialize;
 
 use crate::models::{
-    duration_ms, GamePhase, HistoryEntry, LogEntry, LogSource, Room, RoomEvent, RoomEventEntry,
-    Vote, VoteData,
+    duration_ms, AutoRevealAnnounced, GamePhase, HistoryEntry, LogEntry, LogSource, Room,
+    RoomEvent, RoomEventEntry, RoomEventType, Vote, VoteData,
 };
 use crate::protocol::{
     decode_room_snapshot, encode_change_name, encode_chat_message, encode_client_broadcast,
@@ -115,7 +116,7 @@ pub struct ClientSnapshot {
     pub local_name: String,
     pub local_vote: Option<VoteData>,
     pub log: Vec<LogEntry>,
-    pub room_events: Vec<RoomEventEntry>,
+    pub room_events: Vec<RoomEvent>,
     pub round_number: u32,
     pub history: Vec<HistoryEntry>,
     pub average: Option<f32>,
@@ -140,8 +141,47 @@ pub trait Transport {
 pub struct RoomTransition {
     pub previous_room: Option<Room>,
     pub room: Room,
-    pub new_room_events: Vec<RoomEventEntry>,
+    pub new_room_events: Vec<RoomEvent>,
     pub history_len: usize,
+}
+
+impl RoomTransition {
+    pub fn events<'a, Event>(&'a self) -> impl Iterator<Item = &'a Event>
+    where
+        Event: RoomEventType + 'a,
+    {
+        self.new_room_events.iter().filter_map(Event::extract)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RoomEventSubscription<Event> {
+    cursor: usize,
+    event: PhantomData<fn() -> Event>,
+    source: Rc<()>,
+}
+
+impl<Event> RoomEventSubscription<Event>
+where
+    Event: RoomEventType,
+{
+    /// Returns owned matching events received by the subscription's client.
+    ///
+    /// Passing another client is rejected with a warning and leaves the cursor
+    /// unchanged, so a later call with the originating client remains valid.
+    pub fn take_new(&mut self, client: &Client) -> Vec<Event> {
+        if !Rc::ptr_eq(&self.source, &client.room_event_source) {
+            warn!("Ignoring a room-event subscription read from a different client.");
+            return Vec::new();
+        }
+        let events = client.live_room_events[self.cursor..]
+            .iter()
+            .filter_map(Event::extract)
+            .cloned()
+            .collect();
+        self.cursor = client.live_room_events.len();
+        events
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -179,6 +219,8 @@ pub struct Client {
     room: Option<Room>,
     log: Vec<LogEntry>,
     room_events: Vec<RoomEventEntry>,
+    live_room_events: Vec<RoomEvent>,
+    room_event_source: Rc<()>,
     seen_server_log_indexes: HashSet<u32>,
     round_number: u32,
     history: Vec<HistoryEntry>,
@@ -198,6 +240,8 @@ impl Client {
             room: None,
             log: vec![],
             room_events: vec![],
+            live_room_events: vec![],
+            room_event_source: Rc::new(()),
             seen_server_log_indexes: HashSet::new(),
             round_number: 0,
             history: vec![],
@@ -251,8 +295,27 @@ impl Client {
         &self.log
     }
 
-    pub fn room_events(&self) -> &[RoomEventEntry] {
-        &self.room_events
+    /// Subscribes to events received after this call from this client only.
+    pub fn subscribe_room_events<Event>(&self) -> RoomEventSubscription<Event>
+    where
+        Event: RoomEventType,
+    {
+        RoomEventSubscription {
+            cursor: self.live_room_events.len(),
+            event: PhantomData,
+            source: self.room_event_source.clone(),
+        }
+    }
+
+    pub fn room_events(&self) -> impl Iterator<Item = &RoomEvent> {
+        self.room_events.iter().map(|entry| &entry.event)
+    }
+
+    pub fn room_events_of<'a, Event>(&'a self) -> impl Iterator<Item = &'a Event>
+    where
+        Event: RoomEventType + 'a,
+    {
+        self.room_events().filter_map(Event::extract)
     }
 
     pub fn round_number(&self) -> u32 {
@@ -283,7 +346,7 @@ impl Client {
             local_name: self.name.clone(),
             local_vote: self.vote.clone(),
             log: self.log.clone(),
-            room_events: self.room_events.clone(),
+            room_events: self.room_events().cloned().collect(),
             round_number: self.round_number,
             history: self.history.clone(),
             average: snapshot_average(self.average_votes())?,
@@ -486,7 +549,10 @@ impl Client {
                     .room_events
                     .partition_point(|retained| retained.sequence < entry.sequence);
                 self.room_events.insert(position, entry.clone());
-                new_room_events.push(entry);
+                if !first_room {
+                    self.live_room_events.push(entry.event.clone());
+                    new_room_events.push(entry.event);
+                }
                 changed = true;
             }
         }
@@ -599,7 +665,10 @@ impl Client {
         let result = (|| {
             self.ensure_ready()?;
             let countdown_ms = auto_reveal_countdown_ms(countdown)?;
-            let request = encode_client_broadcast(&RoomEvent::AutoRevealAnnounced { countdown_ms })
+            let request =
+                encode_client_broadcast(&RoomEvent::AutoRevealAnnounced(AutoRevealAnnounced {
+                    countdown_ms,
+                }))
                 .map_err(|error| ClientError::protocol(error.to_string()))?;
             self.send_request(request)
         })();

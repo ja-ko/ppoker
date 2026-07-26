@@ -4,7 +4,7 @@ use crate::app::{test_room_event, test_snapshot_event, App};
 use crate::config::Config;
 use crate::models::{GamePhase, LogLevel, LogSource, Player, Room, UserType, Vote, VoteData};
 use ppoker_core::client::{Client, Transport, TransportEvent};
-use ppoker_core::models::RoomEvent;
+use ppoker_core::models::{AutoRevealAnnounced, RoomEvent};
 use ppoker_core::protocol::{RoomSnapshot, ServerLogEntry};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -468,9 +468,9 @@ fn run_live_native_attempt(mut config: Config) -> Result<(), String> {
     client2
         .vote("3")
         .map_err(|error| format!("second participant vote failed: {error}"))?;
-    let expected_auto_reveal = RoomEvent::AutoRevealAnnounced {
+    let expected_auto_reveal = RoomEvent::AutoRevealAnnounced(AutoRevealAnnounced {
         countdown_ms: LIVE_AUTO_REVEAL_COUNTDOWN_MS,
-    };
+    });
     client2
         .announce_auto_reveal(Duration::from_millis(LIVE_AUTO_REVEAL_COUNTDOWN_MS.into()))
         .map_err(|error| format!("second participant auto-reveal announcement failed: {error}"))?;
@@ -517,8 +517,7 @@ fn run_live_native_attempt(mut config: Config) -> Result<(), String> {
                 .any(|player| !player.is_you && player.name == first_name);
         let auto_reveal_echo_confirmed = client2
             .room_events()
-            .iter()
-            .any(|entry| entry.event == expected_auto_reveal);
+            .any(|event| event == &expected_auto_reveal);
 
         if first_room_confirmed
             && second_room_confirmed
@@ -537,7 +536,7 @@ fn run_live_native_attempt(mut config: Config) -> Result<(), String> {
                 .into_iter()
                 .map(|entry| (entry.source, entry.message.as_str()))
                 .collect::<Vec<_>>();
-            let second_room_events = client2.room_events();
+            let second_room_events = client2.room_events().cloned().collect::<Vec<_>>();
             return Err(format!(
                 "timed out waiting for authoritative state in room {room_name:?}: first_room={:?} ({first_room_confirmed}), second_room={:?} ({second_room_confirmed}), first_players={:?} ({first_players_confirmed}), second_players={:?} ({second_players_confirmed}), first_vote={first_vote_confirmed}, second_vote={second_vote_confirmed}, expected_chat={expected_chat:?}, chat={chat_confirmed}, expected_auto_reveal={expected_auto_reveal:?}, auto_reveal_echo={auto_reveal_echo_confirmed}, second_room_events={second_room_events:?}, first_log={first_log:?}",
                 first_room.name,

@@ -38,12 +38,23 @@ export class FakePokerClient implements PokerClient {
 
   readonly getSnapshot = (): ClientSnapshot => this.#snapshot;
 
+  readonly getRoomEvents = ((kind: string) =>
+    this.#snapshot.roomEvents
+      .filter((event) => event.kind.localeCompare(kind) === 0)
+      .map((event) => event.value)) as PokerClient["getRoomEvents"];
+
   readonly subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener);
     return () => {
       this.#listeners.delete(listener);
     };
   };
+
+  readonly subscribeRoomEvent = (() => () =>
+    undefined) as PokerClient["subscribeRoomEvent"];
+
+  readonly subscribeRoomEvents = (() => () =>
+    undefined) as PokerClient["subscribeRoomEvents"];
 
   publish(snapshot: ClientSnapshot): void {
     this.#snapshot = deepFreeze(snapshot);

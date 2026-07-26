@@ -115,19 +115,48 @@ pub struct Room {
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
-#[serde(tag = "kind", content = "value", rename_all = "camelCase")]
-pub enum RoomEvent {
-    AutoRevealAnnounced {
-        #[serde(rename = "countdownMs")]
-        countdown_ms: u32,
-    },
+#[serde(rename_all = "camelCase")]
+pub struct AutoRevealAnnounced {
+    pub countdown_ms: u32,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(tsify::Tsify))]
-#[serde(rename_all = "camelCase")]
+#[serde(tag = "kind", content = "value", rename_all = "camelCase")]
+pub enum RoomEvent {
+    AutoRevealAnnounced(AutoRevealAnnounced),
+}
+
+mod room_event_type_private {
+    pub trait Sealed {}
+}
+
+pub trait RoomEventType: room_event_type_private::Sealed + Clone {
+    #[doc(hidden)]
+    fn extract(event: &RoomEvent) -> Option<&Self>;
+}
+
+impl room_event_type_private::Sealed for AutoRevealAnnounced {}
+
+impl RoomEventType for AutoRevealAnnounced {
+    fn extract(event: &RoomEvent) -> Option<&Self> {
+        match event {
+            RoomEvent::AutoRevealAnnounced(event) => Some(event),
+        }
+    }
+}
+
+impl room_event_type_private::Sealed for RoomEvent {}
+
+impl RoomEventType for RoomEvent {
+    fn extract(event: &RoomEvent) -> Option<&Self> {
+        Some(event)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct RoomEventEntry {
-    pub sequence: u32,
+    pub(crate) sequence: u32,
     pub event: RoomEvent,
 }
 

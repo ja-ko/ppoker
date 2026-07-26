@@ -67,11 +67,8 @@ describe("AutoRevealController", () => {
       revision: 2,
       roomEvents: [
         {
-          sequence: 4,
-          event: {
-            kind: "autoRevealAnnounced",
-            value: { countdownMs: AUTO_REVEAL_DELAY_MS },
-          },
+          kind: "autoRevealAnnounced",
+          value: { countdownMs: AUTO_REVEAL_DELAY_MS },
         },
       ],
     });

@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use ppoker_core::client::{ClientError, ClientSnapshot, TransportEvent};
 use ppoker_core::models::{
-    GamePhase, HistoryEntry, LogEntry, LogLevel, LogSource, Player, Room, RoomEvent,
-    RoomEventEntry, UserType, Vote, VoteData,
+    AutoRevealAnnounced, GamePhase, HistoryEntry, LogEntry, LogLevel, LogSource, Player, Room,
+    RoomEvent, UserType, Vote, VoteData,
 };
 
 use super::*;
@@ -224,19 +224,33 @@ fn event_sink_releases_client_before_notifying() {
         Rc::new(ManualClock::default()),
     )));
     let notifier_client = client.clone();
-    let notifications = Rc::new(Cell::new(0));
+    let notifications = Rc::new(RefCell::new(Vec::new()));
     let notifier_notifications = notifications.clone();
     let events = event_sink(
         Rc::downgrade(&client),
-        Rc::new(move || {
+        Rc::new(move |room_events| {
             assert!(notifier_client.try_borrow_mut().is_ok());
-            notifier_notifications.set(notifier_notifications.get() + 1);
+            notifier_notifications.borrow_mut().push(room_events);
         }),
     );
 
     events(TransportEvent::Opened);
+    events(TransportEvent::Text(room_payload_with_events(&[1000])));
+    events(TransportEvent::Text(room_payload_with_events(&[
+        1000, 2000, 3000,
+    ])));
 
-    assert_eq!(notifications.get(), 1);
+    assert_eq!(
+        notifications.borrow().as_slice(),
+        [
+            vec![],
+            vec![],
+            vec![
+                RoomEvent::AutoRevealAnnounced(AutoRevealAnnounced { countdown_ms: 2000 }),
+                RoomEvent::AutoRevealAnnounced(AutoRevealAnnounced { countdown_ms: 3000 }),
+            ],
+        ]
+    );
     assert_eq!(client.borrow().status(), ConnectionStatus::Open);
 }
 
@@ -255,6 +269,29 @@ fn room_payload(phase: &str, vote: &str) -> String {
         "log": []
     })
     .to_string()
+}
+
+fn room_payload_with_events(countdowns: &[u32]) -> String {
+    let mut room: serde_json::Value = serde_json::from_str(&room_payload("PLAYING", "")).unwrap();
+    room["log"] = serde_json::Value::Array(
+        countdowns
+            .iter()
+            .map(|countdown_ms| {
+                serde_json::json!({
+                    "level": "CLIENT_BROADCAST",
+                    "message": serde_json::json!({
+                        "protocol": "ppoker",
+                        "version": 1,
+                        "event": {
+                            "kind": "autoRevealAnnounced",
+                            "value": { "countdownMs": countdown_ms }
+                        }
+                    }).to_string()
+                })
+            })
+            .collect(),
+    );
+    room.to_string()
 }
 
 #[test]
@@ -296,8 +333,8 @@ fn generated_declarations_are_strongly_typed_and_match_null_runtime_values() {
         Vote::DECL,
         Player::DECL,
         Room::DECL,
+        AutoRevealAnnounced::DECL,
         RoomEvent::DECL,
-        RoomEventEntry::DECL,
         LogLevel::DECL,
         LogSource::DECL,
         LogEntry::DECL,
@@ -313,17 +350,16 @@ fn generated_declarations_are_strongly_typed_and_match_null_runtime_values() {
         "role: ConnectionRole",
         "export type Vote",
         "export interface Room",
+        "export interface AutoRevealAnnounced",
         "export type RoomEvent",
         "countdownMs: number",
-        "export interface RoomEventEntry",
-        "event: RoomEvent",
         "export interface ClientSnapshot",
         "revision: number",
         "InvalidCard",
         "InvalidState",
         "terminalError: ClientError | null",
         "room: Room | null",
-        "roomEvents: RoomEventEntry[]",
+        "roomEvents: RoomEvent[]",
         "average: number | null",
     ];
     let missing = expected
@@ -340,4 +376,5 @@ fn generated_declarations_are_strongly_typed_and_match_null_runtime_values() {
         forbidden.is_none(),
         "generated declarations contain `{forbidden:?}`:\n{declarations}"
     );
+    assert!(!declarations.contains("sequence"));
 }

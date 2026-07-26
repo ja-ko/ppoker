@@ -1046,11 +1046,8 @@ describe("VotingApp voter name", () => {
         ...roomSnapshot({ revision: 2 }),
         roomEvents: [
           {
-            sequence: 4,
-            event: {
-              kind: "autoRevealAnnounced",
-              value: { countdownMs: 3_000 },
-            },
+            kind: "autoRevealAnnounced",
+            value: { countdownMs: 3_000 },
           },
         ],
       });

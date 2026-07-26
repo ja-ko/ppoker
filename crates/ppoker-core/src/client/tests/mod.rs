@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 
-use crate::models::{LogLevel, Player, RoomEvent, RoomEventEntry, UserType};
+use crate::models::{AutoRevealAnnounced, LogLevel, Player, RoomEvent, UserType};
 use crate::protocol::decode_room_snapshot;
 
 use super::*;
@@ -136,6 +136,10 @@ fn auto_reveal_payload(countdown_ms: u32) -> String {
         }
     })
     .to_string()
+}
+
+fn auto_reveal_event(countdown_ms: u32) -> RoomEvent {
+    RoomEvent::AutoRevealAnnounced(AutoRevealAnnounced { countdown_ms })
 }
 
 fn snapshot(payload: String) -> RoomSnapshot {
@@ -429,17 +433,16 @@ fn poll_batch_exposes_ordered_event_deltas_and_retains_cumulative_events() {
             .map(room_transition)
             .map(|transition| {
                 transition
-                    .new_room_events
-                    .iter()
-                    .map(|entry| entry.sequence)
+                    .events::<AutoRevealAnnounced>()
+                    .map(|event| event.countdown_ms)
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>(),
-        [vec![0, 2], vec![3], vec![5, 6]]
+        [vec![], vec![3000], vec![5000, 6000]]
     );
     assert_eq!(
         client
-            .room_events()
+            .room_events
             .iter()
             .map(|entry| entry.sequence)
             .collect::<Vec<_>>(),
@@ -447,9 +450,258 @@ fn poll_batch_exposes_ordered_event_deltas_and_retains_cumulative_events() {
     );
     assert_eq!(
         client.snapshot().unwrap().room_events.as_slice(),
-        client.room_events()
+        client.room_events().cloned().collect::<Vec<_>>()
     );
     assert_eq!(client.revision(), revision + 1);
+}
+
+#[test]
+fn typed_room_event_history_and_live_subscriptions_are_independent() {
+    let first_logs = vec![serde_json::json!({
+        "level": "CLIENT_BROADCAST",
+        "message": auto_reveal_payload(1000)
+    })];
+    let mut second_logs = first_logs.clone();
+    second_logs.push(serde_json::json!({
+        "level": "CLIENT_BROADCAST",
+        "message": auto_reveal_payload(2000)
+    }));
+    let mut third_logs = second_logs.clone();
+    third_logs.extend([
+        serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": auto_reveal_payload(3000)
+        }),
+        serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": auto_reveal_payload(4000)
+        }),
+    ]);
+    let (mut client, state) = fake_client(vec![
+        TransportEvent::Opened,
+        TransportEvent::Text(room_payload_with_wire_logs(first_logs)),
+    ]);
+    let mut before_initial = client.subscribe_room_events::<AutoRevealAnnounced>();
+
+    let initial = client.poll_next_room().unwrap();
+
+    assert!(room_transition(&initial.updates[0])
+        .events::<RoomEvent>()
+        .next()
+        .is_none());
+    assert!(before_initial.take_new(&client).is_empty());
+    assert_eq!(
+        client.room_events().cloned().collect::<Vec<_>>(),
+        [auto_reveal_event(1000)]
+    );
+    assert_eq!(
+        client
+            .room_events_of::<AutoRevealAnnounced>()
+            .map(|event| event.countdown_ms)
+            .collect::<Vec<_>>(),
+        [1000]
+    );
+
+    let mut each_poll = client.subscribe_room_events::<AutoRevealAnnounced>();
+    let mut delayed = client.subscribe_room_events::<AutoRevealAnnounced>();
+    let mut all = client.subscribe_room_events::<RoomEvent>();
+    enqueue(
+        &state,
+        TransportEvent::Text(room_payload_with_wire_logs(second_logs)),
+    );
+    let second = client.poll_next_room().unwrap();
+    assert_eq!(
+        room_transition(&second.updates[0])
+            .events::<AutoRevealAnnounced>()
+            .map(|event| event.countdown_ms)
+            .collect::<Vec<_>>(),
+        [2000]
+    );
+    assert_eq!(
+        each_poll
+            .take_new(&client)
+            .into_iter()
+            .map(|event| event.countdown_ms)
+            .collect::<Vec<_>>(),
+        [2000]
+    );
+
+    let mut late = client.subscribe_room_events::<AutoRevealAnnounced>();
+    enqueue(
+        &state,
+        TransportEvent::Text(room_payload_with_wire_logs(third_logs)),
+    );
+    client.poll_next_room().unwrap();
+
+    let mut latest = each_poll.take_new(&client);
+    latest[0].countdown_ms = 3500;
+    assert_eq!(
+        latest
+            .iter()
+            .map(|event| event.countdown_ms)
+            .collect::<Vec<_>>(),
+        [3500, 4000]
+    );
+    assert_eq!(
+        delayed
+            .take_new(&client)
+            .into_iter()
+            .map(|event| event.countdown_ms)
+            .collect::<Vec<_>>(),
+        [2000, 3000, 4000]
+    );
+    assert_eq!(
+        late.take_new(&client)
+            .into_iter()
+            .map(|event| event.countdown_ms)
+            .collect::<Vec<_>>(),
+        [3000, 4000]
+    );
+    assert_eq!(
+        all.take_new(&client),
+        [
+            auto_reveal_event(2000),
+            auto_reveal_event(3000),
+            auto_reveal_event(4000),
+        ]
+    );
+    assert!(each_poll.take_new(&client).is_empty());
+    assert_eq!(
+        client
+            .room_events_of::<AutoRevealAnnounced>()
+            .map(|event| event.countdown_ms)
+            .collect::<Vec<_>>(),
+        [1000, 2000, 3000, 4000]
+    );
+}
+
+#[test]
+fn room_event_subscriptions_reject_other_clients_without_advancing() {
+    let (mut first, first_state) = fake_client(vec![
+        TransportEvent::Opened,
+        TransportEvent::Text(room_payload_with_wire_logs(vec![])),
+    ]);
+    first.poll_next_room().unwrap();
+    let mut subscription = first.subscribe_room_events::<AutoRevealAnnounced>();
+    enqueue(
+        &first_state,
+        TransportEvent::Text(room_payload_with_wire_logs(vec![serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": auto_reveal_payload(1000)
+        })])),
+    );
+    first.poll_next_room().unwrap();
+
+    let (mut unrelated, unrelated_state) = fake_client(vec![
+        TransportEvent::Opened,
+        TransportEvent::Text(room_payload_with_wire_logs(vec![])),
+    ]);
+    unrelated.poll_next_room().unwrap();
+    enqueue(
+        &unrelated_state,
+        TransportEvent::Text(room_payload_with_wire_logs(vec![serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": auto_reveal_payload(9000)
+        })])),
+    );
+    unrelated.poll_next_room().unwrap();
+
+    assert!(subscription.take_new(&unrelated).is_empty());
+    assert_eq!(
+        subscription
+            .take_new(&first)
+            .into_iter()
+            .map(|event| event.countdown_ms)
+            .collect::<Vec<_>>(),
+        [1000]
+    );
+
+    let mut after_first = first.subscribe_room_events::<AutoRevealAnnounced>();
+    let empty = new_client(Rc::new(ManualClock::default()));
+    assert!(after_first.take_new(&empty).is_empty());
+    enqueue(
+        &first_state,
+        TransportEvent::Text(room_payload_with_wire_logs(vec![
+            serde_json::json!({
+                "level": "CLIENT_BROADCAST",
+                "message": auto_reveal_payload(1000)
+            }),
+            serde_json::json!({
+                "level": "CLIENT_BROADCAST",
+                "message": auto_reveal_payload(2000)
+            }),
+        ])),
+    );
+    first.poll_next_room().unwrap();
+    assert_eq!(
+        after_first
+            .take_new(&first)
+            .into_iter()
+            .map(|event| event.countdown_ms)
+            .collect::<Vec<_>>(),
+        [2000]
+    );
+}
+
+#[test]
+fn out_of_order_room_event_snapshots_keep_history_sorted_and_live_deltas_exact() {
+    let initial = room_payload_with_wire_logs(vec![
+        serde_json::json!({ "level": "CLIENT_BROADCAST", "message": "malformed" }),
+        serde_json::json!({ "level": "CLIENT_BROADCAST", "message": "still malformed" }),
+        serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": auto_reveal_payload(3000)
+        }),
+    ]);
+    let later = room_payload_with_wire_logs(vec![
+        serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": auto_reveal_payload(1000)
+        }),
+        serde_json::json!({ "level": "CLIENT_BROADCAST", "message": "still malformed" }),
+        serde_json::json!({
+            "level": "CLIENT_BROADCAST",
+            "message": auto_reveal_payload(3000)
+        }),
+    ]);
+    let (mut client, state) =
+        fake_client(vec![TransportEvent::Opened, TransportEvent::Text(initial)]);
+    client.poll_next_room().unwrap();
+    let mut subscription = client.subscribe_room_events::<AutoRevealAnnounced>();
+
+    enqueue(&state, TransportEvent::Text(later));
+    let outcome = client.poll_next_room().unwrap();
+
+    assert_eq!(
+        client
+            .room_events
+            .iter()
+            .map(|entry| entry.sequence)
+            .collect::<Vec<_>>(),
+        [0, 2]
+    );
+    assert_eq!(
+        client
+            .room_events_of::<AutoRevealAnnounced>()
+            .map(|event| event.countdown_ms)
+            .collect::<Vec<_>>(),
+        [1000, 3000]
+    );
+    assert_eq!(
+        room_transition(&outcome.updates[0])
+            .events::<AutoRevealAnnounced>()
+            .map(|event| event.countdown_ms)
+            .collect::<Vec<_>>(),
+        [1000]
+    );
+    assert_eq!(
+        subscription
+            .take_new(&client)
+            .into_iter()
+            .map(|event| event.countdown_ms)
+            .collect::<Vec<_>>(),
+        [1000]
+    );
 }
 
 #[test]
@@ -982,7 +1234,7 @@ fn room_snapshots_index_sparse_logs_before_cumulative_updates() {
 }
 
 #[test]
-fn room_events_retain_original_sequence_holes_and_stay_out_of_activity_log() {
+fn initial_room_events_are_retained_without_public_sequences_or_live_delivery() {
     let additive_payload = serde_json::json!({
         "protocol": "ppoker",
         "version": 1,
@@ -1017,40 +1269,36 @@ fn room_events_retain_original_sequence_holes_and_stay_out_of_activity_log() {
         [(Some(0), "first"), (Some(3), "fourth")]
     );
     assert_eq!(
-        client.room_events(),
-        [
-            RoomEventEntry {
-                sequence: 1,
-                event: RoomEvent::AutoRevealAnnounced { countdown_ms: 3000 },
-            },
-            RoomEventEntry {
-                sequence: 5,
-                event: RoomEvent::AutoRevealAnnounced { countdown_ms: 5000 },
-            },
-        ]
+        client.room_events().cloned().collect::<Vec<_>>(),
+        [auto_reveal_event(3000), auto_reveal_event(5000),]
+    );
+    assert_eq!(
+        client
+            .room_events
+            .iter()
+            .map(|entry| entry.sequence)
+            .collect::<Vec<_>>(),
+        [1, 5]
     );
     let transition = room_transition(&outcome.updates[0]);
     assert!(transition.previous_room.is_none());
-    assert_eq!(transition.new_room_events.as_slice(), client.room_events());
+    assert!(transition.events::<RoomEvent>().next().is_none());
 
     let snapshot = client.snapshot().unwrap();
-    assert_eq!(snapshot.room_events.as_slice(), client.room_events());
+    assert_eq!(
+        snapshot.room_events.as_slice(),
+        client.room_events().cloned().collect::<Vec<_>>()
+    );
     assert_eq!(
         serde_json::to_value(snapshot).unwrap()["roomEvents"],
         serde_json::json!([
             {
-                "sequence": 1,
-                "event": {
-                    "kind": "autoRevealAnnounced",
-                    "value": { "countdownMs": 3000 }
-                }
+                "kind": "autoRevealAnnounced",
+                "value": { "countdownMs": 3000 }
             },
             {
-                "sequence": 5,
-                "event": {
-                    "kind": "autoRevealAnnounced",
-                    "value": { "countdownMs": 5000 }
-                }
+                "kind": "autoRevealAnnounced",
+                "value": { "countdownMs": 5000 }
             }
         ])
     );
@@ -1102,16 +1350,15 @@ fn cumulative_room_events_deduplicate_by_server_index_and_revision() {
     assert!(appended.changed);
     assert_eq!(
         room_transition(&appended.updates[0])
-            .new_room_events
-            .iter()
-            .map(|entry| entry.sequence)
+            .events::<AutoRevealAnnounced>()
+            .map(|event| event.countdown_ms)
             .collect::<Vec<_>>(),
-        [2]
+        [5000]
     );
     assert_eq!(client.revision(), revision + 1);
     assert_eq!(
         client
-            .room_events()
+            .room_events
             .iter()
             .map(|entry| entry.sequence)
             .collect::<Vec<_>>(),
@@ -1181,7 +1428,7 @@ fn invalid_client_broadcasts_do_not_fail_room_updates_or_close_client() {
     assert_eq!(outcome.updates.len(), 1);
     assert_eq!(client.status(), ConnectionStatus::Open);
     assert!(client.terminal_error().is_none());
-    assert!(client.room_events().is_empty());
+    assert!(client.room_events().next().is_none());
     assert!(client.log().is_empty());
     assert_eq!(state.borrow().closes, 0);
 

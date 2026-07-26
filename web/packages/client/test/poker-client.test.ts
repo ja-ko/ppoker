@@ -4,13 +4,16 @@ import type {
   ClientSnapshot,
   PokerClient,
   PokerClientConfig,
+  RoomEvent,
 } from "../src/index.js";
 import { captureError, makeRichSnapshot, makeSnapshot } from "./fake-client.js";
 
 interface RawClient {
   snapshotValue: ClientSnapshot;
-  onChange: (() => void) | undefined;
-  connect: ReturnType<typeof vi.fn<(onChange: () => void) => void>>;
+  onChange: ((roomEvents: RoomEvent[]) => void) | undefined;
+  connect: ReturnType<
+    typeof vi.fn<(onChange: (roomEvents: RoomEvent[]) => void) => void>
+  >;
   snapshot: ReturnType<typeof vi.fn<() => ClientSnapshot>>;
   vote: ReturnType<typeof vi.fn<(value: string) => void>>;
   retractVote: ReturnType<typeof vi.fn<() => void>>;
@@ -34,10 +37,12 @@ vi.mock("../src/generated/ppoker-wasm/ppoker_wasm.js", () => ({
   default: generated.initialize,
   WasmPokerClient: class implements RawClient {
     snapshotValue: ClientSnapshot;
-    onChange: (() => void) | undefined;
-    connect = vi.fn<(onChange: () => void) => void>((onChange) => {
-      this.onChange = onChange;
-    });
+    onChange: ((roomEvents: RoomEvent[]) => void) | undefined;
+    connect = vi.fn<(onChange: (roomEvents: RoomEvent[]) => void) => void>(
+      (onChange) => {
+        this.onChange = onChange;
+      },
+    );
     snapshot = vi.fn<() => ClientSnapshot>(() => this.snapshotValue);
     vote = vi.fn<(value: string) => void>();
     retractVote = vi.fn<() => void>();
@@ -126,9 +131,26 @@ async function publishRaw(
   await signalRaw(raw);
 }
 
-async function signalRaw(raw: RawClient): Promise<void> {
-  raw.onChange?.();
+async function signalRaw(
+  raw: RawClient,
+  roomEvents: RoomEvent[] = [],
+): Promise<void> {
+  raw.onChange?.(roomEvents);
   await Promise.resolve();
+}
+
+function autoRevealEvent(countdownMs: number): RoomEvent {
+  return { kind: "autoRevealAnnounced", value: { countdownMs } };
+}
+
+function snapshotWithRoomEvents(
+  revision: number,
+  countdowns: readonly number[],
+): ClientSnapshot {
+  return {
+    ...makeSnapshot(revision, "open"),
+    roomEvents: countdowns.map(autoRevealEvent),
+  };
 }
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -294,8 +316,7 @@ describe("PokerClient snapshots", () => {
       snapshot.log[0],
       snapshot.roomEvents,
       snapshot.roomEvents[0],
-      snapshot.roomEvents[0]?.event,
-      snapshot.roomEvents[0]?.event.value,
+      snapshot.roomEvents[0]?.value,
       snapshot.history,
       snapshot.history[0],
       snapshot.history[0]?.votes,
@@ -467,14 +488,142 @@ describe("PokerClient transport notifications and subscriptions", () => {
     client.connect();
     setRawSnapshot(raw, 2);
 
-    raw.onChange?.();
-    raw.onChange?.();
+    raw.onChange?.([]);
+    raw.onChange?.([]);
     expect(client.getSnapshot().revision).toBe(0);
     await Promise.resolve();
 
     expect(client.getSnapshot().revision).toBe(2);
     expect(raw.snapshot).toHaveBeenCalledTimes(3);
     client.close();
+  });
+
+  it("provides typed history and live-only filtered and all-event subscriptions", async () => {
+    const { client, raw } = await createTestClient(
+      snapshotWithRoomEvents(1, [1_000]),
+    );
+    const filtered: { countdownMs: number; revision: number }[] = [];
+    const all: RoomEvent[] = [];
+    const betweenNotifications = vi.fn();
+    const late = vi.fn();
+    const unsubscribeFiltered = client.subscribeRoomEvent(
+      "autoRevealAnnounced",
+      ({ countdownMs }) => {
+        filtered.push({
+          countdownMs,
+          revision: client.getSnapshot().revision,
+        });
+      },
+    );
+    client.subscribeRoomEvents((event) => all.push(event));
+
+    expect(client.getRoomEvents("autoRevealAnnounced")).toEqual([
+      { countdownMs: 1_000 },
+    ]);
+    client.connect();
+    await signalRaw(raw);
+    expect(filtered).toEqual([]);
+    expect(all).toEqual([]);
+
+    raw.snapshotValue = snapshotWithRoomEvents(2, [1_000, 2_000, 3_000]);
+    raw.onChange?.([autoRevealEvent(2_000)]);
+    const unsubscribeBetween = client.subscribeRoomEvent(
+      "autoRevealAnnounced",
+      betweenNotifications,
+    );
+    raw.onChange?.([autoRevealEvent(3_000)]);
+    client.subscribeRoomEvent("autoRevealAnnounced", late);
+    await Promise.resolve();
+
+    expect(filtered).toEqual([
+      { countdownMs: 2_000, revision: 2 },
+      { countdownMs: 3_000, revision: 2 },
+    ]);
+    expect(all).toEqual([autoRevealEvent(2_000), autoRevealEvent(3_000)]);
+    expect(betweenNotifications).toHaveBeenCalledOnce();
+    expect(betweenNotifications).toHaveBeenCalledWith({ countdownMs: 3_000 });
+    expect(late).not.toHaveBeenCalled();
+    expect(client.getRoomEvents("autoRevealAnnounced")).toEqual([
+      { countdownMs: 1_000 },
+      { countdownMs: 2_000 },
+      { countdownMs: 3_000 },
+    ]);
+    expect(Object.isFrozen(all[0])).toBe(true);
+    expect(Object.isFrozen(all[0]?.value)).toBe(true);
+
+    unsubscribeBetween();
+    unsubscribeFiltered();
+    unsubscribeFiltered();
+    raw.snapshotValue = snapshotWithRoomEvents(3, [1_000, 2_000, 3_000, 4_000]);
+    await signalRaw(raw, [autoRevealEvent(4_000)]);
+    expect(filtered).toHaveLength(2);
+    expect(late).toHaveBeenCalledOnce();
+    expect(late).toHaveBeenCalledWith({ countdownMs: 4_000 });
+    client.close();
+  });
+
+  it("uses copied live-listener semantics and isolates deferred listener errors", async () => {
+    const { client, raw } = await createTestClient();
+    const added = vi.fn();
+    const removed = vi.fn();
+    const survivor = vi.fn();
+    let unsubscribeRemoved = (): void => undefined;
+    let addedSubscription = false;
+    client.subscribeRoomEvents(() => {
+      if (!addedSubscription) {
+        addedSubscription = true;
+        client.subscribeRoomEvents(added);
+      }
+      unsubscribeRemoved();
+    });
+    unsubscribeRemoved = client.subscribeRoomEvents(removed);
+    client.subscribeRoomEvents(() => {
+      throw new Error("room event listener failed");
+    });
+    client.subscribeRoomEvents(survivor);
+    client.connect();
+    raw.snapshotValue = snapshotWithRoomEvents(1, [2_000, 3_000]);
+
+    expect(() =>
+      raw.onChange?.([autoRevealEvent(2_000), autoRevealEvent(3_000)]),
+    ).not.toThrow();
+    await Promise.resolve();
+
+    expect(removed).toHaveBeenCalledOnce();
+    expect(added).not.toHaveBeenCalled();
+    expect(survivor).toHaveBeenCalledTimes(2);
+
+    raw.snapshotValue = snapshotWithRoomEvents(2, [2_000, 3_000, 4_000]);
+    await signalRaw(raw, [autoRevealEvent(4_000)]);
+    expect(removed).toHaveBeenCalledOnce();
+    expect(added).toHaveBeenCalledOnce();
+    expect(survivor).toHaveBeenCalledTimes(3);
+    client.close();
+  });
+
+  it("preserves copied live dispatch when a listener closes reentrantly", async () => {
+    const { client, raw } = await createTestClient();
+    const first: RoomEvent[] = [];
+    const second: { event: RoomEvent; status: ClientSnapshot["status"] }[] = [];
+    client.subscribeRoomEvents((event) => {
+      first.push(event);
+      client.close();
+    });
+    client.subscribeRoomEvents((event) => {
+      second.push({ event, status: client.getSnapshot().status });
+    });
+    client.connect();
+    raw.snapshotValue = snapshotWithRoomEvents(1, [2_000, 3_000]);
+
+    raw.onChange?.([autoRevealEvent(2_000), autoRevealEvent(3_000)]);
+    await Promise.resolve();
+
+    expect(first).toEqual([autoRevealEvent(2_000)]);
+    expect(second).toEqual([
+      { event: autoRevealEvent(2_000), status: "closed" },
+    ]);
+    expect(raw.close).toHaveBeenCalledOnce();
+    expect(raw.free).toHaveBeenCalledOnce();
   });
 
   it("tracks duplicate callback registrations independently", async () => {
@@ -534,7 +683,7 @@ describe("PokerClient transport notifications and subscriptions", () => {
     ];
     client.connect();
     setRawSnapshot(raw, 1);
-    expect(() => raw.onChange?.()).not.toThrow();
+    expect(() => raw.onChange?.([])).not.toThrow();
     await Promise.resolve();
 
     expect(first).toHaveBeenCalledOnce();
@@ -574,12 +723,42 @@ describe("PokerClient transport notifications and subscriptions", () => {
     });
     setRawSnapshot(raw, 1);
 
-    expect(() => raw.onChange?.()).not.toThrow();
+    expect(() => raw.onChange?.([])).not.toThrow();
     await Promise.resolve();
     expect(client.getSnapshot().revision).toBe(0);
 
     await publishRaw(raw, 2);
     expect(client.getSnapshot().revision).toBe(2);
+    client.close();
+  });
+
+  it("drains a retained live delta once after a command refresh succeeds", async () => {
+    const { client, raw } = await createTestClient();
+    const announcements: { countdownMs: number; revision: number }[] = [];
+    client.subscribeRoomEvent("autoRevealAnnounced", ({ countdownMs }) => {
+      announcements.push({
+        countdownMs,
+        revision: client.getSnapshot().revision,
+      });
+    });
+    client.connect();
+    raw.snapshot.mockImplementationOnce(() => {
+      throw new Error("snapshot unavailable");
+    });
+    raw.snapshotValue = snapshotWithRoomEvents(1, [3_000]);
+
+    raw.onChange?.([autoRevealEvent(3_000)]);
+    await Promise.resolve();
+    expect(client.getSnapshot().revision).toBe(0);
+    expect(announcements).toEqual([]);
+
+    client.chat("refresh snapshot");
+    expect(client.getSnapshot().revision).toBe(1);
+    expect(announcements).toEqual([{ countdownMs: 3_000, revision: 1 }]);
+
+    client.chat("do not replay");
+    await Promise.resolve();
+    expect(announcements).toHaveLength(1);
     client.close();
   });
 });
@@ -588,8 +767,11 @@ describe("PokerClient close", () => {
   it("publishes once, frees once, becomes terminal, and rejects every operation", async () => {
     const { client, raw } = await createTestClient(makeSnapshot(2, "open"));
     const listener = vi.fn();
+    const roomEventListener = vi.fn();
     client.subscribe(listener);
+    client.subscribeRoomEvents(roomEventListener);
     client.connect();
+    const onChange = raw.onChange;
 
     client.close();
     const finalSnapshot = client.getSnapshot();
@@ -599,6 +781,7 @@ describe("PokerClient close", () => {
     expect(raw.close).toHaveBeenCalledOnce();
     expect(raw.free).toHaveBeenCalledOnce();
     expect(listener).toHaveBeenCalledOnce();
+    expect(roomEventListener).not.toHaveBeenCalled();
     expect(finalSnapshot).toMatchObject({ revision: 3, status: "closed" });
     expect(client.getSnapshot()).toBe(finalSnapshot);
     for (const operation of OPERATIONS) {
@@ -612,6 +795,10 @@ describe("PokerClient close", () => {
     const closedListener = vi.fn();
     client.subscribe(closedListener)();
     expect(closedListener).not.toHaveBeenCalled();
+    client.subscribeRoomEvents(roomEventListener)();
+    onChange?.([autoRevealEvent(3_000)]);
+    await Promise.resolve();
+    expect(roomEventListener).not.toHaveBeenCalled();
   });
 
   it("does not publish when generated close retains the revision", async () => {
@@ -675,12 +862,12 @@ describe("PokerClient close", () => {
     client.connect();
     const onChange = raw.onChange;
     setRawSnapshot(raw, 1);
-    onChange?.();
+    onChange?.([]);
 
     client.close();
     const snapshotCalls = raw.snapshot.mock.calls.length;
     await Promise.resolve();
-    onChange?.();
+    onChange?.([]);
     await Promise.resolve();
 
     expect(raw.close).toHaveBeenCalledOnce();

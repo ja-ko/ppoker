@@ -1,5 +1,7 @@
 use serde_json::{json, Value};
 
+use crate::models::AutoRevealAnnounced;
+
 use super::*;
 
 fn room_fixture() -> Room {
@@ -198,11 +200,11 @@ fn client_broadcasts_decode_as_typed_events_without_entering_activity_log() {
         [
             RoomEventEntry {
                 sequence: 1,
-                event: RoomEvent::AutoRevealAnnounced { countdown_ms: 3000 },
+                event: RoomEvent::AutoRevealAnnounced(AutoRevealAnnounced { countdown_ms: 3000 }),
             },
             RoomEventEntry {
                 sequence: 5,
-                event: RoomEvent::AutoRevealAnnounced { countdown_ms: 5000 },
+                event: RoomEvent::AutoRevealAnnounced(AutoRevealAnnounced { countdown_ms: 5000 }),
             },
         ]
     );
@@ -349,8 +351,10 @@ fn every_command_keeps_its_exact_json_contract() {
 
 #[test]
 fn auto_reveal_broadcast_keeps_its_exact_nested_json_contract() {
-    let request =
-        encode_client_broadcast(&RoomEvent::AutoRevealAnnounced { countdown_ms: 3000 }).unwrap();
+    let request = encode_client_broadcast(&RoomEvent::AutoRevealAnnounced(AutoRevealAnnounced {
+        countdown_ms: 3000,
+    }))
+    .unwrap();
 
     assert_eq!(request, AUTO_REVEAL_BROADCAST);
 }
