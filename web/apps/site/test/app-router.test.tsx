@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { bindSessionsToRouter, createSiteRoutes } from "../src/app-router";
 import {
@@ -22,6 +22,13 @@ import { createFakeClient, makeSnapshot } from "./fake-client";
 vi.mock("../src/voting/screen-wake-lock", () => ({
   useScreenWakeLock: vi.fn(),
 }));
+
+beforeEach(() => {
+  vi.mocked(useScreenWakeLock).mockReturnValue({
+    request: vi.fn(),
+    status: "held",
+  });
+});
 
 const endpoint = "wss://example.test/socket";
 

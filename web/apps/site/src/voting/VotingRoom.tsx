@@ -61,6 +61,7 @@ import {
   selectVoters,
   votingCoverage,
 } from "./participant-policy";
+import type { ScreenWakeLockControl } from "./screen-wake-lock";
 import type { VoterNameSession } from "./voter-session";
 
 type PhaseDialog = "rename" | "reset" | "reveal" | null;
@@ -93,6 +94,7 @@ export interface VotingRoomProps {
   readonly nameSession: VoterNameSession;
   readonly roomCode: string;
   readonly snapshot: ClientSnapshot;
+  readonly wakeLock: ScreenWakeLockControl;
 }
 
 export function VotingRoom({
@@ -103,6 +105,7 @@ export function VotingRoom({
   nameSession,
   roomCode,
   snapshot,
+  wakeLock,
 }: VotingRoomProps) {
   const inkRef = useRef<InkPadHandle>(null);
   const snapshotRef = useRef(snapshot);
@@ -156,7 +159,20 @@ export function VotingRoom({
   const effectiveVoteRef = useRef<string | null>(null);
   const phaseActionRef = useRef<HTMLButtonElement>(null);
   const renameButtonRef = useRef<HTMLButtonElement>(null);
+  const restoreWakeLockFocusRef = useRef(false);
   const resultRef = useRef<HTMLOutputElement>(null);
+  const wakeLockButtonRef = useRef<HTMLButtonElement>(null);
+
+  useLayoutEffect(() => {
+    if (
+      wakeLock.status === "needs-activation" ||
+      !restoreWakeLockFocusRef.current
+    ) {
+      return;
+    }
+    restoreWakeLockFocusRef.current = false;
+    renameButtonRef.current?.focus();
+  }, [wakeLock.status]);
 
   const resetInkMorph = (): void => {
     pendingInkMorphRef.current = null;
@@ -961,19 +977,46 @@ export function VotingRoom({
       )}
 
       <footer className="vote-footer">
-        <div className="vote-name">
-          <span>
-            Voting as <strong>{currentName}</strong>
-          </span>
-          <button
-            ref={renameButtonRef}
-            onClick={() => {
-              setDialog("rename");
-            }}
-            type="button"
-          >
-            Rename
-          </button>
+        <div
+          className={`vote-footer-primary${wakeLock.status === "needs-activation" ? " vote-footer-primary--wake-action" : ""}`}
+        >
+          <div className="vote-name">
+            <span>
+              Voting as <strong>{currentName}</strong>
+            </span>
+            <button
+              ref={renameButtonRef}
+              onClick={() => {
+                setDialog("rename");
+              }}
+              type="button"
+            >
+              Rename
+            </button>
+          </div>
+          {wakeLock.status === "needs-activation" ? (
+            <button
+              className="vote-wake-lock"
+              onClick={() => {
+                restoreWakeLockFocusRef.current =
+                  document.activeElement === wakeLockButtonRef.current;
+                wakeLock.request();
+              }}
+              onBlur={() => {
+                restoreWakeLockFocusRef.current = false;
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  restoreWakeLockFocusRef.current = true;
+                }
+              }}
+              ref={wakeLockButtonRef}
+              type="button"
+            >
+              <i aria-hidden="true" />
+              Keep screen awake
+            </button>
+          ) : null}
         </div>
         <div className="vote-footer-statuses">
           <span>
@@ -997,6 +1040,15 @@ export function VotingRoom({
         role="status"
       >
         {liveSummary}
+      </p>
+      <p aria-live="polite" className="visually-hidden" role="status">
+        {wakeLock.status === "needs-activation"
+          ? "Use Keep screen awake to prevent the display from sleeping."
+          : wakeLock.status === "held"
+            ? "The display will stay awake."
+            : wakeLock.status === "unavailable"
+              ? "Keeping the display awake is unavailable."
+              : ""}
       </p>
 
       {commandError !== null ? (
