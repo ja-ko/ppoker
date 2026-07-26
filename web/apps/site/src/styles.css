@@ -2425,6 +2425,15 @@ body {
   font-size: 0.65rem;
 }
 
+.vote-footer-primary {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 360px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
 .vote-footer-statuses,
 .vote-name {
   display: flex;
@@ -2434,8 +2443,14 @@ body {
   gap: 8px 12px;
 }
 
+.vote-name {
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
 .vote-footer-statuses span,
 .vote-name span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2453,6 +2468,26 @@ body {
   background: transparent;
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+.vote-name button,
+.vote-wake-lock {
+  flex: none;
+}
+
+.vote-footer .vote-wake-lock {
+  gap: 7px;
+  margin-left: auto;
+  color: #d8dcdd;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.vote-wake-lock i {
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--vote-orange);
+  box-shadow: 0 0 0 3px rgb(255 75 31 / 0.08);
 }
 
 .vote-name strong {
@@ -2867,11 +2902,29 @@ body {
     padding-top: 2px;
   }
 
-  .vote-name,
+  .vote-footer-primary,
   .vote-footer-statuses {
     width: 100%;
     flex-wrap: nowrap;
     justify-content: space-between;
+  }
+
+  .vote-footer-primary--wake-action {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .vote-name {
+    min-width: 0;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+  }
+
+  .vote-footer .vote-wake-lock {
+    width: 100%;
+    min-width: 0;
+    justify-content: flex-end;
   }
 
   .vote-result-view {

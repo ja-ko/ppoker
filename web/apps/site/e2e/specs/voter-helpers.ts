@@ -96,6 +96,7 @@ export const CARD_STROKES = {
 } as const satisfies Readonly<Record<string, StrokeTemplate>>;
 
 interface GotoVoterOptions {
+  readonly wakeLock?: "coordinator";
   readonly waitForRecognizer?: boolean;
 }
 
@@ -104,7 +105,11 @@ export async function gotoVoterFixture(
   fixture: VoterFixtureName,
   options: GotoVoterOptions = {},
 ): Promise<void> {
-  await page.goto(`/e2e/voter-harness/?fixture=${fixture}`);
+  const search = new URLSearchParams({ fixture });
+  if (options.wakeLock !== undefined) {
+    search.set("wakeLock", options.wakeLock);
+  }
+  await page.goto(`/e2e/voter-harness/?${search.toString()}`);
   await expect
     .poll(() =>
       page.evaluate(() => typeof window.__voterTestDriver === "object"),

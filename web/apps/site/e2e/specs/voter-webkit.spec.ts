@@ -10,6 +10,122 @@ import {
   settlePaint,
 } from "./voter-helpers";
 
+test("iPhone wake-lock action shares the identity row without crowding rename", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const requestEvents: string[] = [];
+    let currentEvent = "initial";
+    let released = false;
+    const sentinel = new EventTarget();
+    Object.defineProperties(sentinel, {
+      release: {
+        value: () => {
+          released = true;
+          sentinel.dispatchEvent(new Event("release"));
+          return Promise.resolve();
+        },
+      },
+      released: { get: () => released },
+    });
+    Object.defineProperty(window, "__wakeLockRequestEvents", {
+      configurable: true,
+      value: requestEvents,
+    });
+    document.addEventListener(
+      "pointerup",
+      () => {
+        currentEvent = "pointerup";
+      },
+      true,
+    );
+    document.addEventListener(
+      "click",
+      () => {
+        currentEvent = "click";
+      },
+      true,
+    );
+    Object.defineProperty(navigator, "wakeLock", {
+      configurable: true,
+      value: {
+        request: () => {
+          requestEvents.push(currentEvent);
+          return currentEvent === "click"
+            ? Promise.resolve(sentinel)
+            : Promise.reject(new DOMException("Activation required"));
+        },
+      },
+    });
+  });
+  await page.setViewportSize({ height: 568, width: 320 });
+  await gotoVoterFixture(page, "playing", {
+    wakeLock: "coordinator",
+  });
+
+  const primary = page.locator(".vote-footer-primary");
+  const identity = primary.locator(".vote-name");
+  const name = identity.locator("span");
+  const rename = identity.getByRole("button", { name: "Rename" });
+  const wakeLock = primary.getByRole("button", {
+    name: "Keep screen awake",
+  });
+  await expect(wakeLock).toBeVisible();
+
+  const geometry = await primary.evaluate((element) => {
+    const name = element.querySelector<HTMLElement>(".vote-name > span");
+    const rename = element.querySelector<HTMLElement>(".vote-name > button");
+    const wakeLock = element.querySelector<HTMLElement>(".vote-wake-lock");
+    if (name === null || rename === null || wakeLock === null) {
+      throw new Error("Wake-lock footer controls are missing.");
+    }
+    const bounds = (target: Element) => {
+      const rect = target.getBoundingClientRect();
+      return {
+        height: rect.height,
+        left: rect.left,
+        right: rect.right,
+        width: rect.width,
+      };
+    };
+    const primaryBounds = bounds(element);
+    const nameBounds = name.getBoundingClientRect();
+    const renameBounds = rename.getBoundingClientRect();
+    const wakeLockBounds = bounds(wakeLock);
+    return {
+      primary: primaryBounds,
+      renameGap: renameBounds.left - nameBounds.right,
+      wakeLock: wakeLockBounds,
+    };
+  });
+  expect(geometry.renameGap).toBeLessThanOrEqual(9);
+  expect(geometry.wakeLock.left).toBeGreaterThanOrEqual(
+    geometry.primary.left + geometry.primary.width / 2 - 1,
+  );
+  expect(geometry.wakeLock.right).toBeLessThanOrEqual(
+    geometry.primary.right + 1,
+  );
+  expect(geometry.wakeLock.height).toBeGreaterThanOrEqual(44);
+  await expect(name).toContainText("Voting as E2E Voter");
+  await expect(rename).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await expectNoVerticalOverflow(page);
+
+  await wakeLock.click();
+  await expect(wakeLock).toHaveCount(0);
+  await expect(rename).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            readonly __wakeLockRequestEvents: readonly string[];
+          }
+        ).__wakeLockRequestEvents,
+    ),
+  ).toEqual(["initial", "click"]);
+});
+
 test("iPhone handwriting header and countdown text remain interactive and contained", async ({
   page,
 }) => {

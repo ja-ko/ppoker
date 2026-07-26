@@ -1,6 +1,6 @@
 import type { ClientSnapshot, Player, VoteData } from "@ppoker/web-client";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import type { PointerEventHandler } from "react";
+import { useState, type PointerEventHandler } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { VotingApp } from "../src/voting/VotingApp";
@@ -16,6 +16,7 @@ import type {
   RecognizerStatus,
 } from "../src/voting/handwriting";
 import { PREPROCESSING_CONFIG } from "../src/voting/handwriting";
+import type { ScreenWakeLockControl } from "../src/voting/screen-wake-lock";
 import { createVoterNameSession } from "../src/voting/voter-session";
 import { createFakeClient, makeSnapshot } from "./fake-client";
 
@@ -178,8 +179,79 @@ describe("VotingApp voting controls", () => {
     renderApp(roomSnapshot());
 
     const footer = document.querySelector(".vote-footer");
-    expect(footer?.firstElementChild?.className).toBe("vote-name");
+    expect(footer?.firstElementChild?.className).toBe("vote-footer-primary");
+    expect(footer?.firstElementChild?.firstElementChild?.className).toBe(
+      "vote-name",
+    );
     expect(footer?.lastElementChild?.className).toBe("vote-footer-statuses");
+  });
+
+  it("offers an explicit wake-lock action only when activation is needed", () => {
+    const request = vi.fn();
+    renderAppWithWakeLock(roomSnapshot(), {
+      request,
+      status: "needs-activation",
+    });
+
+    const action = screen.getByRole("button", { name: "Keep screen awake" });
+    const identity = document.querySelector(".vote-name");
+    expect(identity?.textContent).toContain("Calm OtterRename");
+    expect(
+      screen.getByText(
+        "Use Keep screen awake to prevent the display from sleeping.",
+      ),
+    ).toBeTruthy();
+    fireEvent.click(action);
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    "held",
+    "inactive",
+    "requesting",
+    "unavailable",
+    "unsupported",
+  ] as const)("hides the wake-lock action while the lock is %s", (status) => {
+    renderAppWithWakeLock(roomSnapshot(), {
+      request: vi.fn(),
+      status,
+    });
+
+    expect(
+      screen.queryByRole("button", { name: "Keep screen awake" }),
+    ).toBeNull();
+  });
+
+  it.each(["held", "unavailable"] as const)(
+    "restores focus to Rename when the wake-lock action becomes %s",
+    (outcome) => {
+      renderWakeLockTransition(outcome);
+      const action = screen.getByRole("button", {
+        name: "Keep screen awake",
+      });
+      const rename = screen.getByRole("button", { name: "Rename" });
+      action.focus();
+
+      fireEvent.click(action);
+
+      expect(screen.queryByRole("button", { name: "Keep screen awake" })).toBe(
+        null,
+      );
+      expect(document.activeElement).toBe(rename);
+    },
+  );
+
+  it("does not restore wake-lock focus after the user moves elsewhere", () => {
+    renderWakeLockTransition("held", true);
+    const action = screen.getByRole("button", { name: "Keep screen awake" });
+    const settle = screen.getByRole("button", { name: "Settle wake lock" });
+    action.focus();
+    fireEvent.click(action);
+    settle.focus();
+
+    fireEvent.click(settle);
+
+    expect(document.activeElement).toBe(settle);
   });
 
   it("votes an exact authoritative card, displays it optimistically, and retracts", () => {
@@ -978,6 +1050,10 @@ function renderApp(
   createRecognitionRuntime: () => RecognitionRuntime = createReadyRuntime,
   onReconnect = vi.fn<() => void>(),
   connectError: unknown = null,
+  wakeLock: ScreenWakeLockControl = {
+    request: vi.fn(),
+    status: "held",
+  },
 ) {
   const fake = createFakeClient(snapshot);
   render(
@@ -996,9 +1072,77 @@ function renderApp(
       nameSession={nameSession}
       onReconnect={onReconnect}
       room="planning"
+      wakeLock={wakeLock}
     />,
   );
+
   return fake;
+}
+
+function renderAppWithWakeLock(
+  snapshot: ClientSnapshot,
+  wakeLock: ScreenWakeLockControl,
+) {
+  return renderApp(
+    snapshot,
+    createVoterNameSession({
+      generateName: () => "Calm Otter",
+      storage: null,
+    }),
+    createReadyRuntime,
+    vi.fn(),
+    null,
+    wakeLock,
+  );
+}
+
+function renderWakeLockTransition(
+  outcome: "held" | "unavailable",
+  delayed = false,
+): void {
+  const fake = createFakeClient(roomSnapshot());
+  const nameSession = createVoterNameSession({
+    generateName: () => "Calm Otter",
+    storage: null,
+  });
+
+  function WakeLockTransition() {
+    const [status, setStatus] =
+      useState<ScreenWakeLockControl["status"]>("needs-activation");
+    return (
+      <>
+        <VotingApp
+          client={fake.client}
+          connectError={null}
+          createRecognitionRuntime={createReadyRuntime}
+          initialName="Calm Otter"
+          nameSession={nameSession}
+          onReconnect={() => undefined}
+          room="planning"
+          wakeLock={{
+            request: () => {
+              if (!delayed) {
+                setStatus(outcome);
+              }
+            },
+            status,
+          }}
+        />
+        {delayed ? (
+          <button
+            onClick={() => {
+              setStatus(outcome);
+            }}
+            type="button"
+          >
+            Settle wake lock
+          </button>
+        ) : null}
+      </>
+    );
+  }
+
+  render(<WakeLockTransition />);
 }
 
 function renderAppWithRuntime(
