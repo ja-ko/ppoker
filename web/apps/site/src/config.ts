@@ -1,6 +1,7 @@
 import type { ClientOptions } from "@ppoker/web-client";
 
-export const BILLBOARD_SPECTATOR_NAME = "Planning Poker Billboard";
+import { generateFriendlyVoterName } from "./voting/voter-session";
+
 export const BILLBOARD_TITLE_PLACEHOLDER = "Planning Poker Room";
 
 export interface BroadcastConfig {
@@ -25,7 +26,7 @@ export type ConfigResult =
 export function spectatorClientOptions(config: BroadcastConfig): ClientOptions {
   return {
     endpoint: config.endpoint,
-    name: BILLBOARD_SPECTATOR_NAME,
+    name: generateFriendlyVoterName(),
     role: "spectator",
     room: config.room,
   };
