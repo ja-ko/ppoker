@@ -8,6 +8,7 @@ export interface BroadcastTestDriver {
   readonly commandCounts: () => CommandCounts;
   readonly getSnapshot: () => ClientSnapshot;
   readonly navigateToRoom: (room: string) => Promise<void>;
+  readonly publishAutoRevealAnnouncement: (countdownMs: number) => void;
   readonly publish: (snapshot: ClientSnapshot) => void;
   readonly publishFixture: (name: SnapshotFixtureName) => void;
   readonly sessionState: () => JoinSessionState | null;
@@ -42,6 +43,12 @@ export function createBroadcastTestDriver(
         throw new Error("Room navigation requires the join harness.");
       }
       return joinControls.navigateToRoom(room);
+    },
+    publishAutoRevealAnnouncement: (countdownMs) => {
+      client.publishRoomEvent({
+        kind: "autoRevealAnnounced",
+        value: { countdownMs },
+      });
     },
     publish: (snapshot) => {
       client.publish(snapshot);

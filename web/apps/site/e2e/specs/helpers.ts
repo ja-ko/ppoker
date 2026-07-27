@@ -76,6 +76,41 @@ export async function publishFixture(
   }, fixture);
 }
 
+export async function publishCoveredAutoReveal(
+  page: Page,
+  countdownMs = 20_000,
+): Promise<void> {
+  await page.evaluate((durationMs) => {
+    const snapshot = window.__broadcastTestDriver.getSnapshot();
+    const room = snapshot.room;
+    if (room?.phase !== "playing") {
+      throw new Error("Auto-reveal E2E setup requires a playing room.");
+    }
+    window.__broadcastTestDriver.publish({
+      ...snapshot,
+      revision: snapshot.revision + 1,
+      room: {
+        ...room,
+        players: room.players.map((player) =>
+          player.userType === "player"
+            ? { ...player, vote: { state: "hidden" as const } }
+            : player,
+        ),
+      },
+    });
+    window.__broadcastTestDriver.publishAutoRevealAnnouncement(durationMs);
+  }, countdownMs);
+}
+
+export async function publishAutoRevealAnnouncement(
+  page: Page,
+  countdownMs: number,
+): Promise<void> {
+  await page.evaluate((durationMs) => {
+    window.__broadcastTestDriver.publishAutoRevealAnnouncement(durationMs);
+  }, countdownMs);
+}
+
 export async function expectMotionSettled(
   page: Page,
   phase: "playing" | "revealed",

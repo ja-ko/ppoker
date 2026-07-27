@@ -888,6 +888,133 @@ body {
     var(--color-panel);
 }
 
+.auto-reveal-countdown {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  pointer-events: none;
+}
+
+.auto-reveal-countdown__label {
+  position: absolute;
+  top: 13px;
+  right: 13px;
+  display: flex;
+  min-height: 29px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 9px;
+  border: 1px solid rgb(255 75 31 / 0.52);
+  border-left-width: 3px;
+  color: #fff3ef;
+  background:
+    linear-gradient(110deg, rgb(255 75 31 / 0.16), transparent 58%),
+    rgb(7 11 14 / 0.94);
+  box-shadow:
+    0 0 24px rgb(255 75 31 / 0.13),
+    6px 6px 0 rgb(0 0 0 / 0.16);
+  font-family: var(--font-sans);
+  font-size: var(--text-meta);
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.auto-reveal-countdown__label strong {
+  color: var(--color-vermilion);
+  font-family: var(--font-score);
+  font-size: 0.8125rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.auto-reveal-countdown__detail {
+  padding-left: 8px;
+  border-left: 1px solid #435159;
+  color: #aab8bd;
+}
+
+.auto-reveal-countdown__signal {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  background: var(--color-vermilion);
+  box-shadow: 0 0 11px rgb(255 75 31 / 0.9);
+}
+
+.auto-reveal-countdown__track {
+  position: absolute;
+  top: var(--panel-accent-size);
+  right: 0;
+  left: 0;
+  height: 16px;
+  overflow: hidden;
+  background: #2a1814;
+  box-shadow:
+    0 1px 0 rgb(255 220 208 / 0.13),
+    0 5px 18px rgb(255 75 31 / 0.14);
+}
+
+.auto-reveal-countdown__fill {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: linear-gradient(90deg, #ff4b1f, #ff6a31);
+  box-shadow:
+    0 0 18px rgb(255 75 31 / 0.8),
+    inset 0 1px 0 rgb(255 255 255 / 0.48);
+  transform-origin: right center;
+}
+
+.auto-reveal-countdown__fill::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(
+    105deg,
+    transparent 0 38%,
+    rgb(255 255 255 / 0.62) 46%,
+    transparent 54% 100%
+  );
+  transform: translateX(-120%);
+}
+
+@keyframes auto-reveal-sheen {
+  from {
+    transform: translateX(-120%);
+  }
+
+  to {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes auto-reveal-signal {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.82);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .auto-reveal-countdown__fill::after {
+    animation: auto-reveal-sheen 1.15s linear infinite;
+  }
+
+  .auto-reveal-countdown__signal {
+    animation: auto-reveal-signal 0.8s ease-in-out infinite;
+  }
+}
+
 .playing-heading {
   display: flex;
   align-items: center;
@@ -1703,6 +1830,17 @@ body {
   .playing-title-line {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .auto-reveal-countdown__label {
+    top: 11px;
+    right: 8px;
+    gap: 6px;
+    padding-inline: 7px;
+  }
+
+  .auto-reveal-countdown__detail {
+    display: none;
   }
 
   .vote-distribution {

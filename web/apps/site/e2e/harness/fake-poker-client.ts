@@ -1,4 +1,10 @@
-import type { ClientSnapshot, PokerClient } from "@ppoker/web-client";
+import type {
+  ClientSnapshot,
+  PokerClient,
+  RoomEvent,
+  RoomEventKind,
+  RoomEventPayload,
+} from "@ppoker/web-client";
 
 export const commandNames = [
   "connect",
@@ -16,6 +22,11 @@ export const commandNames = [
 export type CommandName = (typeof commandNames)[number];
 export type CommandCounts = Readonly<Record<CommandName, number>>;
 
+interface RoomEventSubscription {
+  readonly listener: (event: RoomEvent) => void;
+  readonly startIndex: number;
+}
+
 export class FakePokerClient implements PokerClient {
   readonly #counts: Record<CommandName, number> = {
     announceAutoReveal: 0,
@@ -30,6 +41,8 @@ export class FakePokerClient implements PokerClient {
     vote: 0,
   };
   readonly #listeners = new Set<() => void>();
+  readonly #roomEventListeners = new Set<RoomEventSubscription>();
+  #receivedRoomEventCount = 0;
   #snapshot: ClientSnapshot;
 
   constructor(initialSnapshot: ClientSnapshot) {
@@ -50,16 +63,41 @@ export class FakePokerClient implements PokerClient {
     };
   };
 
-  readonly subscribeRoomEvent = (() => () =>
-    undefined) as PokerClient["subscribeRoomEvent"];
+  readonly subscribeRoomEvent = <Kind extends RoomEventKind>(
+    kind: Kind,
+    listener: (payload: RoomEventPayload<Kind>) => void,
+  ): (() => void) => {
+    const eventListener = (event: RoomEvent): void => {
+      if (roomEventHasKind(event, kind)) {
+        listener(event.value);
+      }
+    };
+    return this.#addRoomEventListener(eventListener);
+  };
 
-  readonly subscribeRoomEvents = (() => () =>
-    undefined) as PokerClient["subscribeRoomEvents"];
+  readonly subscribeRoomEvents = (
+    listener: (event: RoomEvent) => void,
+  ): (() => void) => this.#addRoomEventListener(listener);
 
   publish(snapshot: ClientSnapshot): void {
     this.#snapshot = deepFreeze(snapshot);
     for (const listener of new Set(this.#listeners)) {
       listener();
+    }
+  }
+
+  publishRoomEvent(event: RoomEvent): void {
+    const eventIndex = this.#receivedRoomEventCount;
+    this.#receivedRoomEventCount += 1;
+    this.publish({
+      ...this.#snapshot,
+      revision: this.#snapshot.revision + 1,
+      roomEvents: [...this.#snapshot.roomEvents, event],
+    });
+    for (const subscription of new Set(this.#roomEventListeners)) {
+      if (eventIndex >= subscription.startIndex) {
+        subscription.listener(event);
+      }
     }
   }
 
@@ -110,6 +148,24 @@ export class FakePokerClient implements PokerClient {
   [Symbol.dispose](): void {
     this.#counts.dispose += 1;
   }
+
+  #addRoomEventListener(listener: (event: RoomEvent) => void): () => void {
+    const subscription = {
+      listener,
+      startIndex: this.#receivedRoomEventCount,
+    };
+    this.#roomEventListeners.add(subscription);
+    return () => {
+      this.#roomEventListeners.delete(subscription);
+    };
+  }
+}
+
+function roomEventHasKind<Kind extends RoomEventKind>(
+  event: RoomEvent,
+  kind: Kind,
+): event is Extract<RoomEvent, { readonly kind: Kind }> {
+  return event.kind.localeCompare(kind) === 0;
 }
 
 function deepFreeze<Value>(value: Value): Value {
