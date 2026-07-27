@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.6.0](https://github.com/ja-ko/ppoker/compare/v0.5.6...v0.6.0) (2026-07-27)
+
+
+### Features
+
+* **core:** add typed room event subscriptions ([2140093](https://github.com/ja-ko/ppoker/commit/21400938c00056838cd226e97ae61a2615681867))
+* **core:** add typed room events ([5014457](https://github.com/ja-ko/ppoker/commit/50144576059e126035ab9f0e1e65d437dcbb3bdc))
+* **wasm:** add typed client facade ([5e159bd](https://github.com/ja-ko/ppoker/commit/5e159bd81db8cb88d60c8bc6f7a0f8cd59f170cf))
+* **web:** add animated room join flow ([9e2679c](https://github.com/ja-ko/ppoker/commit/9e2679cb02c0c0fa96d73769b7d263d7869f416a))
+* **web:** add broadcast scoreboard ([236a266](https://github.com/ja-ko/ppoker/commit/236a266747bd826fa5aef7ae29b34053e4e3a5c9))
+* **web:** add mobile voting client ([d8e0e0b](https://github.com/ja-ko/ppoker/commit/d8e0e0b414927b106e4fcc630fc86d859b8e1e39))
+* **web:** add react client store and hooks ([742000e](https://github.com/ja-ko/ppoker/commit/742000ea7d11be96ca9d1e8d3a2601e356dd3587))
+* **web:** add typed wasm client package ([eec99a3](https://github.com/ja-ko/ppoker/commit/eec99a31a39fdb4a121e4b0157210003f8c9160e))
+* **web:** introduce web client ([db9f594](https://github.com/ja-ko/ppoker/commit/db9f594010f25bdb4abd8bb17da010688140a6e8))
+* **web:** refine broadcast scoreboard ([50c3c9e](https://github.com/ja-ko/ppoker/commit/50c3c9e7dfbd1341ed97de62a3c9f420e883ff1d))
+* **web:** show billboard auto-reveal countdown ([#139](https://github.com/ja-ko/ppoker/issues/139)) ([7d15766](https://github.com/ja-ko/ppoker/commit/7d15766063513e53c294593856f54d04106e89ff))
+
+
+### Bug Fixes
+
+* **client:** use authoritative command state ([006f0ac](https://github.com/ja-ko/ppoker/commit/006f0ac46dbf7a04376c2ce0210033f7414e8c53))
+* **deps:** align self_update target versions ([5253e84](https://github.com/ja-ko/ppoker/commit/5253e84aa1b3456a0fce1563d5697fbabdc248da))
+* **web:** address voting client review ([d2b6739](https://github.com/ja-ko/ppoker/commit/d2b673968a7bfd21c81626c0fda93ab0ec58fed2))
+* **web:** avoid redundant client polling ([f2e2064](https://github.com/ja-ko/ppoker/commit/f2e2064d48ffb5fbcec602dd34ab2f3916da36a2))
+* **web:** finalize mobile voting experience ([b8dc363](https://github.com/ja-ko/ppoker/commit/b8dc36379d77a763be6ed0ff9c2b5e8d5c8c7197))
+* **web:** generate bindings before lint ([b44c4a4](https://github.com/ja-ko/ppoker/commit/b44c4a44d684877d16897ac6abee29ea90746616))
+* **web:** improve voter morph and recovery ([710eea2](https://github.com/ja-ko/ppoker/commit/710eea2a2f5006250efdd0a2e172ba1f0166edce))
+* **web:** polish mobile voting experience ([876a16b](https://github.com/ja-ko/ppoker/commit/876a16b2ba152833f40e5a2ccd3fa8076060053c))
+* **web:** preserve handwriting heading input ([b605dde](https://github.com/ja-ko/ppoker/commit/b605dde32f533efc066b29da3cb377a8219d1c4a))
+* **web:** randomize billboard spectator names ([02f8741](https://github.com/ja-ko/ppoker/commit/02f87413bb4ab61c9b2206115086f52f089343f1))
+* **web:** resolve consumer lockfile online ([2b5fbdf](https://github.com/ja-ko/ppoker/commit/2b5fbdfbccfdb16a1ec3f20125e32511981f5baf))
+* **web:** score handwriting against deck alternatives ([#141](https://github.com/ja-ko/ppoker/issues/141)) ([7e389c6](https://github.com/ja-ko/ppoker/commit/7e389c6ca03b97d5c3f7cbc6d431dc7b927a1f6c))
+* **web:** smooth thinking card animation ([14a6dd0](https://github.com/ja-ko/ppoker/commit/14a6dd0fb1162cdde5d9fe6c2fcff5e91422fad8))
+* **web:** stabilize join route transitions ([0fff914](https://github.com/ja-ko/ppoker/commit/0fff914211bb28adb16bafe9c6acfaafaef32edc))
+* **web:** surface wake lock activation ([4f08951](https://github.com/ja-ko/ppoker/commit/4f08951bcaec1d3cd320d39d56bbe474916b1b52))
+* **web:** surface wake lock activation ([1189461](https://github.com/ja-ko/ppoker/commit/1189461cfdaae160864db8600c57aff206fbdd9b))
+* **web:** use Vitest-aware unbound method linting ([b29e936](https://github.com/ja-ko/ppoker/commit/b29e936e4a03ba98a0ab661d26570c5e65ddc08b))
+
 ## [0.5.6](https://github.com/ja-ko/ppoker/compare/v0.5.5...v0.5.6) (2025-07-05)
 
 
