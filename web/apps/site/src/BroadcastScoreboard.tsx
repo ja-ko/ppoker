@@ -262,9 +262,7 @@ function AutoRevealCountdown({
               ? { duration: 0 }
               : { duration: countdown.remainingMs / 1000, ease: "linear" }
           }
-        >
-          <span className="auto-reveal-countdown__spark" />
-        </motion.span>
+        />
       </div>
     </motion.div>
   );

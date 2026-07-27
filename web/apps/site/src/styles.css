@@ -962,7 +962,7 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: linear-gradient(90deg, #ff4b1f, #ff6a31 72%, #ffd0bd);
+  background: linear-gradient(90deg, #ff4b1f, #ff6a31);
   box-shadow:
     0 0 18px rgb(255 75 31 / 0.8),
     inset 0 1px 0 rgb(255 255 255 / 0.48);
@@ -980,19 +980,6 @@ body {
     transparent 54% 100%
   );
   transform: translateX(-120%);
-}
-
-.auto-reveal-countdown__spark {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  width: 10px;
-  height: 18px;
-  background: #fff4e9;
-  box-shadow:
-    0 0 8px #fff,
-    0 0 20px var(--color-vermilion);
-  transform: translate(35%, -50%) skewX(-16deg);
 }
 
 @keyframes auto-reveal-sheen {
