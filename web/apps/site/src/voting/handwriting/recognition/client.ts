@@ -8,6 +8,7 @@ import type {
   WorkerErrorMessage,
   WorkerResultMessage,
 } from "./types";
+import { normalizeNumericDeck } from "./types";
 
 interface WorkerPort {
   onmessage: ((event: MessageEvent<RecognitionWorkerResponse>) => void) | null;
@@ -174,7 +175,11 @@ export class RecognitionClient {
     this.startWorker();
   }
 
-  recognize(input: RecognitionInput, revision: number): Promise<Recognition> {
+  recognize(
+    input: RecognitionInput,
+    revision: number,
+    numericDeck: readonly number[],
+  ): Promise<Recognition> {
     if (this.disposed) {
       return Promise.reject(
         runtimeError(
@@ -213,6 +218,14 @@ export class RecognitionClient {
           "protocol",
           false,
         ),
+      );
+    }
+    let normalizedDeck: number[];
+    try {
+      normalizedDeck = normalizeNumericDeck(numericDeck);
+    } catch (error) {
+      return Promise.reject(
+        error instanceof Error ? error : new Error(String(error)),
       );
     }
 
@@ -255,6 +268,7 @@ export class RecognitionClient {
         input: buffer,
         shape: input.shape,
         preprocessingVersion: input.preprocessingVersion,
+        numericDeck: normalizedDeck,
       };
       try {
         this.worker?.postMessage(request, [buffer]);

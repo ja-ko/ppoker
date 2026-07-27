@@ -2,8 +2,14 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import * as ort from "onnxruntime-web/wasm";
 
-import { greedyCtcDecode, marginConfidence, prefixBeamSearch } from "./ctc";
+import {
+  exactCtcSequenceScore,
+  greedyCtcDecode,
+  marginConfidence,
+  prefixBeamSearch,
+} from "./ctc";
 import type {
+  DeckConfidenceDiagnostics,
   InitializationDiagnostics,
   InitializeWorkerRequest,
   ModelMetadata,
@@ -24,6 +30,8 @@ import {
   MODEL_OUTPUT_SHAPE,
   MODEL_SHA256,
   ORT_VERSION,
+  canonicalValue,
+  normalizeNumericDeck,
 } from "./types";
 
 const ORT_ASSETS = {
@@ -222,6 +230,81 @@ function validateInput(request: RecognizeWorkerRequest): Float32Array {
   return input;
 }
 
+export function deckRelativeConfidence(
+  logProbabilities: ArrayLike<number>,
+  rawText: string,
+  numericDeck: readonly number[],
+): DeckConfidenceDiagnostics | null {
+  const deck = normalizeNumericDeck(numericDeck);
+  const candidateValue = canonicalValue(rawText);
+  if (candidateValue === null || !deck.includes(candidateValue)) {
+    return null;
+  }
+
+  const candidateScore = exactCtcSequenceScore(logProbabilities, rawText);
+  let competitorValue: number | null = null;
+  let competitorScore = Number.NEGATIVE_INFINITY;
+  for (const value of deck) {
+    if (value === candidateValue) continue;
+    const score = exactCtcSequenceScore(logProbabilities, String(value));
+    if (competitorValue === null || score > competitorScore) {
+      competitorValue = value;
+      competitorScore = score;
+    }
+  }
+  const margin =
+    competitorValue === null
+      ? Number.POSITIVE_INFINITY
+      : candidateScore === Number.NEGATIVE_INFINITY &&
+          competitorScore === Number.NEGATIVE_INFINITY
+        ? 0
+        : candidateScore - competitorScore;
+  return {
+    candidateValue,
+    candidateScore,
+    competitorValue,
+    competitorScore: competitorValue === null ? null : competitorScore,
+    margin,
+    confidence: marginConfidence(margin),
+  };
+}
+
+export function decodeRecognitionOutput(
+  logProbabilities: ArrayLike<number>,
+  numericDeckValues: readonly number[],
+) {
+  const numericDeck = normalizeNumericDeck(numericDeckValues);
+  const alternatives = prefixBeamSearch(
+    logProbabilities,
+    DEFAULT_BEAM_WIDTH,
+    MODEL_OUTPUT_SHAPE[2],
+    CTC_BLANK_INDEX,
+  );
+  const greedyText = greedyCtcDecode(logProbabilities);
+  const text = alternatives[0]?.text ?? "";
+  const topScore = alternatives[0]?.score ?? Number.NEGATIVE_INFINITY;
+  const secondScore = alternatives[1]?.score ?? Number.NEGATIVE_INFINITY;
+  const margin = topScore - secondScore;
+  const rawConfidence = marginConfidence(margin);
+  const deckConfidence = deckRelativeConfidence(
+    logProbabilities,
+    text,
+    numericDeck,
+  );
+  return {
+    alternatives,
+    confidence: deckConfidence?.confidence ?? rawConfidence,
+    deckConfidence,
+    greedyText,
+    margin,
+    numericDeck,
+    rawConfidence,
+    secondScore,
+    text,
+    topScore,
+  };
+}
+
 export interface RecognitionWorkerBackend {
   initialize(
     request: InitializeWorkerRequest,
@@ -347,6 +430,7 @@ export class OrtRecognitionBackend implements RecognitionWorkerBackend {
         "recognition input preprocessing version does not match model",
       );
     }
+    const numericDeck = normalizeNumericDeck(request.numericDeck);
     const workerStartedAt = now();
     const input = validateInput(request);
     const tensor = new ort.Tensor("float32", input, [...MODEL_INPUT_SHAPE]);
@@ -363,34 +447,28 @@ export class OrtRecognitionBackend implements RecognitionWorkerBackend {
     }
 
     const decodeStartedAt = now();
-    const alternatives = prefixBeamSearch(
-      output.data,
-      DEFAULT_BEAM_WIDTH,
-      MODEL_OUTPUT_SHAPE[2],
-      CTC_BLANK_INDEX,
-    );
-    const greedyText = greedyCtcDecode(output.data);
+    const decoded = decodeRecognitionOutput(output.data, numericDeck);
     const decodeMs = now() - decodeStartedAt;
-    const topScore = alternatives[0]?.score ?? Number.NEGATIVE_INFINITY;
-    const secondScore = alternatives[1]?.score ?? Number.NEGATIVE_INFINITY;
-    const margin = topScore - secondScore;
-    const confidence = marginConfidence(margin);
 
     return {
       requestId: request.requestId,
       revision: request.revision,
-      text: alternatives[0]?.text ?? "",
-      confidence,
-      alternatives,
+      text: decoded.text,
+      confidence: decoded.confidence,
+      alternatives: decoded.alternatives,
       inferenceMs,
       diagnostics: {
-        greedyText,
-        topScore,
-        secondScore,
-        margin,
+        greedyText: decoded.greedyText,
+        topScore: decoded.topScore,
+        secondScore: decoded.secondScore,
+        margin: decoded.margin,
+        rawConfidence: decoded.rawConfidence,
+        deckConfidence: decoded.deckConfidence,
+        numericDeck: decoded.numericDeck,
         rawThreshold: metadata.confidence.raw_threshold,
-        confidenceThreshold: metadata.confidence.confidence_threshold,
-        thresholdPassed: confidence >= metadata.confidence.confidence_threshold,
+        rawConfidenceThreshold: metadata.confidence.confidence_threshold,
+        rawThresholdPassed:
+          decoded.rawConfidence >= metadata.confidence.confidence_threshold,
         outputShape: MODEL_OUTPUT_SHAPE,
         timing: {
           rasterizationMs: null,

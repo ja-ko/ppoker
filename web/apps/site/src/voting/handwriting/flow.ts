@@ -1,6 +1,10 @@
 import type { InkPadHandle } from "./InkPad";
 import type { RasterizedInk } from "./ink/rasterize";
-import { canonicalValue, MODEL_INPUT_SHAPE } from "./recognition/types";
+import {
+  canonicalValue,
+  MODEL_INPUT_SHAPE,
+  normalizeNumericDeck,
+} from "./recognition/types";
 import type {
   Recognition,
   RecognitionInput,
@@ -106,7 +110,11 @@ export interface RecognitionRuntime {
   subscribe(listener: (status: RecognizerStatus) => void): () => void;
   invalidate(revision?: number): number;
   retry(): void;
-  recognize(input: RecognitionInput, revision: number): Promise<Recognition>;
+  recognize(
+    input: RecognitionInput,
+    revision: number,
+    numericDeck: readonly number[],
+  ): Promise<Recognition>;
   dispose(): void;
 }
 
@@ -137,6 +145,17 @@ interface PendingRecognition {
   recognition: Recognition;
   revision: number;
   latestPointTime: number;
+  numericDeck: readonly number[];
+}
+
+function numericDecksEqual(
+  left: readonly number[],
+  right: readonly number[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
 }
 
 function errorMessage(error: unknown): string {
@@ -269,9 +288,14 @@ export class RecognitionFlow {
   }
 
   recognitionConfigurationChanged(): void {
-    if (this.pendingRecognition) {
-      this.revalidateRecognition(this.pendingRecognition);
+    const pending = this.pendingRecognition;
+    if (!pending) return;
+    const numericDeck = normalizeNumericDeck(this.options.getNumericDeck());
+    if (numericDecksEqual(pending.numericDeck, numericDeck)) {
+      this.revalidateRecognition(pending);
+      return;
     }
+    this.rescoreRecognition(pending.revision, pending.latestPointTime);
   }
 
   recognizerStatusChanged(status: RecognizerStatus): void {
@@ -368,6 +392,7 @@ export class RecognitionFlow {
     }
 
     const epoch = ++this.requestEpoch;
+    const numericDeck = normalizeNumericDeck(this.options.getNumericDeck());
     this.options.onDiagnostics({ inferencePending: true });
     let request: Promise<Recognition>;
     try {
@@ -379,6 +404,7 @@ export class RecognitionFlow {
           rasterizationMs,
         },
         revision,
+        numericDeck,
       );
     } catch (error) {
       this.failInference(revision, error);
@@ -393,11 +419,17 @@ export class RecognitionFlow {
         ) {
           return;
         }
+        const currentDeck = normalizeNumericDeck(this.options.getNumericDeck());
+        if (!numericDecksEqual(numericDeck, currentDeck)) {
+          this.rescoreRecognition(revision, latestPointTime);
+          return;
+        }
         this.options.onDiagnostics({ recognition, inferenceError: null });
         const pending = {
           recognition,
           revision,
           latestPointTime,
+          numericDeck,
         };
         this.pendingRecognition = pending;
         this.revalidateRecognition(pending);
@@ -423,10 +455,12 @@ export class RecognitionFlow {
     ) {
       return;
     }
-    const disposition = classifyRecognition(
-      pending.recognition,
-      this.options.getNumericDeck(),
-    );
+    const numericDeck = normalizeNumericDeck(this.options.getNumericDeck());
+    if (!numericDecksEqual(pending.numericDeck, numericDeck)) {
+      this.rescoreRecognition(pending.revision, pending.latestPointTime);
+      return;
+    }
+    const disposition = classifyRecognition(pending.recognition, numericDeck);
     const deadline =
       disposition.type === "commit"
         ? pending.latestPointTime +
@@ -458,6 +492,13 @@ export class RecognitionFlow {
         pending.recognition,
       );
     }
+  }
+
+  private rescoreRecognition(revision: number, latestPointTime: number): void {
+    this.pendingRecognition = null;
+    this.clearTimer();
+    this.options.onDiagnostics({ recognition: null, decision: null });
+    this.runInference(revision, latestPointTime);
   }
 
   private scheduleRejection(

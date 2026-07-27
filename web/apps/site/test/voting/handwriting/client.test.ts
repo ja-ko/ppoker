@@ -11,6 +11,8 @@ import type {
   RecognitionWorkerResponse,
 } from "../../../src/voting/handwriting/recognition/types";
 
+const NUMERIC_DECK = [1, 3, 5, 8, 13] as const;
+
 class MockWorker {
   onmessage: ((event: MessageEvent<RecognitionWorkerResponse>) => void) | null =
     null;
@@ -79,9 +81,12 @@ function recognition(text = "13", requestId = 1, revision = 0): Recognition {
       topScore: -1,
       secondScore: -3,
       margin: 2,
+      rawConfidence: 0.9,
+      deckConfidence: null,
+      numericDeck: [...NUMERIC_DECK],
       rawThreshold: 2,
-      confidenceThreshold: 0.8,
-      thresholdPassed: true,
+      rawConfidenceThreshold: 0.8,
+      rawThresholdPassed: true,
       outputShape: [1, 63, 11],
       timing: {
         rasterizationMs: null,
@@ -134,12 +139,15 @@ describe("RecognitionClient", () => {
     client.invalidate(8);
 
     const raster = input();
-    const promise = client.recognize(raster, 8);
+    const deck = [13, 1, 13];
+    const promise = client.recognize(raster, 8, deck);
+    deck.push(5);
     const sent = worker.sent[1]!;
     expect(sent.message).toMatchObject({
       type: "recognize",
       requestId: 1,
       revision: 8,
+      numericDeck: [1, 13],
     });
     expect(sent.transfer).toEqual([raster.data.buffer]);
     clock = 16;
@@ -160,6 +168,23 @@ describe("RecognitionClient", () => {
     client.dispose();
   });
 
+  it("rejects malformed numeric decks before posting worker requests", async () => {
+    const worker = new MockWorker();
+    const client = new RecognitionClient({
+      workerFactory: () => worker,
+      assetBaseUrl: "https://example.test/app/",
+      preprocessingVersion: PREPROCESSING_CONFIG.version,
+    });
+    ready(worker);
+    client.invalidate(1);
+
+    await expect(client.recognize(input(), 1, [256])).rejects.toBeInstanceOf(
+      RangeError,
+    );
+    expect(worker.sent).toHaveLength(1);
+    client.dispose();
+  });
+
   it("fails safely before readiness", async () => {
     const worker = new MockWorker();
     const client = new RecognitionClient({
@@ -168,7 +193,9 @@ describe("RecognitionClient", () => {
       preprocessingVersion: PREPROCESSING_CONFIG.version,
     });
     client.invalidate(1);
-    await expect(client.recognize(input(), 1)).rejects.toMatchObject({
+    await expect(
+      client.recognize(input(), 1, NUMERIC_DECK),
+    ).rejects.toMatchObject({
       detail: { code: "not_ready" },
     });
     expect(worker.sent).toHaveLength(1);
@@ -261,7 +288,7 @@ describe("RecognitionClient", () => {
     ready(hungWorker);
     client.invalidate(1);
     const staleHandler = hungWorker.onmessage;
-    const promise = client.recognize(input(), 1);
+    const promise = client.recognize(input(), 1, NUMERIC_DECK);
     const expectation = expect(promise).rejects.toMatchObject({
       detail: { code: "inference_timeout" },
     });
@@ -285,7 +312,7 @@ describe("RecognitionClient", () => {
     expect(client.status.readiness).toBe("loading");
 
     ready(recoveredWorker);
-    const recovered = client.recognize(input(), 1);
+    const recovered = client.recognize(input(), 1, NUMERIC_DECK);
     recoveredWorker.emit({
       type: "result",
       requestId: 2,
@@ -310,7 +337,7 @@ describe("RecognitionClient", () => {
     });
     ready(worker);
     expect(client.invalidate(1)).toBe(1);
-    const first = client.recognize(input(), 1);
+    const first = client.recognize(input(), 1, NUMERIC_DECK);
     const firstExpectation = expect(first).rejects.toMatchObject({
       detail: { code: "stale_response" },
     });
@@ -318,7 +345,7 @@ describe("RecognitionClient", () => {
     expect(client.revision).toBe(2);
     await firstExpectation;
 
-    const second = client.recognize(input(), 2);
+    const second = client.recognize(input(), 2, NUMERIC_DECK);
     worker.emit({
       type: "result",
       requestId: 1,
@@ -338,7 +365,7 @@ describe("RecognitionClient", () => {
     });
 
     expect(client.invalidate(4)).toBe(4);
-    const fourthRevision = client.recognize(input(), 4);
+    const fourthRevision = client.recognize(input(), 4, NUMERIC_DECK);
     const fourthExpectation = expect(fourthRevision).rejects.toMatchObject({
       detail: { code: "stale_response" },
     });
@@ -350,7 +377,9 @@ describe("RecognitionClient", () => {
       revision: 4,
       recognition: recognition("4", 3, 4),
     });
-    await expect(client.recognize(input(), 4)).rejects.toMatchObject({
+    await expect(
+      client.recognize(input(), 4, NUMERIC_DECK),
+    ).rejects.toMatchObject({
       detail: { code: "stale_revision" },
     });
     client.dispose();
@@ -365,11 +394,11 @@ describe("RecognitionClient", () => {
     });
     ready(worker);
     client.invalidate(1);
-    const first = client.recognize(input(), 1);
+    const first = client.recognize(input(), 1, NUMERIC_DECK);
     const firstExpectation = expect(first).rejects.toMatchObject({
       detail: { code: "stale_response" },
     });
-    const second = client.recognize(input(), 1);
+    const second = client.recognize(input(), 1, NUMERIC_DECK);
     await firstExpectation;
     worker.emit({
       type: "result",
@@ -392,12 +421,12 @@ describe("RecognitionClient", () => {
     });
     ready(worker);
     client.invalidate(1);
-    const first = client.recognize(input(), 1);
+    const first = client.recognize(input(), 1, NUMERIC_DECK);
     const firstExpectation = expect(first).rejects.toMatchObject({
       detail: { code: "stale_response" },
     });
     client.invalidate(2);
-    const second = client.recognize(input(), 2);
+    const second = client.recognize(input(), 2, NUMERIC_DECK);
     const secondExpectation = expect(second).rejects.toMatchObject({
       detail: { code: "stale_response" },
     });
@@ -416,7 +445,7 @@ describe("RecognitionClient", () => {
       revision: 2,
       recognition: recognition("2", 2, 2),
     });
-    const current = client.recognize(input(), 3);
+    const current = client.recognize(input(), 3, NUMERIC_DECK);
     worker.emit({
       type: "result",
       requestId: 3,
@@ -520,7 +549,7 @@ describe("RecognitionClient", () => {
     });
     ready(worker);
     client.invalidate(1);
-    const pending = client.recognize(input(), 1);
+    const pending = client.recognize(input(), 1, NUMERIC_DECK);
     client.dispose();
     await expect(pending).rejects.toMatchObject({
       detail: { code: "disposed" },
@@ -530,7 +559,9 @@ describe("RecognitionClient", () => {
       readiness: "failed",
       error: { code: "disposed", recoverable: false },
     });
-    await expect(client.recognize(input(), 1)).rejects.toMatchObject({
+    await expect(
+      client.recognize(input(), 1, NUMERIC_DECK),
+    ).rejects.toMatchObject({
       detail: { code: "disposed" },
     });
   });

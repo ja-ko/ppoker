@@ -25,9 +25,12 @@ MNIST to handwritten letters," 2017, <https://arxiv.org/abs/1702.05373>.
 ## Application threshold warning
 
 The application's fixed `0.95` confidence threshold is an explicit,
-user-selected carry-over of the browser POC's usability behavior. It is not the
-model metadata threshold, a probability of correctness, a calibrated safety
-bound, or a production-safe automatic-action threshold. The deterministic POC
-browser corpus records known false accepts above `0.95`: a wide zigzag decoded
-as `3` and an overlapping `13` decoded as `8`. The corpus is fixed engineering
-evidence rather than an independent accuracy or out-of-distribution safety set.
+user-selected carry-over of the browser POC's usability behavior. For a raw
+winner in the deck, the application compares its exact CTC score with the
+strongest other numeric deck value; an out-of-deck winner retains the raw
+top-versus-second margin and is never replaced. This is not the model metadata
+threshold, a probability of correctness, a calibrated safety bound, or a
+production-safe automatic-action threshold. The deterministic POC browser
+corpus records known false accepts above `0.95`: a wide zigzag decoded as `3`
+and an overlapping `13` decoded as `8`. The corpus is fixed engineering evidence
+rather than an independent accuracy or out-of-distribution safety set.

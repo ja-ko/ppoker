@@ -62,9 +62,12 @@ function recognition(
       topScore: -1,
       secondScore: -4,
       margin: 3,
+      rawConfidence: confidence,
+      deckConfidence: null,
+      numericDeck: [],
       rawThreshold: 2,
-      confidenceThreshold: 0.9,
-      thresholdPassed: confidence >= 0.9,
+      rawConfidenceThreshold: 0.9,
+      rawThresholdPassed: confidence >= 0.9,
       outputShape: [1, 63, 11],
       timing: {
         rasterizationMs: 0,
@@ -114,7 +117,11 @@ interface Harness {
   get state(): VoteInputState;
   get diagnostics(): FlowDiagnostics;
   invalidations: number[];
-  recognizeCalls: { input: RecognitionInput; revision: number }[];
+  recognizeCalls: {
+    input: RecognitionInput;
+    revision: number;
+    numericDeck: readonly number[];
+  }[];
   retry: ReturnType<typeof vi.fn>;
   ink: {
     active: boolean;
@@ -126,13 +133,14 @@ interface Harness {
     clears: number;
     restores: number;
   };
-  setDeck(deck: readonly number[]): void;
+  setDeck(deck: readonly number[], notify?: boolean): void;
   setReducedMotion(reduced: boolean): void;
   setStatus(status: RecognizerStatus): void;
   setRecognition(
     handler: (
       input: RecognitionInput,
       revision: number,
+      numericDeck: readonly number[],
     ) => Promise<Recognition>,
   ): void;
   draw(latest?: number): void;
@@ -153,10 +161,18 @@ function createHarness(
   let numericDeck = deck;
   let reducedMotion = initialReducedMotion;
   let diagnostics = initialFlowDiagnostics;
-  let recognizeHandler = async (_input: RecognitionInput, revision: number) =>
+  let recognizeHandler: (
+    input: RecognitionInput,
+    revision: number,
+    numericDeck: readonly number[],
+  ) => Promise<Recognition> = async (_input, revision) =>
     recognition("5", 0.99, revision);
   const invalidations: number[] = [];
-  const recognizeCalls: { input: RecognitionInput; revision: number }[] = [];
+  const recognizeCalls: {
+    input: RecognitionInput;
+    revision: number;
+    numericDeck: readonly number[];
+  }[] = [];
   const retry = vi.fn();
   const ink = {
     active: false,
@@ -183,9 +199,13 @@ function createHarness(
       return revision;
     },
     retry,
-    recognize: (input, requestRevision) => {
-      recognizeCalls.push({ input, revision: requestRevision });
-      return recognizeHandler(input, requestRevision);
+    recognize: (input, requestRevision, requestDeck) => {
+      recognizeCalls.push({
+        input,
+        revision: requestRevision,
+        numericDeck: requestDeck,
+      });
+      return recognizeHandler(input, requestRevision, requestDeck);
     },
     dispose: vi.fn(),
   };
@@ -245,9 +265,9 @@ function createHarness(
     recognizeCalls,
     retry,
     ink,
-    setDeck(next) {
+    setDeck(next, notify = true) {
       numericDeck = next;
-      flow.recognitionConfigurationChanged();
+      if (notify) flow.recognitionConfigurationChanged();
     },
     setReducedMotion(next) {
       reducedMotion = next;
@@ -293,6 +313,7 @@ describe("recognition timing", () => {
     expect(harness.recognizeCalls).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(1);
     expect(harness.recognizeCalls).toHaveLength(1);
+    expect(harness.recognizeCalls[0]?.numericDeck).toEqual([1, 2, 3, 5, 8, 13]);
     expect(harness.state).toMatchObject({ status: "committing", value: 5 });
     expect(harness.diagnostics.recognition?.text).toBe("5");
     expect(harness.diagnostics.decision).toEqual({
@@ -336,6 +357,9 @@ describe("recognition timing", () => {
 
     await vi.advanceTimersByTimeAsync(100);
     harness.setDeck([13]);
+    expect(harness.diagnostics.recognition).toBeNull();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.recognizeCalls[1]?.numericDeck).toEqual([13]);
     expect(harness.diagnostics.timerReason).toBe("incomplete");
     expect(harness.diagnostics.timerDeadline).toBe(REJECTION_DEADLINE_MS);
     expect(vi.getTimerCount()).toBe(1);
@@ -358,17 +382,66 @@ describe("recognition timing", () => {
     expect(harness.diagnostics.timerReason).toBe("prefix-commit");
 
     harness.setDeck([13]);
+    await vi.advanceTimersByTimeAsync(0);
     expect(harness.diagnostics.timerReason).toBe("incomplete");
     expect(vi.getTimerCount()).toBe(1);
     harness.setDeck([2]);
+    await vi.advanceTimersByTimeAsync(0);
     expect(harness.diagnostics.timerReason).toBe("invalid");
     expect(vi.getTimerCount()).toBe(1);
     harness.setDeck([1, 13]);
+    await vi.advanceTimersByTimeAsync(0);
     expect(harness.diagnostics.timerReason).toBe("prefix-commit");
     expect(vi.getTimerCount()).toBe(1);
 
     await vi.advanceTimersByTimeAsync(PREFIX_COMMIT_MS - BASE_QUIET_MS);
     expect(harness.state).toMatchObject({ status: "committing", value: 1 });
+  });
+
+  it("discards an in-flight result scored for an older deck and retries", async () => {
+    const resolvers: ((value: Recognition) => void)[] = [];
+    const harness = createHarness([1, 13]);
+    harness.setRecognition(
+      (_input, revision) =>
+        new Promise((resolve) => {
+          resolvers.push((value) => {
+            resolve({ ...value, revision });
+          });
+        }),
+    );
+    harness.draw();
+    await vi.advanceTimersByTimeAsync(BASE_QUIET_MS);
+    expect(harness.recognizeCalls[0]?.numericDeck).toEqual([1, 13]);
+
+    harness.setDeck([13]);
+    resolvers[0]?.(recognition("1"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.recognizeCalls[1]?.numericDeck).toEqual([13]);
+
+    resolvers[1]?.(recognition("1"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.diagnostics.timerReason).toBe("incomplete");
+  });
+
+  it("checks the scored deck again before a decision timer can act", async () => {
+    const harness = createHarness([1, 13]);
+    harness.setRecognition(async (_input, revision) =>
+      recognition("1", 0.99, revision),
+    );
+    harness.draw();
+    await vi.advanceTimersByTimeAsync(BASE_QUIET_MS);
+    expect(harness.diagnostics.timerReason).toBe("prefix-commit");
+
+    harness.setDeck([13], false);
+    await vi.advanceTimersByTimeAsync(PREFIX_COMMIT_MS - BASE_QUIET_MS);
+    expect(harness.state.status).toBe("settling");
+    expect(harness.diagnostics.timerReason).toBe("incomplete");
+
+    await vi.advanceTimersByTimeAsync(REJECTION_DEADLINE_MS - PREFIX_COMMIT_MS);
+    expect(harness.state).toMatchObject({
+      status: "rejecting",
+      rejection: "incomplete",
+    });
   });
 
   it.each([
