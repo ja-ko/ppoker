@@ -2,16 +2,23 @@ import type { PokerClient } from "@ppoker/web-client";
 import { type ReactNode, useEffect, useState } from "react";
 import {
   PokerClientProvider,
+  usePokerClient,
   usePokerClientSnapshot,
 } from "@ppoker/web-client/react";
 
 import { BroadcastScoreboard } from "./BroadcastScoreboard";
 import { BillboardStatus } from "./components/BillboardStatus";
+import {
+  deriveObservedAutoRevealPresentation,
+  type ObservedAutoRevealScheduler,
+  useObservedAutoReveal,
+} from "./observed-auto-reveal";
 import { useObserverTiming } from "./observer-timing";
 import { deriveScoreboardModel } from "./scoreboard-adapter";
 import type { BroadcastScoreboardModel } from "./scoreboard-model";
 
 export interface BroadcastAppProps {
+  readonly autoRevealScheduler?: ObservedAutoRevealScheduler;
   readonly client: PokerClient;
   readonly connectError: unknown;
   readonly entrance?: boolean;
@@ -20,6 +27,7 @@ export interface BroadcastAppProps {
 }
 
 export function BroadcastApp({
+  autoRevealScheduler,
   client,
   connectError,
   entrance = false,
@@ -33,6 +41,7 @@ export function BroadcastApp({
         entrance={entrance}
         revealAt={revealAt}
         room={room}
+        {...(autoRevealScheduler === undefined ? {} : { autoRevealScheduler })}
       />
     </PokerClientProvider>
   );
@@ -80,6 +89,7 @@ export function BroadcastRevealGate({
 }
 
 interface BroadcastClientViewProps {
+  readonly autoRevealScheduler?: ObservedAutoRevealScheduler;
   readonly connectError: unknown;
   readonly entrance: boolean;
   readonly revealAt: number | null;
@@ -87,12 +97,15 @@ interface BroadcastClientViewProps {
 }
 
 export function BroadcastClientView({
+  autoRevealScheduler,
   connectError,
   entrance,
   revealAt,
   room,
 }: BroadcastClientViewProps) {
+  const client = usePokerClient();
   const snapshot = usePokerClientSnapshot();
+  const autoReveal = useObservedAutoReveal(client, room, autoRevealScheduler);
   const timing = useObserverTiming(snapshot);
   const terminalError = snapshot.terminalError;
   const scoreboard = deriveScoreboardModel(snapshot, room, timing);
@@ -154,12 +167,24 @@ export function BroadcastClientView({
   }
   return (
     <BroadcastRevealGate revealAt={revealAt} scoreboard={scoreboard}>
-      {(displayableScoreboard) => (
-        <BroadcastScoreboard
-          entrance={entrance}
-          scoreboard={displayableScoreboard}
-        />
-      )}
+      {(displayableScoreboard) => {
+        const autoRevealPresentation =
+          autoReveal === null
+            ? null
+            : deriveObservedAutoRevealPresentation(
+                autoReveal,
+                autoRevealScheduler?.now() ?? performance.now(),
+              );
+        return (
+          <BroadcastScoreboard
+            entrance={entrance}
+            scoreboard={displayableScoreboard}
+            {...(autoRevealPresentation === null
+              ? {}
+              : { autoReveal: autoRevealPresentation })}
+          />
+        );
+      }}
     </BroadcastRevealGate>
   );
 }

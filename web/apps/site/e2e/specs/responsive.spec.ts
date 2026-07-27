@@ -9,6 +9,8 @@ import {
   expectParticipantCardContentSeparated,
   expectParticipantCardsContained,
   gotoFixture,
+  publishAutoRevealAnnouncement,
+  publishCoveredAutoReveal,
   publishFixture,
   samplePlayingToRevealed,
   visible,
@@ -156,6 +158,94 @@ test("mobile reserves two equal participant tracks for one card", async ({
   await expectNoCommands(page);
 });
 
+test("auto-reveal edge overlay stays contained on desktop and mobile", async ({
+  page,
+}) => {
+  for (const viewport of [
+    { height: 900, width: 1440 },
+    { height: 844, width: 390 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await gotoFixture(page, "playing");
+    await publishCoveredAutoReveal(page);
+
+    const countdown = page.locator(
+      '[data-auto-reveal-countdown="active"][data-present="true"]',
+    );
+    await expect(countdown).toBeVisible();
+    await expect(countdown).toHaveAttribute(
+      "data-countdown-motion",
+      "depleting",
+    );
+    await expect(countdown).toContainText("Auto-reveal");
+    await expect(countdown).toHaveAttribute("aria-hidden", "true");
+    await expect(page.getByRole("timer")).toHaveCount(0);
+    await expect(page.getByRole("status")).toContainText(
+      "Auto-reveal countdown active.",
+    );
+    const contained = await countdown.evaluate((element) => {
+      const panel = element.closest<HTMLElement>(".playing-panel");
+      const label = element.querySelector<HTMLElement>(
+        ".auto-reveal-countdown__label",
+      );
+      const track = element.querySelector<HTMLElement>(
+        ".auto-reveal-countdown__track",
+      );
+      if (panel === null || label === null || track === null) {
+        throw new Error("Auto-reveal overlay geometry is incomplete.");
+      }
+      const panelBox = panel.getBoundingClientRect();
+      const labelBox = label.getBoundingClientRect();
+      const trackBox = track.getBoundingClientRect();
+      return (
+        labelBox.left >= panelBox.left &&
+        labelBox.right <= panelBox.right &&
+        labelBox.top >= panelBox.top &&
+        labelBox.bottom <= panelBox.bottom &&
+        trackBox.left >= panelBox.left &&
+        trackBox.right <= panelBox.right &&
+        trackBox.top >= panelBox.top &&
+        trackBox.bottom <= panelBox.bottom
+      );
+    });
+    expect(contained).toBe(true);
+    await expectParticipantCardsContained(page);
+    await expectNoHorizontalOverflow(page);
+    await expectNoCommands(page);
+  }
+});
+
+test("auto-reveal progress visibly depletes and restarts", async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1440 });
+  await gotoFixture(page, "playing");
+  await publishCoveredAutoReveal(page, 4_000);
+  const countdown = page.locator(
+    '[data-auto-reveal-countdown="active"][data-present="true"]',
+  );
+  const progress = () =>
+    countdown
+      .locator(".auto-reveal-countdown__fill")
+      .evaluate((fill) => new DOMMatrix(getComputedStyle(fill).transform).a);
+  await expect(countdown).toBeVisible();
+  const firstKey = await countdown.getAttribute("data-countdown-key");
+  const initialProgress = await progress();
+
+  await page.waitForTimeout(400);
+  const depletedProgress = await progress();
+  expect(depletedProgress).toBeLessThan(initialProgress - 0.05);
+
+  await publishAutoRevealAnnouncement(page, 4_000);
+  await expect
+    .poll(() => countdown.getAttribute("data-countdown-key"))
+    .not.toBe(firstKey);
+  const restartedProgress = await progress();
+  expect(restartedProgress).toBeGreaterThan(depletedProgress + 0.05);
+
+  await page.waitForTimeout(300);
+  expect(await progress()).toBeLessThan(restartedProgress - 0.04);
+  await expectNoCommands(page);
+});
+
 const statusHeaderViewports = [
   { height: 800, label: "desktop", width: 1280 },
   { height: 800, label: "tablet", width: 1024 },
@@ -241,6 +331,41 @@ test.describe("reduced motion", () => {
           };
         }),
     ).toEqual({ animationName: "none", x: 0, y: 0 });
+
+    await publishCoveredAutoReveal(page);
+    const countdown = page.locator(
+      '[data-auto-reveal-countdown="active"][data-present="true"]',
+    );
+    await expect(countdown).toBeVisible();
+    await expect(countdown).toHaveAttribute("data-countdown-motion", "static");
+    await expect(countdown).toContainText("Auto-revealCountdown active");
+    const reducedProgress = await countdown.evaluate((element) => {
+      const fill = element.querySelector<HTMLElement>(
+        ".auto-reveal-countdown__fill",
+      );
+      const signal = element.querySelector<HTMLElement>(
+        ".auto-reveal-countdown__signal",
+      );
+      if (fill === null || signal === null) {
+        throw new Error("Reduced-motion countdown details are missing.");
+      }
+      return {
+        fillScale: new DOMMatrix(getComputedStyle(fill).transform).a,
+        initialProgress: Number(element.getAttribute("data-initial-progress")),
+        runningAnimations: element
+          .getAnimations({ subtree: true })
+          .filter((animation) => animation.playState === "running").length,
+        signalAnimation: getComputedStyle(signal).animationName,
+      };
+    });
+    expect(reducedProgress).toMatchObject({
+      runningAnimations: 0,
+      signalAnimation: "none",
+    });
+    expect(reducedProgress.fillScale).toBeCloseTo(
+      reducedProgress.initialProgress,
+      5,
+    );
 
     const sample = await samplePlayingToRevealed(page);
     expect(sample.frames.length).toBeGreaterThan(0);

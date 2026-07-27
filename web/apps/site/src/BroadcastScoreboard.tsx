@@ -24,6 +24,7 @@ import { VoteDistribution } from "./components/VoteDistribution";
 import { Panel } from "./components/ui/Panel";
 import { PanelHeader } from "./components/ui/PanelHeader";
 import { PresenceText } from "./components/ui/PresenceText";
+import type { ObservedAutoRevealPresentation } from "./observed-auto-reveal";
 import type {
   BroadcastScoreboardModel,
   PlayingBroadcast,
@@ -31,6 +32,7 @@ import type {
 } from "./scoreboard-model";
 
 interface BroadcastScoreboardProps {
+  readonly autoReveal?: ObservedAutoRevealPresentation;
   readonly entrance?: boolean;
   readonly scoreboard: BroadcastScoreboardModel;
 }
@@ -212,7 +214,66 @@ const ParticipantHeading = forwardRef<HTMLDivElement, BroadcastScoreboardProps>(
   },
 );
 
-function ParticipantPanel({ scoreboard }: BroadcastScoreboardProps) {
+function AutoRevealCountdown({
+  countdown,
+}: {
+  readonly countdown: ObservedAutoRevealPresentation;
+}) {
+  const isPresent = useIsPresent();
+  const reducedMotion = useReducedMotion() === true;
+
+  return (
+    <motion.div
+      animate={{ opacity: 1 }}
+      aria-hidden="true"
+      className="auto-reveal-countdown"
+      data-auto-reveal-countdown="active"
+      data-countdown-key={countdown.key}
+      data-countdown-motion={reducedMotion ? "static" : "depleting"}
+      data-initial-progress={countdown.initialProgress}
+      data-present={isPresent ? "true" : "false"}
+      data-remaining-ms={countdown.remainingMs}
+      exit={
+        reducedMotion
+          ? { opacity: 0, transition: { duration: 0 } }
+          : { opacity: 0, transition: { duration: 0.14 } }
+      }
+      initial={reducedMotion ? false : { opacity: 0 }}
+      transition={
+        reducedMotion
+          ? { duration: 0 }
+          : { duration: 0.22, ease: [0.22, 1, 0.36, 1] }
+      }
+    >
+      <div className="auto-reveal-countdown__label">
+        <span aria-hidden="true" className="auto-reveal-countdown__signal" />
+        <strong>Auto-reveal</strong>
+        <span className="auto-reveal-countdown__detail">Countdown active</span>
+      </div>
+      <div aria-hidden="true" className="auto-reveal-countdown__track">
+        <motion.span
+          animate={{ scaleX: reducedMotion ? countdown.initialProgress : 0 }}
+          className="auto-reveal-countdown__fill"
+          initial={
+            reducedMotion ? false : { scaleX: countdown.initialProgress }
+          }
+          transition={
+            reducedMotion
+              ? { duration: 0 }
+              : { duration: countdown.remainingMs / 1000, ease: "linear" }
+          }
+        >
+          <span className="auto-reveal-countdown__spark" />
+        </motion.span>
+      </div>
+    </motion.div>
+  );
+}
+
+function ParticipantPanel({
+  autoReveal,
+  scoreboard,
+}: BroadcastScoreboardProps) {
   const playing = scoreboard.phase === "playing";
   const layoutEnabled = useBroadcastLayout();
 
@@ -247,6 +308,14 @@ function ParticipantPanel({ scoreboard }: BroadcastScoreboardProps) {
           phase="revealed"
         />
       )}
+      <AnimatePresence>
+        {playing && autoReveal !== undefined ? (
+          <AutoRevealCountdown
+            countdown={autoReveal}
+            key={`auto-reveal:${autoReveal.key.toString()}`}
+          />
+        ) : null}
+      </AnimatePresence>
     </Panel>
   );
 }
@@ -297,6 +366,7 @@ function PhasePanel({ scoreboard }: BroadcastScoreboardProps) {
 }
 
 export function BroadcastScoreboard({
+  autoReveal,
   entrance = false,
   scoreboard,
 }: BroadcastScoreboardProps) {
@@ -326,7 +396,7 @@ export function BroadcastScoreboard({
           role="status"
         >
           {scoreboard.phase === "playing"
-            ? `Round ${scoreboard.round.toString()}. Voting open. ${scoreboard.participants.filter((participant) => participant.locked).length.toString()} of ${scoreboard.participants.length.toString()} responses locked.`
+            ? `Round ${scoreboard.round.toString()}. Voting open. ${scoreboard.participants.filter((participant) => participant.locked).length.toString()} of ${scoreboard.participants.length.toString()} responses locked.${autoReveal === undefined ? "" : " Auto-reveal countdown active."}`
             : `Round ${scoreboard.round.toString()}. Cards revealed. ${scoreboard.result.responseCount.toString()} responses revealed.`}
         </p>
 
@@ -346,7 +416,10 @@ export function BroadcastScoreboard({
           }
         >
           <div className="primary-column">
-            <ParticipantPanel scoreboard={scoreboard} />
+            <ParticipantPanel
+              scoreboard={scoreboard}
+              {...(autoReveal === undefined ? {} : { autoReveal })}
+            />
             <PhasePanel scoreboard={scoreboard} />
           </div>
 
