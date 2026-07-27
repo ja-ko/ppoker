@@ -945,7 +945,7 @@ body {
 
 .auto-reveal-countdown__track {
   position: absolute;
-  top: 0;
+  top: var(--panel-accent-size);
   right: 0;
   left: 0;
   height: 16px;
