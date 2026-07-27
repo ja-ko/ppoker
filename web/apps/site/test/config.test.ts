@@ -1,10 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import {
-  BILLBOARD_SPECTATOR_NAME,
-  parseBroadcastConfig,
-  spectatorClientOptions,
-} from "../src/config";
+import { parseBroadcastConfig, spectatorClientOptions } from "../src/config";
 
 describe("broadcast configuration", () => {
   it("accepts a static websocket endpoint and decoded room query", () => {
@@ -22,18 +18,33 @@ describe("broadcast configuration", () => {
     });
   });
 
-  it("always creates spectator-only billboard client options", () => {
-    expect(
-      spectatorClientOptions({
-        endpoint: "wss://example.test/",
-        room: "planning",
-      }),
-    ).toEqual({
+  it("creates spectator-only billboard options with a fresh random name", () => {
+    const randomValues = [0, 0, 1, 1];
+    vi.stubGlobal("crypto", {
+      getRandomValues: (values: Uint32Array) => {
+        values[0] = randomValues.shift() ?? 0;
+        return values;
+      },
+    });
+    const localStorage = {
+      getItem: vi.fn(),
+      setItem: vi.fn(),
+    };
+    vi.stubGlobal("localStorage", localStorage);
+    const config = {
       endpoint: "wss://example.test/",
-      name: BILLBOARD_SPECTATOR_NAME,
+      room: "planning",
+    };
+
+    expect(spectatorClientOptions(config)).toEqual({
+      endpoint: "wss://example.test/",
+      name: "Bright Badger",
       role: "spectator",
       room: "planning",
     });
+    expect(spectatorClientOptions(config).name).toBe("Calm Dolphin");
+    expect(localStorage.getItem).not.toHaveBeenCalled();
+    expect(localStorage.setItem).not.toHaveBeenCalled();
   });
 
   it.each(["", "?room=", "?other=room"])(

@@ -28,12 +28,14 @@ describe("broadcast session manager", () => {
     await settle();
 
     expect(createLifecycle).toHaveBeenCalledOnce();
-    expect(createLifecycle).toHaveBeenCalledWith({
+    const options = createLifecycle.mock.calls[0]?.[0];
+    expect(options).toEqual({
       endpoint: planning.endpoint,
-      name: "Planning Poker Billboard",
+      name: options?.name,
       role: "spectator",
       room: planning.room,
     });
+    expect(options?.name).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/u);
     expect(fake.client.connect).toHaveBeenCalledOnce();
     sessions.dispose();
   });
