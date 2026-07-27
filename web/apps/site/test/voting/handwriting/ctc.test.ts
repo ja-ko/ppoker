@@ -2,15 +2,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  exactCtcSequenceScore,
   greedyCtcDecode,
   marginConfidence,
   prefixBeamSearch,
 } from "../../../src/voting/handwriting/recognition/ctc";
 import {
   canonicalValue,
-  evaluateRecognitionForCommit,
+  normalizeNumericDeck,
 } from "../../../src/voting/handwriting/recognition/types";
-import type { Recognition } from "../../../src/voting/handwriting/recognition/types";
 
 const BLANK = 10;
 
@@ -20,34 +20,6 @@ function logitsForPath(path: number[]): Float32Array {
     values[time * 11 + char] = 0;
   });
   return values;
-}
-
-function recognition(text: string, confidence: number): Recognition {
-  return {
-    requestId: 1,
-    revision: 1,
-    text,
-    confidence,
-    alternatives: [{ text, score: -1 }],
-    inferenceMs: 1,
-    diagnostics: {
-      greedyText: text,
-      topScore: -1,
-      secondScore: -3,
-      margin: 2,
-      rawThreshold: 2,
-      confidenceThreshold: 0.75,
-      thresholdPassed: confidence >= 0.75,
-      outputShape: [1, 63, 11],
-      timing: {
-        rasterizationMs: 0.5,
-        inferenceMs: 1,
-        decodeMs: 1,
-        workerMs: 2,
-        workerRoundTripMs: 3,
-      },
-    },
-  };
 }
 
 describe("greedy CTC decoding", () => {
@@ -99,6 +71,44 @@ describe("prefix beam CTC decoding", () => {
   });
 });
 
+describe("exact CTC sequence scoring", () => {
+  it("sums every alignment that collapses to the requested sequence", () => {
+    const values = new Float32Array(2 * 3).fill(Number.NEGATIVE_INFINITY);
+    values[1] = Math.log(0.5);
+    values[2] = Math.log(0.5);
+    values[3 + 1] = Math.log(0.5);
+    values[3 + 2] = Math.log(0.5);
+
+    expect(exactCtcSequenceScore(values, "1", 3, 2)).toBeCloseTo(
+      Math.log(0.75),
+      6,
+    );
+    expect(exactCtcSequenceScore(values, "", 3, 2)).toBeCloseTo(
+      Math.log(0.25),
+      6,
+    );
+  });
+
+  it("requires a blank between repeated labels", () => {
+    expect(exactCtcSequenceScore(logitsForPath([1, 1]), "11")).toBe(
+      Number.NEGATIVE_INFINITY,
+    );
+    expect(
+      exactCtcSequenceScore(logitsForPath([1, BLANK, 1]), "11"),
+    ).toBeCloseTo(0, 6);
+  });
+
+  it("handles empty inputs and rejects malformed targets", () => {
+    expect(exactCtcSequenceScore(new Float32Array(), "")).toBe(0);
+    expect(exactCtcSequenceScore(new Float32Array(), "1")).toBe(
+      Number.NEGATIVE_INFINITY,
+    );
+    expect(() => exactCtcSequenceScore(new Float32Array(11), "1x")).toThrow(
+      RangeError,
+    );
+  });
+});
+
 describe("confidence and acceptance", () => {
   it("matches the selected margin formula at exact known values", () => {
     expect(marginConfidence(-1)).toBe(0);
@@ -130,23 +140,10 @@ describe("confidence and acceptance", () => {
     }
   });
 
-  it("requires confidence, canonical text, and deck validity together", () => {
-    const deck = new Set([1, 2, 3, 5, 8, 13]);
-    expect(evaluateRecognitionForCommit(recognition("13", 0.8), deck)).toEqual({
-      confidenceValid: true,
-      canonicalValue: 13,
-      canonicalValid: true,
-      deckValid: true,
-      canCommit: true,
-    });
-    expect(
-      evaluateRecognitionForCommit(recognition("13", 0.74), deck).canCommit,
-    ).toBe(false);
-    expect(
-      evaluateRecognitionForCommit(recognition("01", 1), deck).canCommit,
-    ).toBe(false);
-    expect(
-      evaluateRecognitionForCommit(recognition("12", 1), deck).canCommit,
-    ).toBe(false);
+  it("normalizes distinct numeric deck values and rejects invalid values", () => {
+    expect(normalizeNumericDeck([13, 1, 13, 0])).toEqual([0, 1, 13]);
+    expect(() => normalizeNumericDeck([-1])).toThrow(RangeError);
+    expect(() => normalizeNumericDeck([256])).toThrow(RangeError);
+    expect(() => normalizeNumericDeck([1.5])).toThrow(RangeError);
   });
 });

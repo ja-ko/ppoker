@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import metadataFixture from "../../../public/models/digits-crnn.json";
 import { PREPROCESSING_CONFIG } from "../../../src/voting/handwriting/ink/rasterize";
+import { marginConfidence } from "../../../src/voting/handwriting/recognition/ctc";
 import type {
   InitializationDiagnostics,
   Recognition,
@@ -10,6 +11,8 @@ import type {
 } from "../../../src/voting/handwriting/recognition/types";
 import {
   createRecognitionWorkerHandler,
+  decodeRecognitionOutput,
+  deckRelativeConfidence,
   validateModelMetadata,
 } from "../../../src/voting/handwriting/recognition/worker";
 import type { RecognitionWorkerBackend } from "../../../src/voting/handwriting/recognition/worker";
@@ -42,9 +45,12 @@ const recognition: Recognition = {
     topScore: -1,
     secondScore: -4,
     margin: 3,
+    rawConfidence: 0.9,
+    deckConfidence: null,
+    numericDeck: [1, 13],
     rawThreshold: 6.9,
-    confidenceThreshold: 0.99,
-    thresholdPassed: false,
+    rawConfidenceThreshold: 0.99,
+    rawThresholdPassed: false,
     outputShape: [1, 63, 11],
     timing: {
       rasterizationMs: null,
@@ -55,6 +61,26 @@ const recognition: Recognition = {
     },
   },
 };
+
+const BLANK = 10;
+
+function logitsForPath(path: readonly number[]): Float32Array {
+  const values = new Float32Array(path.length * 11).fill(-20);
+  path.forEach((label, time) => {
+    values[time * 11 + label] = 0;
+  });
+  return values;
+}
+
+function logitsForDistribution(
+  probabilities: Readonly<Record<number, number>>,
+): Float32Array {
+  const values = new Float32Array(11).fill(Number.NEGATIVE_INFINITY);
+  for (const [label, probability] of Object.entries(probabilities)) {
+    values[Number(label)] = Math.log(probability);
+  }
+  return values;
+}
 
 function flushPromises(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -98,6 +124,83 @@ describe("model metadata validation", () => {
   });
 });
 
+describe("deck-relative confidence", () => {
+  it("compares a legal raw winner with the strongest other deck value", () => {
+    const result = deckRelativeConfidence(
+      logitsForPath([BLANK, 1, 3, BLANK]),
+      "13",
+      [8, 3, 1, 13, 5],
+    );
+
+    expect(result).toMatchObject({
+      candidateValue: 13,
+      competitorValue: 1,
+    });
+    expect(result?.confidence).toBeGreaterThan(0.95);
+    expect(result?.confidence).toBe(
+      marginConfidence(result?.margin ?? Number.NaN),
+    );
+  });
+
+  it("does not promote an out-of-deck raw winner", () => {
+    expect(
+      deckRelativeConfidence(logitsForPath([7]), "7", [1, 3, 5, 8, 13]),
+    ).toBeNull();
+  });
+
+  it("accepts a sole distinct deck value and ignores duplicates", () => {
+    expect(
+      deckRelativeConfidence(logitsForPath([1]), "1", [1, 1, 1]),
+    ).toMatchObject({
+      candidateValue: 1,
+      competitorValue: null,
+      competitorScore: null,
+      margin: Number.POSITIVE_INFINITY,
+      confidence: 1,
+    });
+  });
+
+  it("returns zero confidence when another deck value scores higher", () => {
+    expect(
+      deckRelativeConfidence(logitsForPath([3]), "1", [1, 3]),
+    ).toMatchObject({
+      candidateValue: 1,
+      competitorValue: 3,
+      confidence: 0,
+    });
+  });
+});
+
+describe("recognition output decoding", () => {
+  it("uses deck-relative confidence only when the raw winner is legal", () => {
+    const decoded = decodeRecognitionOutput(
+      logitsForDistribution({ 1: 0.5, 3: 0.01, 7: 0.49 }),
+      [1, 3],
+    );
+
+    expect(decoded.text).toBe("1");
+    expect(decoded.rawConfidence).toBeCloseTo(0.02, 6);
+    expect(decoded.deckConfidence).toMatchObject({
+      candidateValue: 1,
+      competitorValue: 3,
+    });
+    expect(decoded.deckConfidence?.confidence).toBeCloseTo(0.98, 6);
+    expect(decoded.confidence).toBeCloseTo(0.98, 6);
+  });
+
+  it("keeps raw confidence and never promotes a legal runner-up", () => {
+    const decoded = decodeRecognitionOutput(
+      logitsForDistribution({ 1: 0.49, 3: 0.01, 7: 0.5 }),
+      [1, 3],
+    );
+
+    expect(decoded.text).toBe("7");
+    expect(decoded.deckConfidence).toBeNull();
+    expect(decoded.confidence).toBe(decoded.rawConfidence);
+    expect(decoded.confidence).toBeCloseTo(0.02, 6);
+  });
+});
+
 describe("recognition worker protocol", () => {
   it("reports initialization progress and returns correlated recognition", async () => {
     const responses: RecognitionWorkerResponse[] = [];
@@ -130,6 +233,7 @@ describe("recognition worker protocol", () => {
       input: new ArrayBuffer(128 * 32 * 4),
       shape: [1, 1, 32, 128],
       preprocessingVersion: PREPROCESSING_CONFIG.version,
+      numericDeck: [1, 13],
     });
     await flushPromises();
 
@@ -170,6 +274,7 @@ describe("recognition worker protocol", () => {
       input: new ArrayBuffer(128 * 32 * 4),
       shape: [1, 1, 32, 128] as const,
       preprocessingVersion: PREPROCESSING_CONFIG.version,
+      numericDeck: [1, 13],
     };
     handle(request);
     expect(responses[0]).toMatchObject({

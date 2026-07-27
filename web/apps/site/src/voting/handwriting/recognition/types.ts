@@ -31,14 +31,31 @@ export interface RecognitionTiming {
   workerRoundTripMs: number | null;
 }
 
+export interface DeckConfidenceDiagnostics {
+  candidateValue: number;
+  /** Exact natural-log CTC sequence score for the raw winner. */
+  candidateScore: number;
+  competitorValue: number | null;
+  /** Exact score for the strongest other deck value, or null when absent. */
+  competitorScore: number | null;
+  margin: number;
+  confidence: number;
+}
+
 export interface RecognitionDiagnostics {
   greedyText: string;
   topScore: number;
   secondScore: number;
   margin: number;
+  /** Unrestricted beam top-versus-second confidence. */
+  rawConfidence: number;
+  /** Present only when the unrestricted winner is an exact deck value. */
+  deckConfidence: DeckConfidenceDiagnostics | null;
+  numericDeck: number[];
   rawThreshold: number;
-  confidenceThreshold: number;
-  thresholdPassed: boolean;
+  /** Synthetic model-metadata threshold for rawConfidence. */
+  rawConfidenceThreshold: number;
+  rawThresholdPassed: boolean;
   outputShape: ModelOutputShape;
   timing: RecognitionTiming;
 }
@@ -48,7 +65,7 @@ export interface Recognition {
   revision: number;
   /** Raw unconstrained CTC prediction; it is not automatically safe to commit. */
   text: string;
-  /** Provisional synthetic-data heuristic, not a correctness probability. */
+  /** Effective margin heuristic used by the application, not a probability. */
   confidence: number;
   alternatives: RecognitionAlternative[];
   inferenceMs: number;
@@ -144,6 +161,7 @@ export interface RecognizeWorkerRequest {
   input: ArrayBuffer;
   shape: ModelInputShape;
   preprocessingVersion: string;
+  numericDeck: number[];
 }
 
 export type RecognitionWorkerRequest =
@@ -182,14 +200,6 @@ export type RecognitionWorkerResponse =
   | WorkerResultMessage
   | WorkerErrorMessage;
 
-export interface RecognitionAcceptance {
-  confidenceValid: boolean;
-  canonicalValue: number | null;
-  canonicalValid: boolean;
-  deckValid: boolean;
-  canCommit: boolean;
-}
-
 export function canonicalValue(text: string): number | null {
   if (!/^(0|[1-9][0-9]*)$/.test(text)) {
     return null;
@@ -198,19 +208,15 @@ export function canonicalValue(text: string): number | null {
   return Number.isSafeInteger(value) && value <= 255 ? value : null;
 }
 
-export function evaluateRecognitionForCommit(
-  recognition: Recognition,
-  numericDeck: ReadonlySet<number>,
-): RecognitionAcceptance {
-  const value = canonicalValue(recognition.text);
-  const confidenceValid =
-    recognition.confidence >= recognition.diagnostics.confidenceThreshold;
-  const deckValid = value !== null && numericDeck.has(value);
-  return {
-    confidenceValid,
-    canonicalValue: value,
-    canonicalValid: value !== null,
-    deckValid,
-    canCommit: confidenceValid && value !== null && deckValid,
-  };
+export function normalizeNumericDeck(values: readonly number[]): number[] {
+  const unique = new Set<number>();
+  for (const value of values) {
+    if (!Number.isSafeInteger(value) || value < 0 || value > 255) {
+      throw new RangeError(
+        "numeric deck values must be integers within 0..255",
+      );
+    }
+    unique.add(value);
+  }
+  return [...unique].sort((left, right) => left - right);
 }

@@ -37,9 +37,12 @@ on reload.
 ## Handwriting Recognition Safety
 
 The fixed `0.95` handwriting confidence threshold is an explicit,
-user-selected carry-over of the POC's usability behavior. It is a synthetic
-margin heuristic, not a probability of correctness, calibrated safety bound,
-or production-safe automatic-action threshold. The deterministic POC browser
+user-selected carry-over of the POC's usability behavior. When the raw,
+unconstrained winner is in the deck, its margin is measured against the
+strongest other numeric deck value. An out-of-deck winner is never replaced by
+a legal candidate and retains the raw top-versus-second margin. This heuristic
+is not a probability of correctness, calibrated safety bound, or
+production-safe automatic-action threshold. The deterministic POC browser
 corpus contains known false accepts above `0.95`, including a wide zigzag
 decoded as `3` and an overlapping `13` decoded as `8`. Canonical number parsing
 and deck membership remain necessary gates, but they do not make

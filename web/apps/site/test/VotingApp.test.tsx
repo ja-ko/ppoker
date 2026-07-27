@@ -1335,13 +1335,16 @@ function recognition(text: string, revision: number): Recognition {
     alternatives: [{ score: -1, text }],
     confidence: 0.99,
     diagnostics: {
-      confidenceThreshold: 0.9,
+      deckConfidence: null,
       greedyText: text,
       margin: 3,
+      numericDeck: [1, 3, 5, 8, 13],
       outputShape: [1, 63, 11],
+      rawConfidence: 0.99,
+      rawConfidenceThreshold: 0.9,
       rawThreshold: 2,
       secondScore: -4,
-      thresholdPassed: true,
+      rawThresholdPassed: true,
       timing: {
         decodeMs: 1,
         inferenceMs: 2,

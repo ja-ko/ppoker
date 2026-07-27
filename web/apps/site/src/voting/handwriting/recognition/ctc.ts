@@ -51,6 +51,14 @@ function scoreAt(logProbabilities: ArrayLike<number>, index: number): number {
   return score;
 }
 
+function stateAt(states: readonly number[], index: number): number {
+  const score = states[index];
+  if (score === undefined) {
+    throw new RangeError("CTC state index is outside the sequence");
+  }
+  return score;
+}
+
 function compareAlternatives(
   left: RecognitionAlternative,
   right: RecognitionAlternative,
@@ -73,6 +81,71 @@ function scoresFor(map: Map<string, BeamScores>, text: string): BeamScores {
     map.set(text, scores);
   }
   return scores;
+}
+
+export function exactCtcSequenceScore(
+  logProbabilities: ArrayLike<number>,
+  text: string,
+  classCount: number = MODEL_OUTPUT_SHAPE[2],
+  blankIndex: number = CTC_BLANK_INDEX,
+): number {
+  const timeSteps = validateScores(logProbabilities, classCount);
+  if (blankIndex < 0 || blankIndex >= classCount) {
+    throw new RangeError("blankIndex is outside the class range");
+  }
+  if (!/^\d*$/u.test(text)) {
+    throw new RangeError("CTC sequence must contain only digits");
+  }
+
+  const labels = new Array<number>(text.length * 2 + 1).fill(blankIndex);
+  for (let index = 0; index < text.length; index += 1) {
+    const label = Number(text[index]);
+    if (
+      !Number.isInteger(label) ||
+      label >= classCount ||
+      label === blankIndex
+    ) {
+      throw new RangeError("CTC sequence contains a label outside the classes");
+    }
+    labels[index * 2 + 1] = label;
+  }
+  if (timeSteps === 0) {
+    return text.length === 0 ? 0 : NEGATIVE_INFINITY;
+  }
+
+  let previous = new Array<number>(labels.length).fill(NEGATIVE_INFINITY);
+  previous[0] = scoreAt(logProbabilities, blankIndex);
+  if (labels.length > 1) {
+    previous[1] = scoreAt(logProbabilities, stateAt(labels, 1));
+  }
+
+  for (let time = 1; time < timeSteps; time += 1) {
+    const offset = time * classCount;
+    const current = new Array<number>(labels.length).fill(NEGATIVE_INFINITY);
+    for (let state = 0; state < labels.length; state += 1) {
+      const label = stateAt(labels, state);
+      const transitions = [stateAt(previous, state)];
+      if (state > 0) transitions.push(stateAt(previous, state - 1));
+      if (
+        state > 1 &&
+        label !== blankIndex &&
+        label !== stateAt(labels, state - 2)
+      ) {
+        transitions.push(stateAt(previous, state - 2));
+      }
+      current[state] =
+        logSumExp(...transitions) + scoreAt(logProbabilities, offset + label);
+    }
+    previous = current;
+  }
+
+  const finalState = previous.length - 1;
+  return finalState === 0
+    ? stateAt(previous, 0)
+    : logSumExp(
+        stateAt(previous, finalState),
+        stateAt(previous, finalState - 1),
+      );
 }
 
 export function greedyCtcDecode(
