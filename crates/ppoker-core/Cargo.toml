@@ -15,5 +15,5 @@ log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
-tsify = { version = "=0.5.6", optional = true, default-features = false, features = ["js"] }
+tsify = { version = "=0.5.8", optional = true, default-features = false, features = ["js"] }
 wasm-bindgen = { version = "=0.2.126", optional = true }
